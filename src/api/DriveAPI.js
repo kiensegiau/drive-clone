@@ -155,7 +155,7 @@ class DriveAPI {
           const videoHandler = new VideoHandler();
           await videoHandler.processVideo(file.id, file.name, this.drive);
         } else if (file.mimeType === "application/pdf") {
-          const pdfDownloader = new PDFDownloader();
+          const pdfDownloader = new PDFDownloader(this);
           await pdfDownloader.downloadPDF(file.id, file.name, this.drive);
         }
       }

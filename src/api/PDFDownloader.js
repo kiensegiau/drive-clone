@@ -40,16 +40,60 @@ class PDFDownloader {
   }
 
   async downloadFromDriveAPI(fileId, outputPath, drive) {
+    console.log(`\n📥 Bắt đầu tải PDF từ Drive API...`);
+    
     const response = await drive.files.get(
       { fileId, alt: "media" },
       { responseType: "stream" }
     );
 
+    // Lấy kích thước file từ headers
+    const fileSize = parseInt(response.headers['content-length'], 10);
+    const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+    console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
+
     return new Promise((resolve, reject) => {
+      let downloadedSize = 0;
+      let lastLogTime = Date.now();
+      const logInterval = 1000; // Log mỗi giây
+
       const dest = fs.createWriteStream(outputPath);
+
       response.data
-        .on("end", () => resolve())
-        .on("error", reject)
+        .on('data', chunk => {
+          downloadedSize += chunk.length;
+          
+          // Log tiến trình mỗi giây
+          const now = Date.now();
+          if (now - lastLogTime >= logInterval) {
+            const progress = (downloadedSize / fileSize) * 100;
+            const downloadedMB = (downloadedSize / (1024 * 1024)).toFixed(2);
+            console.log(`⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(1)}%)`);
+            lastLogTime = now;
+          }
+        })
+        .on('end', async () => {
+          console.log(`\n✅ Tải PDF hoàn tất!`);
+          
+          // Verify file size
+          const stats = await fs.promises.stat(outputPath);
+          const downloadedSize = (stats.size / (1024 * 1024)).toFixed(2);
+          console.log(`📦 File đã tải: ${downloadedSize}MB`);
+
+          console.log(`\n📤 Đang upload lên Drive...`);
+          try {
+            await this.driveAPI.uploadFile(outputPath);
+            console.log(`✨ Upload hoàn tất!`);
+            resolve();
+          } catch (error) {
+            console.error(`❌ Lỗi upload:`, error.message);
+            reject(error);
+          }
+        })
+        .on('error', error => {
+          console.error(`❌ Lỗi tải file:`, error.message);
+          reject(error);
+        })
         .pipe(dest);
     });
   }
@@ -112,41 +156,40 @@ class PDFDownloader {
 
       const pdfUrl = `https://drive.google.com/file/d/${fileId}/view`;
       await Promise.all([
-        page.goto(pdfUrl, {waitUntil: 'networkidle0', timeout: 30000}),
-        page.waitForSelector('div[role="document"]', {timeout: 30000})
+        page.goto(pdfUrl, {waitUntil: 'networkidle0', timeout: 30000})
       ]);
       console.log("✅ Đã load trang xong");
 
-      this.cookies = await page.cookies();
-      this.userAgent = await page.evaluate(() => navigator.userAgent);
+      await Promise.all([
+        page.cookies().then(cookies => {
+          this.cookies = cookies;
+        }),
+        page.evaluate(() => navigator.userAgent).then(userAgent => {
+          this.userAgent = userAgent;
+        })
+      ]);
 
       console.log("\n🚀 Quét PDF...");
       await this.fastScroll(page);
 
       console.log(`\n📸 Tải ${this.pageRequests.size} trang...`);
-      const CONCURRENT_DOWNLOADS = 5;
       const downloadedImages = [];
       
       const requests = Array.from(this.pageRequests.entries())
         .sort(([a], [b]) => a - b);
 
-      for(let i = 0; i < requests.length; i += CONCURRENT_DOWNLOADS) {
-        const batch = requests.slice(i, i + CONCURRENT_DOWNLOADS);
-        const batchPromises = batch.map(([pageNum, request]) => 
+      const results = await Promise.all(
+        requests.map(([pageNum, request]) => 
           this.downloadImage(
             request.url(), 
             pageNum,
             this.cookies,
             this.userAgent
           )
-        );
-        const results = await Promise.all(batchPromises);
-        downloadedImages.push(...results.filter(Boolean));
-        
-        if (i + CONCURRENT_DOWNLOADS < requests.length) {
-          await new Promise(r => setTimeout(r, 100));
-        }
-      }
+        )
+      );
+      
+      downloadedImages.push(...results.filter(Boolean));
 
       console.log(`\n📑 Tạo PDF...`);
       await this.createPDFFromImages(downloadedImages, outputPath);
@@ -160,13 +203,33 @@ class PDFDownloader {
       console.log(`✨ Upload hoàn tất!`);
 
       console.log(`\n🧹 Dọn dẹp files tạm...`);
-      for (const imagePath of downloadedImages) {
+      await Promise.all(downloadedImages.map(async (imagePath) => {
         try {
-          await fs.promises.unlink(imagePath);
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+          if (fs.existsSync(imagePath)) {
+            await fs.promises.access(imagePath, fs.constants.W_OK);
+            await fs.promises.unlink(imagePath);
+            console.log(`✅ Đã xóa: ${imagePath}`);
+          }
         } catch (error) {
-          console.error(`⚠️ Không thể xóa: ${imagePath}`);
+          if (error.code === 'EBUSY' || error.code === 'EPERM') {
+            try {
+              const execSync = require('child_process').execSync;
+              if (process.platform === 'win32') {
+                execSync(`del /f "${imagePath}"`, {stdio: 'ignore'});
+              } else {
+                execSync(`rm -f "${imagePath}"`, {stdio: 'ignore'});
+              }
+              console.log(`✅ Đã force xóa: ${imagePath}`);
+            } catch (e) {
+              console.error(`⚠️ Không thể xóa: ${imagePath}`);
+            }
+          } else {
+            console.error(`⚠️ Không thể xóa: ${imagePath}`);
+          }
         }
-      }
+      }));
 
       return {
         success: true,
@@ -304,17 +367,9 @@ class PDFDownloader {
     }
 
     doc.end();
+    
     await new Promise((resolve) => pdfStream.on("finish", resolve));
-
-    for (const imagePath of sortedImages) {
-      try {
-        if (fs.existsSync(imagePath)) {
-          await fs.promises.unlink(imagePath);
-        }
-      } catch (error) {
-        console.error(`⚠️ Lỗi xóa file tạm ${imagePath}: ${error.message}`);
-      }
-    }
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
 }
 
