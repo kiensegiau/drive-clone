@@ -612,7 +612,7 @@ class DriveAPI {
     // Bắt đầu tải và upload trong background
     (async () => {
       try {
-        await this.downloadVideo(videoUrl, outputPath);
+        await this.downloadVideoWithChunks(videoUrl, outputPath);
         await this.uploadFile(outputPath, file.name, targetFolderId);
 
         // Xóa file tạm sau khi upload xong
@@ -632,83 +632,7 @@ class DriveAPI {
     return Promise.resolve();
   }
 
-  async downloadVideo(url, filename) {
-    try {
-      console.log("\n📥 Bắt đầu tải video...");
-
-      const headResponse = await axios.head(url, {
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-          Referer: "https://drive.google.com/",
-        },
-      });
-
-      const fileSize = parseInt(headResponse.headers["content-length"]);
-      console.log(`📊 Kích thước: ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
-
-      const chunkSize = 10 * 1024 * 1024;
-      const chunks = Math.ceil(fileSize / chunkSize);
-
-      // Tạo write stream một lần
-      const writer = fs.createWriteStream(filename);
-      let currentChunk = 0;
-
-      // Hàm tải một chunk
-      const downloadChunk = async () => {
-        if (currentChunk >= chunks) {
-          writer.end();
-          return;
-        }
-
-        const start = currentChunk * chunkSize;
-        const end = Math.min(start + chunkSize - 1, fileSize - 1);
-
-        console.log(`\n📥 Phần ${currentChunk + 1}/${chunks}`);
-
-        try {
-          const response = await axios({
-            method: "GET",
-            url: url,
-            responseType: "arraybuffer", // Sử dụng arraybuffer thay vì stream
-            timeout: 30000,
-            headers: {
-              "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-              Range: `bytes=${start}-${end}`,
-              Referer: "https://drive.google.com/",
-            },
-          });
-
-          // Ghi dữ liệu vào file
-          writer.write(response.data);
-          currentChunk++;
-
-          // Tải chunk tiếp theo
-          await downloadChunk();
-        } catch (error) {
-          writer.destroy(error);
-        }
-      };
-
-      // Bắt đầu tải
-      return new Promise((resolve, reject) => {
-        writer.on("error", (error) => {
-          reject(error);
-        });
-
-        writer.on("finish", () => {
-          resolve();
-        });
-
-        // Bắt đầu quá trình tải
-        downloadChunk().catch(reject);
-      });
-    } catch (error) {
-      console.error("\n❌ Lỗi:", error.message);
-      throw error;
-    }
-  }
+  
 
   async start(sourceFolderId) {
     console.log("🚀 Bắt đầu chương trình...");
@@ -1065,7 +989,7 @@ class DriveAPI {
         try {
           await retryOperation(async () => {
             console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
-            await this.downloadVideo(videoUrl, outputPath);
+            await this.downloadVideoWithChunks(videoUrl, outputPath);
           });
 
           await retryOperation(async () => {
@@ -1419,7 +1343,7 @@ class DriveAPI {
   async processOtherFile(file, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     let tempFilePath; // Thêm biến tempFilePath
-    
+
     try {
       // Chuẩn hóa tên file để tránh lỗi path
       const safeFileName = this.sanitizeFileName(file.name);

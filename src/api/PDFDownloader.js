@@ -252,26 +252,45 @@ class PDFDownloader {
     const scrollStep = 1000;
     let lastSize = 0;
     let noNewRequests = 0;
+    const MAX_NO_NEW_REQUESTS = 5; // Tăng số lần kiểm tra không có request mới
+    
+    console.log("\n🚀 Quét PDF...");
 
-    while (noNewRequests < 3) {
-      await Promise.all([
-        page.evaluate(step => window.scrollBy(0, step), scrollStep),
-        page.keyboard.press('PageDown'),
-        new Promise(r => setTimeout(r, 50))
-      ]);
+    // Cuộn xuống cho đến khi không còn request mới
+    while (noNewRequests < MAX_NO_NEW_REQUESTS) {
+        await Promise.all([
+            page.evaluate(step => window.scrollBy(0, step), scrollStep),
+            page.keyboard.press('PageDown'),
+            new Promise(r => setTimeout(r, 100)) // Tăng delay lên để đảm bảo load
+        ]);
 
-      if (this.pageRequests.size > lastSize) {
-        lastSize = this.pageRequests.size;
-        noNewRequests = 0;
-      } else {
-        noNewRequests++;
-      }
+        if (this.pageRequests.size > lastSize) {
+            const newRequests = this.pageRequests.size - lastSize;
+            console.log(`📄 Phát hiện ${newRequests} trang mới (Tổng: ${this.pageRequests.size})`);
+            lastSize = this.pageRequests.size;
+            noNewRequests = 0;
+        } else {
+            noNewRequests++;
+            if (noNewRequests > 0) {
+                console.log(`⏳ Kiểm tra lần ${noNewRequests}/${MAX_NO_NEW_REQUESTS}`);
+            }
+        }
     }
 
+    // Cuộn lên đầu và xuống cuối để đảm bảo
     await page.evaluate(() => {
-      window.scrollTo(0, 0);
-      window.scrollTo(0, document.body.scrollHeight);
+        window.scrollTo(0, 0);
+        setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 500);
     });
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Kiểm tra lần cuối
+    const finalCheck = this.pageRequests.size;
+    if (finalCheck > lastSize) {
+        console.log(`📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cuối`);
+    }
+
+    console.log(`\n✅ Hoàn tất quét: ${this.pageRequests.size} trang`);
   }
 
   async downloadImage(url, pageNum, cookies, userAgent) {
