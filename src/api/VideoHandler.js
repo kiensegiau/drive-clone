@@ -266,7 +266,7 @@ class VideoHandler {
 
       return true;
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử l�� ${fileName}:`, error.message);
+      console.error(`${indent}❌ Lỗi xử l ${fileName}:`, error.message);
       this.activeDownloads--;
       if (this.downloadQueue.length > 0) {
         const nextDownload = this.downloadQueue.shift();
@@ -333,117 +333,89 @@ class VideoHandler {
     }
   }
 
-  async getVideoUrl(browser, fileId) {
-    console.log("\n🔍 Bắt đầu tìm URL video...");
-    const page = await browser.newPage();
+  async getVideoUrl(fileId, retries = 5) {
+    console.log(`🔍 Tìm URL video (${6-retries}/5)...`);
     
-    // Bắt tất cả requests
-    const allRequests = new Set();
-    page.on('request', request => {
-      const url = request.url();
-      console.log(`\n📡 Request detected: ${url.substring(0, 100)}...`);
-      if (url.includes('videoplayback')) {
-        console.log(`✨ Found video request: ${url}`);
-        allRequests.add(url);
-      }
-    });
-
-    // Bắt response headers
-    page.on('response', async (response) => {
-      const url = response.url();
-      if (url.includes('videoplayback')) {
-        try {
-          const headers = response.headers();
-          console.log('\n📨 Response headers:', headers);
-          if (headers['content-type']?.includes('video')) {
-            console.log(`✨ Found video response: ${url}`);
-            allRequests.add(url);
-          }
-        } catch (error) {
-          console.log('⚠️ Error parsing response:', error.message);
+    try {
+        if (!this.browser) {
+            this.browser = await puppeteer.launch({
+                headless: 'new',
+                executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            });
         }
-      }
-    });
 
-    console.log(`\n🌐 Navigating to video page...`);
-    await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-      waitUntil: 'networkidle0',
-      timeout: 30000
-    });
+        const page = await this.browser.newPage();
+        await page.setDefaultNavigationTimeout(60000);
 
-    // Đợi video load
-    let videoUrl = null;
-    const startTime = Date.now();
-    const timeout = 15000;
-    let attempt = 1;
-
-    console.log('\n⏳ Waiting for video URL...');
-    while (!videoUrl && Date.now() - startTime < timeout) {
-      console.log(`\n Attempt ${attempt++}:`);
-      
-      // Log requests từ Set
-      console.log(`📦 Current requests in Set (${allRequests.size}):`);
-      allRequests.forEach(url => console.log(`  - ${url.substring(0, 100)}...`));
-
-      // Kiểm tra từ performance API
-      const performanceUrls = await page.evaluate(() => {
-        const entries = performance.getEntriesByType('resource')
-          .filter(entry => entry.name.includes('videoplayback'))
-          .map(entry => entry.name);
-        console.log('📊 Performance entries:', entries);
-        return entries;
-      });
-      
-      console.log(`📊 Performance URLs found: ${performanceUrls.length}`);
-      performanceUrls.forEach(url => console.log(`  - ${url.substring(0, 100)}...`));
-
-      // Kết hợp URLs
-      const allVideoUrls = [...allRequests, ...performanceUrls];
-      console.log(`\n🎯 Total unique URLs: ${allVideoUrls.length}`);
-
-      if (allVideoUrls.length > 0) {
-        // Lọc và sort theo quality
-        const sortedUrls = allVideoUrls
-          .filter(url => url.includes('videoplayback'))
-          .sort((a, b) => {
-            const qualityA = this.getVideoQuality(this.getItagFromUrl(a));
-            const qualityB = this.getVideoQuality(this.getItagFromUrl(b));
-            return qualityB - qualityA;
-          });
-
-        console.log('\n📋 Sorted URLs by quality:');
-        sortedUrls.forEach(url => {
-          const quality = this.getVideoQuality(this.getItagFromUrl(url));
-          console.log(`  - ${quality}p: ${url.substring(0, 100)}...`);
+        // Bắt tất cả requests
+        const allRequests = new Set();
+        page.on('request', request => {
+            const url = request.url();
+            if (url.includes('videoplayback')) {
+                allRequests.add(url);
+            }
         });
 
-        if (sortedUrls.length > 0) {
-          videoUrl = sortedUrls[0];
-          const quality = this.getVideoQuality(this.getItagFromUrl(videoUrl));
-          console.log(`\n✅ Selected URL (${quality}p)`);
-          break;
+        await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+            waitUntil: 'networkidle0',
+            timeout: 60000
+        });
+
+        // Đợi video load
+        let videoUrl = null;
+        const startTime = Date.now();
+        const timeout = 30000;
+
+        while (!videoUrl && Date.now() - startTime < timeout) {
+            const performanceUrls = await page.evaluate(() => {
+                return performance.getEntriesByType('resource')
+                    .filter(entry => entry.name.includes('videoplayback'))
+                    .map(entry => entry.name);
+            });
+
+            const allVideoUrls = [...allRequests, ...performanceUrls];
+
+            if (allVideoUrls.length > 0) {
+                const sortedUrls = allVideoUrls
+                    .filter(url => url.includes('videoplayback'))
+                    .sort((a, b) => {
+                        const qualityA = this.getVideoQuality(this.getItagFromUrl(a));
+                        const qualityB = this.getVideoQuality(this.getItagFromUrl(b));
+                        return qualityB - qualityA;
+                    });
+
+                if (sortedUrls.length > 0) {
+                    videoUrl = sortedUrls[0];
+                    const selectedQuality = this.getVideoQuality(this.getItagFromUrl(videoUrl));
+                    console.log(`✅ Tìm thấy URL (${selectedQuality}p)`);
+
+                    if (selectedQuality < 1080 && retries > 1) {
+                        console.log('⏳ Thử lại tìm chất lượng cao hơn...');
+                        await new Promise(r => setTimeout(r, 5000));
+                        return this.getVideoUrl(fileId, retries - 1);
+                    }
+                    break;
+                }
+            }
+            await new Promise(r => setTimeout(r, 1000));
         }
-      }
 
-      console.log('😴 Waiting 500ms...');
-      await new Promise(r => setTimeout(r, 500));
-      
-      // Scroll để trigger load
-      console.log('📜 Scrolling to trigger video load...');
-      await page.evaluate(() => {
-        window.scrollBy(0, 100);
-        window.scrollBy(0, -100);
-      });
+        if (!videoUrl) {
+            throw new Error("Không tìm thấy URL video");
+        }
+
+        return videoUrl;
+
+    } catch (error) {
+        console.error(`❌ Lỗi:`, error.message);
+        if (retries > 1) {
+            console.log(`⏳ Thử lại sau 5s...`);
+            await new Promise(r => setTimeout(r, 5000));
+            return this.getVideoUrl(fileId, retries - 1);
+        }
+        throw error;
     }
-
-    if (!videoUrl) {
-      console.log('\n❌ No video URL found after timeout');
-      throw new Error("Không tìm thấy URL video");
-    }
-
-    const quality = this.getVideoQuality(this.getItagFromUrl(videoUrl));
-    console.log(`\n🎉 Final video URL found (${quality}p)`);
-    return videoUrl;
   }
 
   // Thêm helper method để parse itag từ URL
@@ -508,14 +480,20 @@ class VideoHandler {
 
   getVideoQuality(itag) {
     const itagQualities = {
-      37: 1080,
-      137: 1080,
-      22: 720,
-      136: 720,
-      135: 480,
-      134: 360,
-      133: 240,
-      160: 144,
+        37: 1080,  // MP4 1080p
+        137: 1080, // MP4 1080p
+        22: 720,   // MP4 720p
+        136: 720,  // MP4 720p
+        135: 480,  // MP4 480p
+        134: 360,  // MP4 360p
+        133: 240,  // MP4 240p
+        160: 144,  // MP4 144p
+        // Thêm các itag khác nếu cần
+        38: 3072,  // MP4 4K
+        266: 2160, // MP4 2160p
+        264: 1440, // MP4 1440p
+        299: 1080, // MP4 1080p 60fps
+        298: 720,  // MP4 720p 60fps
     };
     return itagQualities[itag] || 0;
   }
@@ -606,38 +584,46 @@ class VideoHandler {
   }
 
   async downloadChunk(url, start, end, headers, chunkNumber) {
-    const retryDelay = 1000;
-    const MAX_RETRIES = 3;
+    const retryDelay = 2000;
+    const MAX_RETRIES = 5;
     
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        const response = await axios({
-          method: "GET",
-          url: url,
-          headers: {
-            ...headers,
-            Range: `bytes=${start}-${end}`,
-          },
-          responseType: "arraybuffer",
-          timeout: 30000,
-          maxContentLength: Infinity,
-          maxBodyLength: Infinity,
-          decompress: true,
-          onDownloadProgress: (progressEvent) => {
-            const percentage = (progressEvent.loaded / (end - start + 1)) * 100;
-            process.stdout.write(`\r  ⏳ Chunk #${chunkNumber}: ${percentage.toFixed(1)}%`);
-          }
-        });
+        try {
+            const response = await axios({
+                method: "GET",
+                url: url,
+                headers: {
+                    ...headers,
+                    Range: `bytes=${start}-${end}`,
+                },
+                responseType: "arraybuffer",
+                timeout: 30000,
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity,
+                decompress: true,
+                validateStatus: function (status) {
+                    return status >= 200 && status < 300 || status === 503;
+                },
+                onDownloadProgress: (progressEvent) => {
+                    const percentage = (progressEvent.loaded / (end - start + 1)) * 100;
+                    process.stdout.write(`\r  ⏳ Chunk #${chunkNumber}: ${percentage.toFixed(1)}%`);
+                }
+            });
 
-        return response.data;
-      } catch (error) {
-        console.error(`\n  ❌ Lỗi chunk #${chunkNumber} (${attempt}/${MAX_RETRIES}):`, error.message);
-        if (attempt === MAX_RETRIES) {
-          throw error;
+            if (response.status === 503) {
+                throw new Error('Service temporarily unavailable');
+            }
+
+            return response.data;
+        } catch (error) {
+            console.error(`\n  ❌ Lỗi chunk #${chunkNumber} (${attempt}/${MAX_RETRIES}):`, error.message);
+            if (attempt === MAX_RETRIES) {
+                throw error;
+            }
+            const waitTime = retryDelay * attempt;
+            console.log(`  ⏳ Thử lại sau ${waitTime/1000}s...`);
+            await new Promise(r => setTimeout(r, waitTime));
         }
-        console.log(`  ⏳ Thử lại sau ${retryDelay/1000}s...`);
-        await new Promise(r => setTimeout(r, retryDelay * attempt));
-      }
     }
   }
 
