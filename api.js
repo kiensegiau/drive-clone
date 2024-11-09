@@ -632,8 +632,6 @@ class DriveAPI {
     return Promise.resolve();
   }
 
-  
-
   async start(sourceFolderId) {
     console.log("🚀 Bắt đầu chương trình...");
 

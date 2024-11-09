@@ -25,27 +25,29 @@ const DOWNLOAD_CONFIG = {
   RETRY_DELAY: 1000,
 };
 
-const CHROME_CONFIG = {
-  executablePath: process.platform === 'win32' 
-    ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-    : '/usr/bin/google-chrome',
-  userDataDir: process.platform === 'win32'
-    ? path.join(os.homedir(), 'AppData/Local/Google/Chrome/User Data')
-    : path.join(os.homedir(), '.config/google-chrome'),
+const BROWSER_CONFIG = {
+  chrome: {
+    executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    userDataDir: "C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
+    defaultProfile: 'Default'
+  },
+  edge: {
+    executablePath: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    userDataDir: "C:\\Users\\Admin\\AppData\\Local\\Microsoft\\Edge\\User Data",
+    defaultProfile: 'Default'
+  },
   defaultArgs: [
     "--start-maximized",
     "--enable-extensions",
     "--remote-debugging-port=9222",
-    "--disable-dev-shm-usage",
     "--no-sandbox",
     "--disable-setuid-sandbox"
-  ],
-  defaultProfile: 'Default'
+  ]
 };
 
 module.exports = {
   NETWORK_CONFIG,
   VIDEO_ITAGS,
   DOWNLOAD_CONFIG,
-  CHROME_CONFIG
+  BROWSER_CONFIG
 };
