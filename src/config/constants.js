@@ -1,5 +1,5 @@
-const path = require('path');
-const os = require('os');
+const path = require("path");
+const os = require("os");
 
 const NETWORK_CONFIG = {
   CHUNK_SIZE: 50 * 1024 * 1024,
@@ -27,27 +27,29 @@ const DOWNLOAD_CONFIG = {
 
 const BROWSER_CONFIG = {
   chrome: {
-    executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    executablePath:
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     userDataDir: "C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
-    defaultProfile: 'Default'
+    defaultProfile: "Default",
   },
   edge: {
-    executablePath: "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    executablePath:
+      "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     userDataDir: "C:\\Users\\Admin\\AppData\\Local\\Microsoft\\Edge\\User Data",
-    defaultProfile: 'Default'
+    defaultProfile: "Default",
   },
   defaultArgs: [
     "--start-maximized",
     "--enable-extensions",
     "--remote-debugging-port=9222",
     "--no-sandbox",
-    "--disable-setuid-sandbox"
-  ]
+    "--disable-setuid-sandbox",
+  ],
 };
 
 module.exports = {
   NETWORK_CONFIG,
   VIDEO_ITAGS,
   DOWNLOAD_CONFIG,
-  BROWSER_CONFIG
+  BROWSER_CONFIG,
 };

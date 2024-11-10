@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const axios = require("axios");
+const ChromeManager = require("./ChromeManager");
 
 class PDFDownloader {
   constructor(driveAPI) {
@@ -14,6 +15,7 @@ class PDFDownloader {
     this.cookies = null;
     this.userAgent = null;
     this.driveAPI = driveAPI;
+    this.chromeManager = ChromeManager.getInstance();
 
     [this.outputDir, this.tempDir].forEach((dir) => {
       if (!fs.existsSync(dir)) {
@@ -22,22 +24,29 @@ class PDFDownloader {
     });
   }
 
-  async downloadPDF(fileId, fileName, targetFolderId) {
+  async downloadPDF(fileId, fileName, targetFolderId, profileId = null) {
     const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
     const outputPath = path.join(this.tempDir, safeFileName);
 
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
       await this.downloadFromDriveAPI(fileId, outputPath, targetFolderId);
-      return outputPath;
+      return {
+        success: true,
+        filePath: outputPath,
+        method: "api",
+      };
     } catch (error) {
       if (
         error?.error?.code === 403 ||
         error.message.includes("cannotDownloadFile")
       ) {
         console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
-        await this.captureAndCreatePDF(fileId, outputPath, targetFolderId);
-        return outputPath;
+        return await this.captureAndCreatePDF(
+          fileId,
+          outputPath,
+          targetFolderId
+        );
       }
       throw error;
     }
@@ -103,26 +112,11 @@ class PDFDownloader {
   }
 
   async captureAndCreatePDF(fileId, outputPath, targetFolderId) {
-    await this.killChrome();
-    this.pageRequests.clear();
-
-    this.browser = await puppeteer.launch({
-      headless: false,
-      channel: "chrome",
-      executablePath:
-        "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-      args: [
-        "--start-maximized",
-        "--user-data-dir=C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
-        "--enable-extensions",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--disable-web-security",
-      ],
-      defaultViewport: null,
-    });
-
     try {
+      this.pageRequests.clear();
+      
+      this.browser = await this.chromeManager.getBrowser();
+      
       const page = await this.browser.newPage();
       this.page = page;
       console.log("✅ Đã tạo tab mới");
@@ -253,7 +247,8 @@ class PDFDownloader {
         error: error.message,
       };
     } finally {
-      if (this.browser) await this.browser.close();
+      // Không đóng browser ở đây nữa
+      // if (this.browser) await this.browser.close();
     }
   }
 

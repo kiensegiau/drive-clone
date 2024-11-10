@@ -6,6 +6,7 @@ const axios = require("axios");
 const fetch = require("node-fetch");
 const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../config/auth.js"); // Import auth config
+const ChromeManager = require("./ChromeManager");
 
 class VideoHandler {
   constructor() {
@@ -18,6 +19,7 @@ class VideoHandler {
     this.processingVideo = false;
     this.TEMP_DIR = path.join(__dirname, "temp");
     this.cookies = null;
+    this.chromeManager = ChromeManager.getInstance();
 
     // Tạo thư mục temp nếu chưa tồn tại
     if (!fs.existsSync(this.TEMP_DIR)) {
@@ -64,7 +66,7 @@ class VideoHandler {
     throw new Error("Cần xác thực Google Drive trước khi upload");
   }
 
-  async processVideo(fileId, fileName, targetFolderId, depth = 0) {
+  async processVideo(fileId, fileName, targetFolderId, depth = 0, profileId = null) {
     const indent = "  ".repeat(depth);
     let browser;
     let videoUrl = null;
@@ -92,22 +94,7 @@ class VideoHandler {
         await new Promise((r) => setTimeout(r, 1000));
 
         console.log(`${indent}🚀 Khởi động Chrome...`);
-        browser = await puppeteer.launch({
-          headless: false,
-          channel: "chrome",
-          executablePath:
-            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-          args: [
-            "--start-maximized",
-            "--user-data-dir=C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
-            "--enable-extensions",
-            "--remote-debugging-port=9222",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-          ],
-          defaultViewport: null,
-          ignoreDefaultArgs: ["--enable-automation"],
-        });
+        browser = await this.chromeManager.getBrowser(profileId);
 
         const pages = await browser.pages();
         this.page = pages[0] || (await browser.newPage());
@@ -128,8 +115,6 @@ class VideoHandler {
             console.log(`${indent}⏰ Timeout sau 30s`);
             reject(new Error("Timeout chờ URL video"));
           }, 30000);
-
-         
         });
 
         // Bắt response
@@ -146,13 +131,17 @@ class VideoHandler {
               if (playerResponse) {
                 const data = JSON.parse(playerResponse);
                 if (data.streamingData?.formats) {
-                  console.log(`${indent}✨ Tìm thấy formats trong player_response!`);
+                  console.log(
+                    `${indent}✨ Tìm thấy formats trong player_response!`
+                  );
                   const videoFormats = data.streamingData.formats
                     .filter((format) => format.mimeType?.includes("video/mp4"))
                     .sort((a, b) => (b.height || 0) - (a.height || 0));
 
                   if (videoFormats.length > 0) {
-                    console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${videoFormats[0].height}p`);
+                    console.log(
+                      `${indent}🎯 Chọn chất lượng cao nhất: ${videoFormats[0].height}p`
+                    );
                     resolveVideoUrl(videoFormats[0].url); // Sử dụng resolveVideoUrl thay vì resolve
                     return;
                   }
@@ -160,23 +149,28 @@ class VideoHandler {
               }
 
               // Thử cách 2: Legacy API
-              const fmt_stream_map = params.get('fmt_stream_map');
+              const fmt_stream_map = params.get("fmt_stream_map");
               if (fmt_stream_map) {
-                console.log(`${indent}🎥 Tìm thấy fmt_stream_map:`, fmt_stream_map);
-                const streams = fmt_stream_map.split(',')
-                  .map(stream => {
-                    const [itag, url] = stream.split('|');
+                console.log(
+                  `${indent}🎥 Tìm thấy fmt_stream_map:`,
+                  fmt_stream_map
+                );
+                const streams = fmt_stream_map
+                  .split(",")
+                  .map((stream) => {
+                    const [itag, url] = stream.split("|");
                     return { itag: parseInt(itag), url };
                   })
                   .sort((a, b) => b.itag - a.itag);
 
                 if (streams.length > 0) {
-                  console.log(`${indent}🎯 Chọn stream chất lượng cao nhất (itag=${streams[0].itag})`);
+                  console.log(
+                    `${indent}🎯 Chọn stream chất lượng cao nhất (itag=${streams[0].itag})`
+                  );
                   resolveVideoUrl(streams[0].url); // Sử dụng resolveVideoUrl thay vì resolve
                   return;
                 }
               }
-
             } catch (error) {
               console.error(`${indent}❌ Lỗi xử lý response:`, error);
               rejectVideoUrl(error); // Sử dụng rejectVideoUrl thay vì reject nếu có lỗi
@@ -218,8 +212,6 @@ class VideoHandler {
         // Lấy cookies trước khi đóng browser
         this.cookies = await this.page.cookies();
 
-        await browser.close();
-        browser = null;
         return url;
       });
 
@@ -278,19 +270,10 @@ class VideoHandler {
       console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
       return false;
     } finally {
-      if (browser) {
-        try {
-          await browser.close();
-        } catch (e) {
-          console.error(`${indent}⚠️ Không thể đóng browser:`, e.message);
-        }
-      }
-
-      
+      // Không đóng browser ở đây nữa
+      // if (browser) await browser.close();
     }
   }
-
-  
 
   // Thêm helper method để parse itag từ URL
   getItagFromUrl(url) {
@@ -374,11 +357,11 @@ class VideoHandler {
 
   async downloadVideoWithChunks(url, outputPath, retryCount = 0) {
     const MAX_DOWNLOAD_RETRIES = 3;
-    
+
     try {
       // Thêm kiểm tra URL
-      if (!url || typeof url !== 'string') {
-        throw new Error('URL video không hợp lệ');
+      if (!url || typeof url !== "string") {
+        throw new Error("URL video không hợp lệ");
       }
 
       // Đảm bảo thư mục tồn tại trước khi tạo file
@@ -454,25 +437,41 @@ class VideoHandler {
           const stats = fs.statSync(outputPath);
           if (stats.size === 0) {
             if (retryCount < MAX_DOWNLOAD_RETRIES) {
-              console.log(`\n⚠️ File tải xuống rỗng, đang thử lại lần ${retryCount + 1}...`);
+              console.log(
+                `\n⚠️ File tải xuống rỗng, đang thử lại lần ${
+                  retryCount + 1
+                }...`
+              );
               writer.close();
-              await new Promise(r => setTimeout(r, 2000)); // Đợi 2s trước khi thử lại
-              return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
+              await new Promise((r) => setTimeout(r, 2000)); // Đợi 2s trước khi thử lại
+              return this.downloadVideoWithChunks(
+                url,
+                outputPath,
+                retryCount + 1
+              );
             }
-            reject(new Error('File tải xuống rỗng sau nhiều lần thử'));
+            reject(new Error("File tải xuống rỗng sau nhiều lần thử"));
             return;
           }
 
           if (stats.size !== fileSize) {
             if (retryCount < MAX_DOWNLOAD_RETRIES) {
-              console.log(`\n⚠️ Kích thước không khớp (${stats.size} != ${fileSize}), đang thử lại lần ${retryCount + 1}...`);
+              console.log(
+                `\n⚠️ Kích thước không khớp (${
+                  stats.size
+                } != ${fileSize}), đang thử lại lần ${retryCount + 1}...`
+              );
               writer.close();
               // Xóa file không hoàn chỉnh
               if (fs.existsSync(outputPath)) {
                 fs.unlinkSync(outputPath);
               }
-              await new Promise(r => setTimeout(r, 2000));
-              return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
+              await new Promise((r) => setTimeout(r, 2000));
+              return this.downloadVideoWithChunks(
+                url,
+                outputPath,
+                retryCount + 1
+              );
             }
             reject(new Error(`Kích thước file không khớp sau nhiều lần thử`));
             return;
@@ -509,8 +508,10 @@ class VideoHandler {
         fs.unlinkSync(outputPath);
       }
       if (retryCount < MAX_DOWNLOAD_RETRIES) {
-        console.log(`\n⚠️ Lỗi tải xuống, đang thử lại lần ${retryCount + 1}...`);
-        await new Promise(r => setTimeout(r, 2000));
+        console.log(
+          `\n⚠️ Lỗi tải xuống, đang thử lại lần ${retryCount + 1}...`
+        );
+        await new Promise((r) => setTimeout(r, 2000));
         return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
       }
       throw error;
@@ -570,7 +571,7 @@ class VideoHandler {
     try {
       // Kiểm tra đầu vào
       if (!filePath || !fileName || !folderId || !mimeType) {
-        throw new Error('Thiếu thông tin upload');
+        throw new Error("Thiếu thông tin upload");
       }
 
       // Kiểm tra file tồn tại và kích thước
@@ -583,7 +584,8 @@ class VideoHandler {
         throw new Error(`File rỗng: ${filePath}`);
       }
 
-      if (stats.size < 1024) { // 1KB
+      if (stats.size < 1024) {
+        // 1KB
         throw new Error(`File quá nhỏ (${stats.size} bytes), có thể bị lỗi`);
       }
 
@@ -660,18 +662,18 @@ class VideoHandler {
 
       // Kiểm tra kết quả upload
       if (!response.data || !response.data.id) {
-        throw new Error('Upload thất bại: Không nhận được thông tin file');
+        throw new Error("Upload thất bại: Không nhận được thông tin file");
       }
 
       // Verify file đã upload
       const uploadedFile = await drive.files.get({
         fileId: response.data.id,
-        fields: 'size,mimeType',
-        supportsAllDrives: true
+        fields: "size,mimeType",
+        supportsAllDrives: true,
       });
 
       if (!uploadedFile.data || uploadedFile.data.size != stats.size) {
-        throw new Error('File upload không khớp kích thước gốc');
+        throw new Error("File upload không khớp kích thước gốc");
       }
 
       return true;
