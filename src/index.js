@@ -1,9 +1,38 @@
 const DriveAPI = require("./api/DriveAPI");
+const fs = require('fs');
+const path = require('path');
+
+function cleanupTempFiles() {
+  const tempDir = path.join(process.cwd(), 'temp');
+  
+  // Tạo thư mục temp nếu chưa tồn tại
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true });
+    return;
+  }
+
+  // Đọc tất cả files trong thư mục temp
+  const files = fs.readdirSync(tempDir);
+  
+  console.log(`🧹 Đang dọn dẹp ${files.length} file tạm...`);
+  
+  for (const file of files) {
+    try {
+      const filePath = path.join(tempDir, file);
+      fs.unlinkSync(filePath);
+    } catch (error) {
+      console.warn(`⚠️ Không thể xóa file ${file}:`, error.message);
+    }
+  }
+}
 
 async function main() {
   console.log("🎬 Bắt đầu chương trình drive-clone");
 
   try {
+    // Dọn dẹp files tạm trước khi bắt đầu
+    cleanupTempFiles();
+
     const driveAPI = new DriveAPI();
     await driveAPI.authenticate();
 

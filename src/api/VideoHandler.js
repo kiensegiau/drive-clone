@@ -129,9 +129,7 @@ class VideoHandler {
             reject(new Error("Timeout chờ URL video"));
           }, 30000);
 
-          checkIntervalId = setInterval(() => {
-            console.log(`${indent}🔄 Đang chờ URL video...`);
-          }, 5000);
+         
         });
 
         // Bắt response
@@ -288,16 +286,7 @@ class VideoHandler {
         }
       }
 
-      // Dọn dẹp files tạm
-      for (const file of tempFiles) {
-        try {
-          if (fs.existsSync(file)) {
-            fs.unlinkSync(file);
-          }
-        } catch (e) {
-          console.error(`${indent}⚠️ Không thể xóa file tạm: ${file}`);
-        }
-      }
+      
     }
   }
 
@@ -383,8 +372,15 @@ class VideoHandler {
     return itagQualities[itag] || 0;
   }
 
-  async downloadVideoWithChunks(url, outputPath) {
+  async downloadVideoWithChunks(url, outputPath, retryCount = 0) {
+    const MAX_DOWNLOAD_RETRIES = 3;
+    
     try {
+      // Thêm kiểm tra URL
+      if (!url || typeof url !== 'string') {
+        throw new Error('URL video không hợp lệ');
+      }
+
       // Đảm bảo thư mục tồn tại trước khi tạo file
       const outputDir = path.dirname(outputPath);
       if (!fs.existsSync(outputDir)) {
@@ -453,13 +449,35 @@ class VideoHandler {
       }
 
       return new Promise((resolve, reject) => {
-        writer.on("error", (error) => {
-          console.error("\n❌ Lỗi ghi file:", error.message);
-          writer.close();
-          reject(error);
-        });
+        writer.on("finish", async () => {
+          // Kiểm tra file sau khi tải xong
+          const stats = fs.statSync(outputPath);
+          if (stats.size === 0) {
+            if (retryCount < MAX_DOWNLOAD_RETRIES) {
+              console.log(`\n⚠️ File tải xuống rỗng, đang thử lại lần ${retryCount + 1}...`);
+              writer.close();
+              await new Promise(r => setTimeout(r, 2000)); // Đợi 2s trước khi thử lại
+              return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
+            }
+            reject(new Error('File tải xuống rỗng sau nhiều lần thử'));
+            return;
+          }
 
-        writer.on("finish", () => {
+          if (stats.size !== fileSize) {
+            if (retryCount < MAX_DOWNLOAD_RETRIES) {
+              console.log(`\n⚠️ Kích thước không khớp (${stats.size} != ${fileSize}), đang thử lại lần ${retryCount + 1}...`);
+              writer.close();
+              // Xóa file không hoàn chỉnh
+              if (fs.existsSync(outputPath)) {
+                fs.unlinkSync(outputPath);
+              }
+              await new Promise(r => setTimeout(r, 2000));
+              return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
+            }
+            reject(new Error(`Kích thước file không khớp sau nhiều lần thử`));
+            return;
+          }
+
           const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
           const avgSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(2);
           process.stdout.write("\n");
@@ -468,10 +486,33 @@ class VideoHandler {
           resolve();
         });
 
+        writer.on("error", (error) => {
+          console.error("\n❌ Lỗi ghi file:", error.message);
+          writer.close();
+          if (retryCount < MAX_DOWNLOAD_RETRIES) {
+            console.log(`\n⚠️ Đang thử lại lần ${retryCount + 1}...`);
+            setTimeout(() => {
+              this.downloadVideoWithChunks(url, outputPath, retryCount + 1)
+                .then(resolve)
+                .catch(reject);
+            }, 2000);
+          } else {
+            reject(error);
+          }
+        });
+
         writer.end();
       });
     } catch (error) {
-      console.error("\n❌ Lỗi:", error.message);
+      // Xóa file nếu có lỗi
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+      if (retryCount < MAX_DOWNLOAD_RETRIES) {
+        console.log(`\n⚠️ Lỗi tải xuống, đang thử lại lần ${retryCount + 1}...`);
+        await new Promise(r => setTimeout(r, 2000));
+        return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
+      }
       throw error;
     }
   }
@@ -527,15 +568,23 @@ class VideoHandler {
 
   async uploadFile(filePath, fileName, folderId, mimeType) {
     try {
-      // Kiểm tra file tồn tại
+      // Kiểm tra đầu vào
+      if (!filePath || !fileName || !folderId || !mimeType) {
+        throw new Error('Thiếu thông tin upload');
+      }
+
+      // Kiểm tra file tồn tại và kích thước
       if (!fs.existsSync(filePath)) {
         throw new Error(`File không tồn tại: ${filePath}`);
       }
 
-      // Kiểm tra kích thước file
       const stats = fs.statSync(filePath);
       if (stats.size === 0) {
         throw new Error(`File rỗng: ${filePath}`);
+      }
+
+      if (stats.size < 1024) { // 1KB
+        throw new Error(`File quá nhỏ (${stats.size} bytes), có thể bị lỗi`);
       }
 
       console.log(`📤 Bắt đầu upload ${fileName}...`);
@@ -608,6 +657,22 @@ class VideoHandler {
         },
         supportsAllDrives: true,
       });
+
+      // Kiểm tra kết quả upload
+      if (!response.data || !response.data.id) {
+        throw new Error('Upload thất bại: Không nhận được thông tin file');
+      }
+
+      // Verify file đã upload
+      const uploadedFile = await drive.files.get({
+        fileId: response.data.id,
+        fields: 'size,mimeType',
+        supportsAllDrives: true
+      });
+
+      if (!uploadedFile.data || uploadedFile.data.size != stats.size) {
+        throw new Error('File upload không khớp kích thước gốc');
+      }
 
       return true;
     } catch (error) {
