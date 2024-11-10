@@ -99,7 +99,7 @@ class VideoHandler {
             "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
           args: [
             "--start-maximized",
-            "--user-data-dir=C:\\Users\\phanhuukien2001\\AppData\\Local\\Google\\Chrome\\User Data",
+            "--user-data-dir=C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
             "--enable-extensions",
             "--remote-debugging-port=9222",
             "--no-sandbox",
@@ -137,55 +137,52 @@ class VideoHandler {
         // Bắt response
         this.page.on("response", async (response) => {
           const url = response.url();
-          try {
-            if (url.includes("get_video_info")) {
+          if (url.includes("get_video_info")) {
+            try {
               console.log(`${indent}🎯 Đang xử lý get_video_info response...`);
               const text = await response.text();
               const params = new URLSearchParams(text);
+
+              // Thử cách 1: Modern API
               const playerResponse = params.get("player_response");
               if (playerResponse) {
                 const data = JSON.parse(playerResponse);
                 if (data.streamingData?.formats) {
-                  console.log(
-                    `${indent}✨ Tìm thấy formats trong get_video_info!`
-                  );
+                  console.log(`${indent}✨ Tìm thấy formats trong player_response!`);
                   const videoFormats = data.streamingData.formats
                     .filter((format) => format.mimeType?.includes("video/mp4"))
                     .sort((a, b) => (b.height || 0) - (a.height || 0));
 
                   if (videoFormats.length > 0) {
-                    const bestFormat =
-                      videoFormats.find((f) => f.height === 1080) ||
-                      videoFormats.find((f) => f.height === 720) ||
-                      videoFormats[0];
-
-                    // Format lại URL video
-                    let videoUrl = decodeURIComponent(bestFormat.url);
-
-                    // Thêm parameters cần thiết
-                    if (!videoUrl.includes("&driveid=")) {
-                      videoUrl += `&driveid=${fileId}`;
-                    }
-                    if (!videoUrl.includes("&authuser=")) {
-                      videoUrl += "&authuser=0";
-                    }
-
-                    console.log(
-                      `${indent}🎯 Tìm thấy URL video chất lượng ${bestFormat.height}p`
-                    );
-                    console.log(
-                      `${indent}🔗 URL: ${videoUrl.substring(0, 100)}...`
-                    );
-
-                    clearTimeout(timeoutId);
-                    clearInterval(checkIntervalId);
-                    resolveVideoUrl(videoUrl);
+                    console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${videoFormats[0].height}p`);
+                    resolveVideoUrl(videoFormats[0].url); // Sử dụng resolveVideoUrl thay vì resolve
+                    return;
                   }
                 }
               }
+
+              // Thử cách 2: Legacy API
+              const fmt_stream_map = params.get('fmt_stream_map');
+              if (fmt_stream_map) {
+                console.log(`${indent}🎥 Tìm thấy fmt_stream_map:`, fmt_stream_map);
+                const streams = fmt_stream_map.split(',')
+                  .map(stream => {
+                    const [itag, url] = stream.split('|');
+                    return { itag: parseInt(itag), url };
+                  })
+                  .sort((a, b) => b.itag - a.itag);
+
+                if (streams.length > 0) {
+                  console.log(`${indent}🎯 Chọn stream chất lượng cao nhất (itag=${streams[0].itag})`);
+                  resolveVideoUrl(streams[0].url); // Sử dụng resolveVideoUrl thay vì resolve
+                  return;
+                }
+              }
+
+            } catch (error) {
+              console.error(`${indent}❌ Lỗi xử lý response:`, error);
+              rejectVideoUrl(error); // Sử dụng rejectVideoUrl thay vì reject nếu có lỗi
             }
-          } catch (error) {
-            console.log(`${indent}⚠️ Lỗi đọc response:`, error.message);
           }
         });
 
@@ -304,147 +301,7 @@ class VideoHandler {
     }
   }
 
-  async processVideoQueue() {
-    this.processingVideo = true;
-    try {
-      while (this.videoQueue.length > 0) {
-        const videoTask = this.videoQueue.shift();
-        const { file, depth } = videoTask;
-
-        try {
-          await this.killChrome();
-
-          const browser = await puppeteer.launch({
-            headless: false,
-            channel: "chrome",
-            executablePath:
-              "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-            args: [
-              "--start-maximized",
-              "--user-data-dir=C:\\Users\\phanhuukien2001\\AppData\\Local\\Google\\Chrome\\User Data",
-              "--enable-extensions",
-              "--remote-debugging-port=9222",
-            ],
-            defaultViewport: null,
-            ignoreDefaultArgs: ["--enable-automation", "--disable-extensions"],
-          });
-
-          const videoUrl = await this.getVideoUrl(browser, file.id);
-
-          if (videoUrl) {
-            const downloadStarted = await this.startDownload(
-              videoUrl,
-              file,
-              null,
-              depth
-            );
-
-            if (downloadStarted) {
-              await browser.close();
-              await this.killChrome();
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-        } catch (error) {
-          console.error(
-            `${"  ".repeat(depth)}❌ Lỗi xử l video ${file.name}:`,
-            error.message
-          );
-        }
-      }
-    } finally {
-      this.processingVideo = false;
-    }
-  }
-
-  async getVideoUrl(fileId, retries = 5) {
-    console.log(`🔍 Tìm URL video (${6 - retries}/5)...`);
-
-    try {
-      if (!this.browser) {
-        this.browser = await puppeteer.launch({
-          headless: "new",
-          executablePath:
-            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-          args: ["--no-sandbox", "--disable-setuid-sandbox"],
-        });
-      }
-
-      const page = await this.browser.newPage();
-      await page.setDefaultNavigationTimeout(60000);
-
-      // Bắt tất cả requests
-      const allRequests = new Set();
-      page.on("request", (request) => {
-        const url = request.url();
-        if (url.includes("videoplayback")) {
-          allRequests.add(url);
-        }
-      });
-
-      await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-        waitUntil: "networkidle0",
-        timeout: 60000,
-      });
-
-      // Đợi video load
-      let videoUrl = null;
-      const startTime = Date.now();
-      const timeout = 30000;
-
-      while (!videoUrl && Date.now() - startTime < timeout) {
-        const performanceUrls = await page.evaluate(() => {
-          return performance
-            .getEntriesByType("resource")
-            .filter((entry) => entry.name.includes("videoplayback"))
-            .map((entry) => entry.name);
-        });
-
-        const allVideoUrls = [...allRequests, ...performanceUrls];
-
-        if (allVideoUrls.length > 0) {
-          const sortedUrls = allVideoUrls
-            .filter((url) => url.includes("videoplayback"))
-            .sort((a, b) => {
-              const qualityA = this.getVideoQuality(this.getItagFromUrl(a));
-              const qualityB = this.getVideoQuality(this.getItagFromUrl(b));
-              return qualityB - qualityA;
-            });
-
-          if (sortedUrls.length > 0) {
-            videoUrl = sortedUrls[0];
-            const selectedQuality = this.getVideoQuality(
-              this.getItagFromUrl(videoUrl)
-            );
-            console.log(`✅ Tìm thấy URL (${selectedQuality}p)`);
-
-            if (selectedQuality < 1080 && retries > 1) {
-              console.log("⏳ Thử lại tìm chất lượng cao hơn...");
-              await new Promise((r) => setTimeout(r, 5000));
-              return this.getVideoUrl(fileId, retries - 1);
-            }
-            break;
-          }
-        }
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-
-      if (!videoUrl) {
-        throw new Error("Không tìm thấy URL video");
-      }
-
-      return videoUrl;
-    } catch (error) {
-      console.error(`❌ Lỗi:`, error.message);
-      if (retries > 1) {
-        console.log(`⏳ Thử lại sau 5s...`);
-        await new Promise((r) => setTimeout(r, 5000));
-        return this.getVideoUrl(fileId, retries - 1);
-      }
-      throw error;
-    }
-  }
+  
 
   // Thêm helper method để parse itag từ URL
   getItagFromUrl(url) {

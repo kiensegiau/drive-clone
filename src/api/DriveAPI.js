@@ -114,19 +114,105 @@ class DriveAPI {
       // Tạo/kiểm tra folder tổng
       const masterFolderId = await this.createMasterFolder();
 
-      // Tạo folder con với tên giống folder gốc
-      const subFolder = await this.createFolder(
-        sourceFolderName,
-        masterFolderId
-      );
-      console.log(`📁 Tạo folder clone: "${sourceFolderName}"`);
+      // Tạo/kiểm tra folder con với tên giống folder gốc
+      const subFolderId = await this.findOrCreateFolder(sourceFolderName, masterFolderId);
 
       // Bắt đầu xử lý từ folder gốc
-      await this.processFolder(sourceFolderId, subFolder.id);
+      await this.processFolder(sourceFolderId, subFolderId);
 
       console.log("\n✅ Hoàn thành toàn bộ!");
     } catch (error) {
       console.error("❌ Lỗi:", error.message);
+    }
+  }
+
+  async findFolder(name, parentId = null) {
+    try {
+      console.log(`🔍 Đang tìm folder: "${name}"`);
+      
+      let query = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      if (parentId) {
+        query += ` and '${parentId}' in parents`;
+      }
+
+      const response = await this.drive.files.list({
+        q: query,
+        fields: "files(id, name)",
+        spaces: "drive",
+      });
+
+      if (response.data.files.length > 0) {
+        const folder = response.data.files[0];
+        console.log(`📂 Tìm thấy folder: "${name}" (${folder.id})`);
+        return folder.id;
+      }
+
+      console.log(`📂 Không tìm thấy folder: "${name}"`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Lỗi khi tìm folder "${name}":`, error.message);
+      throw error;
+    }
+  }
+
+  async createFolder(name, parentId = null) {
+    try {
+      console.log(`📁 Đang tạo folder mới: "${name}"`);
+
+      const folderMetadata = {
+        name: name,
+        mimeType: "application/vnd.google-apps.folder",
+      };
+      
+      if (parentId) {
+        folderMetadata.parents = [parentId];
+      }
+
+      const folder = await this.drive.files.create({
+        resource: folderMetadata,
+        fields: "id, name",
+      });
+
+      console.log(`✨ Đã tạo folder mới: "${name}" (${folder.data.id})`);
+      return folder.data.id;
+    } catch (error) {
+      console.error(`❌ Lỗi khi tạo folder "${name}":`, error.message);
+      throw error;
+    }
+  }
+
+  async findOrCreateFolder(name, parentId = null) {
+    const folderId = await this.findFolder(name, parentId);
+    if (folderId) return folderId;
+    return await this.createFolder(name, parentId);
+  }
+
+  async findFile(name, parentId = null) {
+    try {
+      console.log(`🔍 Đang tìm file: "${name}"`);
+      
+      let query = `name='${name}' and trashed=false`;
+      if (parentId) {
+        query += ` and '${parentId}' in parents`;
+      }
+
+      const response = await this.drive.files.list({
+        q: query,
+        fields: "files(id, name, mimeType, size)",
+        spaces: "drive",
+      });
+
+      if (response.data.files.length > 0) {
+        const file = response.data.files[0];
+        console.log(`📄 Tìm thấy file: "${name}" (${file.id})`);
+        return file;
+      }
+
+      console.log(`📄 Không tìm thấy file: "${name}"`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Lỗi khi tìm file "${name}":`, error.message);
+      throw error;
     }
   }
 
@@ -161,26 +247,6 @@ class DriveAPI {
         `${indent}📄 Tìm thấy ${files.length} files/folders trong folder nguồn`
       );
 
-      // Lấy danh sách files và folders hiện có trong folder đích
-      const existingResponse = await this.drive.files.list({
-        q: `'${targetFolderId}' in parents and trashed = false`,
-        fields: "files(id, name, mimeType)",
-        supportsAllDrives: true,
-        includeItemsFromAllDrives: true,
-      });
-      const existingFiles = existingResponse.data.files;
-      console.log(
-        `${indent}📄 Có ${existingFiles.length} files/folders trong folder đích`
-      );
-
-      // Tạo map để tra cứu nhanh
-      const existingItemsMap = new Map(
-        existingFiles.map((file) => [
-          file.name,
-          { id: file.id, mimeType: file.mimeType },
-        ])
-      );
-
       // Xử lý folders trước
       const folders = files.filter(
         (f) => f.mimeType === "application/vnd.google-apps.folder"
@@ -188,22 +254,12 @@ class DriveAPI {
       console.log(`${indent}📁 Số lượng folders cần xử lý: ${folders.length}`);
 
       for (const folder of folders) {
-        const existing = existingItemsMap.get(folder.name);
-        let targetSubFolderId;
-
-        if (
-          existing &&
-          existing.mimeType === "application/vnd.google-apps.folder"
-        ) {
-          console.log(`${indent}📂 Sử dụng folder đã tồn tại: ${folder.name}`);
-          targetSubFolderId = existing.id;
-        } else {
+        // Kiểm tra folder đã tồn tại
+        let targetSubFolderId = await this.findFolder(folder.name, targetFolderId);
+        
+        if (!targetSubFolderId) {
           console.log(`${indent}📁 Tạo mới folder: ${folder.name}`);
-          const newFolder = await this.createFolder(
-            folder.name,
-            targetFolderId
-          );
-          targetSubFolderId = newFolder.id;
+          targetSubFolderId = await this.createFolder(folder.name, targetFolderId);
         }
 
         // Xử lý đệ quy folder con
@@ -211,74 +267,96 @@ class DriveAPI {
       }
 
       // Xử lý files
-      const nonFolders = files.filter(
-        (f) => f.mimeType !== "application/vnd.google-apps.folder"
-      );
+      const nonFolders = files.filter(f => f.mimeType !== "application/vnd.google-apps.folder");
       console.log(`${indent}📄 Số lượng files cần xử lý: ${nonFolders.length}`);
 
-      for (const file of nonFolders) {
-        try {
-          const existing = existingItemsMap.get(file.name);
+      // Kiểm tra files tồn tại song song
+      const fileChecks = await Promise.all(
+        nonFolders.map(async (file) => {
+          const existingFile = await this.findFile(file.name, targetFolderId);
+          return {
+            file,
+            exists: !!existingFile
+          };
+        })
+      );
 
-          if (existing) {
-            console.log(`${indent}⏩ Bỏ qua file đã tồn tại: ${file.name}`);
-            continue;
-          }
+      // Lọc các file cần xử lý
+      const filesToProcess = fileChecks.filter(f => !f.exists).map(f => f.file);
+      
+      // Nhóm files theo loại
+      const videoFiles = filesToProcess.filter(f => f.mimeType.includes('video'));
+      const pdfFiles = filesToProcess.filter(f => f.mimeType === 'application/pdf');
+      const otherFiles = filesToProcess.filter(f => 
+        !f.mimeType.includes('video') && f.mimeType !== 'application/pdf'
+      );
 
-          if (file.mimeType.includes("video")) {
-            console.log(`${indent}🎥 Xử lý video: ${file.name}`);
-            const videoHandler = new VideoHandler(this.oauth2Client);
+      // Xử lý song song các video có thể tải qua API
+      if (videoFiles.length > 0) {
+        const videoHandler = new VideoHandler(this.oauth2Client, this.drive);
+        const videoChecks = await Promise.all(
+          videoFiles.map(async (file) => {
             try {
-              await videoHandler.processVideo(
-                file.id,
-                file.name,
-                targetFolderId,
-                depth
-              );
-            } catch (error) {
-              console.error(
-                `${indent}❌ Lỗi xử lý video ${file.name}:`,
-                error.message
-              );
-              // Tiếp tục với file tiếp theo
-              continue;
+              // Kiểm tra có thể tải trực tiếp không
+              await this.drive.files.get({ 
+                fileId: file.id, 
+                alt: "media",
+                supportsAllDrives: true
+              }, { responseType: 'stream' });
+              return { file, canUseAPI: true };
+            } catch {
+              return { file, canUseAPI: false };
             }
-          } else if (file.mimeType === "application/pdf") {
-            console.log(`${indent}📑 Xử lý PDF: ${file.name}`);
-            const pdfDownloader = new PDFDownloader(this);
-            try {
-              await pdfDownloader.downloadPDF(
-                file.id,
-                file.name,
-                targetFolderId
-              );
-            } catch (error) {
-              console.error(
-                `${indent}❌ Lỗi xử lý PDF ${file.name}:`,
-                error.message
-              );
-              // Tiếp tục với file tiếp theo
-              continue;
-            }
-          } else {
-            console.log(
-              `${indent}⚠️ Bỏ qua file không hỗ trợ: ${file.name} (${file.mimeType})`
-            );
-          }
-        } catch (error) {
-          console.error(
-            `${indent}❌ Lỗi xử lý file ${file.name}:`,
-            error.message
+          })
+        );
+
+        // Tải song song các file có thể dùng API
+        const apiFiles = videoChecks.filter(v => v.canUseAPI).map(v => v.file);
+        if (apiFiles.length > 0) {
+          console.log(`${indent}📥 Tải song song ${apiFiles.length} videos qua API...`);
+          await Promise.all(
+            apiFiles.map(file => 
+              videoHandler.processVideo(file.id, file.name, targetFolderId, depth)
+            )
           );
-          // Tiếp tục với file tiếp theo
-          continue;
         }
+
+        // Xử lý tuần tự các file cần dùng browser
+        const browserFiles = videoChecks.filter(v => !v.canUseAPI).map(v => v.file);
+        for (const file of browserFiles) {
+          console.log(`${indent}🎥 Xử lý video qua browser: ${file.name}`);
+          await videoHandler.processVideo(file.id, file.name, targetFolderId, depth);
+        }
+      }
+
+      // Xử lý PDF và các file khác (giữ nguyên xử lý tuần tự)
+      for (const file of pdfFiles) {
+        await this.processPDF(file, targetFolderId, depth);
+      }
+
+      for (const file of otherFiles) {
+        console.log(`${indent}⚠️ Bỏ qua file không hỗ trợ: ${file.name} (${file.mimeType})`);
       }
 
       console.log(`${indent}✅ Hoàn thành xử lý folder`);
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
-      // Không throw error để tiếp tục xử lý các folder khác
+    }
+  }
+
+  async processPDF(file, targetFolderId, depth) {
+    const indent = "  ".repeat(depth);
+    console.log(`${indent}📑 Xử lý PDF: ${file.name}`);
+    
+    try {
+      const pdfDownloader = new PDFDownloader(this);
+      await pdfDownloader.downloadPDF(
+        file.id,
+        file.name,
+        targetFolderId
+      );
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi xử lý PDF ${file.name}:`, error.message);
     }
   }
 
@@ -297,59 +375,8 @@ class DriveAPI {
   }
 
   async createMasterFolder() {
-    try {
-      const folderName = "video-drive-clone";
-
-      // Kiểm tra folder đã tồn tại chưa
-      const response = await this.drive.files.list({
-        q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-        fields: "files(id, name)",
-        spaces: "drive",
-      });
-
-      if (response.data.files.length > 0) {
-        // Folder đã tồn tại, sử dụng folder đầu tiên tìm thấy
-        console.log(`📂 Sử dụng folder tổng đã tồn tại: "${folderName}"`);
-        return response.data.files[0].id;
-      }
-
-      // Tạo folder mới nếu chưa tồn tại
-      const folderMetadata = {
-        name: folderName,
-        mimeType: "application/vnd.google-apps.folder",
-      };
-
-      const folder = await this.drive.files.create({
-        resource: folderMetadata,
-        fields: "id",
-      });
-
-      console.log(`📂 Đã tạo folder tổng mới: "${folderName}"`);
-      return folder.data.id;
-    } catch (error) {
-      console.error("❌ Lỗi khi tạo/kiểm tra folder tổng:", error.message);
-      throw error;
-    }
-  }
-
-  async createFolder(name, parentId) {
-    try {
-      const folderMetadata = {
-        name: name,
-        mimeType: "application/vnd.google-apps.folder",
-        parents: [parentId],
-      };
-
-      const folder = await this.drive.files.create({
-        resource: folderMetadata,
-        fields: "id, name",
-      });
-
-      return folder.data;
-    } catch (error) {
-      console.error("❌ Lỗi khi tạo folder:", error.message);
-      throw error;
-    }
+    const folderName = "video-drive-clone";
+    return await this.findOrCreateFolder(folderName);
   }
 
   async uploadFile(filePath, parentId = null) {
