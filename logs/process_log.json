@@ -1,542 +1,17 @@
 {
   "sessions": [
     {
-      "id": "1731322145969",
-      "startTime": "2024-11-11T10:49:05.969Z",
-      "endTime": null,
-      "totalFiles": 6,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T10:49:13.958Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:49:13.957Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:49:13.985Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:49:13.985Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:49:20.581Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T10:49:20.611Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T10:49:23.523Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "TN định tính mẫu.mp4",
-          "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-          "targetFolderId": "11wReA-zZ7tQAvW2fFdf-hgCIUHZliZ3L",
-          "startTime": "2024-11-11T10:49:23.523Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:49:30.879Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "TN định tính mẫu.mp4",
-          "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T10:49:42.193Z",
-          "type": "pdf",
-          "fileName": "DA_new(7).pdf",
-          "sourceId": "1w2YULOi68lrXncpbRhHP-qyMVjJEp-S0",
-          "targetId": "1sUuL-HH4H_mBf7YQ3h0LDXnugvRkcw6n",
-          "sourceUrl": "https://drive.google.com/file/d/1w2YULOi68lrXncpbRhHP-qyMVjJEp-S0",
-          "targetUrl": "https://drive.google.com/file/d/1sUuL-HH4H_mBf7YQ3h0LDXnugvRkcw6n",
-          "fileSize": {
-            "original": null,
-            "processed": 739433
-          },
-          "method": "api",
-          "status": "success",
-          "duration": 5313
-        },
-        {
-          "timestamp": "2024-11-11T10:49:43.310Z",
-          "type": "pdf",
-          "fileName": "DE_new(7).pdf",
-          "sourceId": "1FDevlAFxh3L0Hx6wwNqUgnTZ6bsgDlaC",
-          "targetId": "1qDQ7jD7V-8fYNQiImnQZgxbw9CE-8bnL",
-          "sourceUrl": "https://drive.google.com/file/d/1FDevlAFxh3L0Hx6wwNqUgnTZ6bsgDlaC",
-          "targetUrl": "https://drive.google.com/file/d/1qDQ7jD7V-8fYNQiImnQZgxbw9CE-8bnL",
-          "fileSize": {
-            "original": null,
-            "processed": 987982
-          },
-          "method": "api",
-          "status": "success",
-          "duration": 6428
-        },
-        {
-          "timestamp": "2024-11-11T10:49:53.442Z",
-          "type": "pdf",
-          "fileName": "DA_new(6).pdf",
-          "sourceId": "1tHlyPKkqE79AQVkHfd2UlOyhpSQHzwXv",
-          "targetId": "1FEBZDjNjPjTSvM6tSkpxkzGS7X6UXqxf",
-          "sourceUrl": "https://drive.google.com/file/d/1tHlyPKkqE79AQVkHfd2UlOyhpSQHzwXv",
-          "targetUrl": "https://drive.google.com/file/d/1FEBZDjNjPjTSvM6tSkpxkzGS7X6UXqxf",
-          "fileSize": {
-            "original": null,
-            "processed": 135885
-          },
-          "method": "api",
-          "status": "success",
-          "duration": 4771
-        },
-        {
-          "timestamp": "2024-11-11T10:49:57.554Z",
-          "type": "pdf",
-          "fileName": "DE_new(6).pdf",
-          "sourceId": "1JFAjRw1f-0XyzWgTtrq9dg7ZutQHG80L",
-          "targetId": "1R93sI1Ytjftuaw_GE2IDqYBJuYxqywT5",
-          "sourceUrl": "https://drive.google.com/file/d/1JFAjRw1f-0XyzWgTtrq9dg7ZutQHG80L",
-          "targetUrl": "https://drive.google.com/file/d/1R93sI1Ytjftuaw_GE2IDqYBJuYxqywT5",
-          "fileSize": {
-            "original": null,
-            "processed": 189902
-          },
-          "method": "api",
-          "status": "success",
-          "duration": 8884
-        }
-      ]
-    },
-    {
-      "id": "1731322348917",
-      "startTime": "2024-11-11T10:52:28.917Z",
-      "endTime": null,
-      "totalFiles": 2,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T10:52:36.726Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:52:36.725Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:52:36.757Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:52:36.757Z"
-        }
-      ]
-    },
-    {
-      "id": "1731322496406",
-      "startTime": "2024-11-11T10:54:56.406Z",
-      "endTime": null,
-      "totalFiles": 6,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T10:55:05.326Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:55:05.326Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:55:05.352Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ",
-          "startTime": "2024-11-11T10:55:05.352Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:55:11.040Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T10:55:12.222Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T10:55:15.064Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "start",
-          "fileName": "TN định tính mẫu.mp4",
-          "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-          "targetFolderId": "11wReA-zZ7tQAvW2fFdf-hgCIUHZliZ3L",
-          "startTime": "2024-11-11T10:55:15.064Z"
-        },
-        {
-          "timestamp": "2024-11-11T10:55:21.625Z",
-          "type": "file",
-          "fileType": "video",
-          "status": "url_found",
-          "fileName": "TN định tính mẫu.mp4",
-          "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-          "quality": 1080,
-          "itag": 37
-        }
-      ]
-    },
-    {
-      "id": "1731322767472",
-      "startTime": "2024-11-11T10:59:27.472Z",
-      "endTime": null,
+      "id": "1731335549566",
+      "startTime": "2024-11-11T14:32:29.566Z",
+      "endTime": "2024-11-11T14:34:34.686Z",
       "totalFiles": 0,
       "processedFiles": 0,
       "errors": [],
       "logs": []
     },
     {
-      "id": "1731322864695",
-      "startTime": "2024-11-11T11:01:04.695Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [
-        {
-          "timestamp": "2024-11-11T11:01:20.048Z",
-          "error": "bestQuality is not defined",
-          "context": {
-            "type": "video_process",
-            "status": "error",
-            "fileName": "Lý thuyết cơ bản_P2.mp4",
-            "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-            "error": "bestQuality is not defined",
-            "duration": 6564,
-            "timestamp": "2024-11-11T11:01:20.048Z"
-          }
-        },
-        {
-          "timestamp": "2024-11-11T11:01:20.071Z",
-          "error": "bestQuality is not defined",
-          "context": {
-            "type": "video_process",
-            "status": "error",
-            "fileName": "Lý thuyết cơ bản_P1.mp4",
-            "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-            "error": "bestQuality is not defined",
-            "duration": 6555,
-            "timestamp": "2024-11-11T11:01:20.071Z"
-          }
-        }
-      ],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T11:01:13.485Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:01:13.516Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:01:20.048Z",
-          "type": "video_process",
-          "status": "error",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "error": "bestQuality is not defined",
-          "duration": 6564
-        },
-        {
-          "timestamp": "2024-11-11T11:01:20.071Z",
-          "type": "video_process",
-          "status": "error",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "error": "bestQuality is not defined",
-          "duration": 6555
-        }
-      ]
-    },
-    {
-      "id": "1731322979935",
-      "startTime": "2024-11-11T11:02:59.935Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T11:03:08.281Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:03:08.311Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:03:12.652Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T11:03:12.726Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "quality": 1080,
-          "itag": 37
-        }
-      ]
-    },
-    {
-      "id": "1731323114060",
-      "startTime": "2024-11-11T11:05:14.060Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T11:05:23.484Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:05:23.514Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:05:28.031Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T11:05:28.083Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "quality": 1080,
-          "itag": 37
-        }
-      ]
-    },
-    {
-      "id": "1731323150418",
-      "startTime": "2024-11-11T11:05:50.418Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T11:05:58.675Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:05:58.698Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:06:03.206Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "quality": 1080,
-          "itag": 37
-        },
-        {
-          "timestamp": "2024-11-11T11:06:03.298Z",
-          "type": "video_process",
-          "status": "url_found",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "quality": 1080,
-          "itag": 37
-        }
-      ]
-    },
-    {
-      "id": "1731323181131",
-      "startTime": "2024-11-11T11:06:21.131Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [
-        {
-          "timestamp": "2024-11-11T11:06:36.205Z",
-          "error": "bestQuality is not defined",
-          "context": {
-            "type": "video_process",
-            "status": "error",
-            "fileName": "Lý thuyết cơ bản_P2.mp4",
-            "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-            "error": "bestQuality is not defined",
-            "duration": 6567,
-            "timestamp": "2024-11-11T11:06:36.205Z"
-          }
-        },
-        {
-          "timestamp": "2024-11-11T11:06:36.226Z",
-          "error": "bestQuality is not defined",
-          "context": {
-            "type": "video_process",
-            "status": "error",
-            "fileName": "Lý thuyết cơ bản_P1.mp4",
-            "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-            "error": "bestQuality is not defined",
-            "duration": 6556,
-            "timestamp": "2024-11-11T11:06:36.226Z"
-          }
-        }
-      ],
-      "logs": [
-        {
-          "timestamp": "2024-11-11T11:06:29.639Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:06:29.670Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
-        },
-        {
-          "timestamp": "2024-11-11T11:06:36.205Z",
-          "type": "video_process",
-          "status": "error",
-          "fileName": "Lý thuyết cơ bản_P2.mp4",
-          "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-          "error": "bestQuality is not defined",
-          "duration": 6567
-        },
-        {
-          "timestamp": "2024-11-11T11:06:36.226Z",
-          "type": "video_process",
-          "status": "error",
-          "fileName": "Lý thuyết cơ bản_P1.mp4",
-          "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-          "error": "bestQuality is not defined",
-          "duration": 6556
-        },
-        {
-          "timestamp": "2024-11-11T11:06:39.392Z",
-          "type": "video_process",
-          "status": "start",
-          "fileName": "TN định tính mẫu.mp4",
-          "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-          "targetFolderId": "11wReA-zZ7tQAvW2fFdf-hgCIUHZliZ3L"
-        }
-      ]
-    },
-    {
-      "id": "1731323290283",
-      "startTime": "2024-11-11T11:08:10.283Z",
-      "endTime": null,
-      "totalFiles": 0,
-      "processedFiles": 0,
-      "errors": [],
-      "logs": []
-    },
-    {
-      "id": "1731323435819",
-      "startTime": "2024-11-11T11:10:35.819Z",
+      "id": "1731335674684",
+      "startTime": "2024-11-11T14:34:34.684Z",
       "endTime": null,
       "totalFiles": 0,
       "processedFiles": 0,
@@ -545,161 +20,275 @@
     }
   ],
   "currentSession": {
-    "id": "1731323435819",
-    "startTime": "2024-11-11T11:10:35.819Z",
+    "id": "1731335674684",
+    "startTime": "2024-11-11T14:34:34.684Z",
     "endTime": null,
-    "totalFiles": 0,
-    "processedFiles": 0,
+    "totalFiles": 9,
+    "processedFiles": 6,
     "errors": [],
     "logs": [
       {
-        "timestamp": "2024-11-11T11:10:43.411Z",
+        "timestamp": "2024-11-11T14:36:25.849Z",
         "type": "video_process",
-        "status": "start",
-        "fileName": "Lý thuyết cơ bản_P2.mp4",
-        "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-        "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
+        "status": "uploaded",
+        "fileName": "TN định tính mẫu_P1.mp4",
+        "fileId": "1VVHp-dHfLhYLIW3EcHxAsleE80hTyAqo",
+        "targetFolderId": "1tMRmtezSiKlUXUtjw7WQfkdpqI4sIUr8",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:35:02.322Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:35:14.059Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:35:44.589Z",
+            "fileSize": 129096554,
+            "duration": 42267
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:36:25.849Z",
+            "fileSize": 129096554,
+            "duration": 83527
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 129096554,
+        "duration": 83527
       },
       {
-        "timestamp": "2024-11-11T11:10:43.440Z",
+        "timestamp": "2024-11-11T14:36:25.847Z",
         "type": "video_process",
-        "status": "start",
-        "fileName": "Lý thuyết cơ bản_P1.mp4",
-        "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-        "targetFolderId": "1dqUrEUGTlXo0tw-0TaioVyHDk0nfnEhJ"
+        "status": "uploaded",
+        "fileName": "TN định tính mẫu_P3.mp4",
+        "fileId": "1mpKkDD3xmTtH_oaj3QYM6frzWslGm61Q",
+        "targetFolderId": "1tMRmtezSiKlUXUtjw7WQfkdpqI4sIUr8",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:35:02.354Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:35:14.023Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:35:48.603Z",
+            "fileSize": 135679565,
+            "duration": 46249
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:36:25.847Z",
+            "fileSize": 135679565,
+            "duration": 83493
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 135679565,
+        "duration": 83493
       },
       {
-        "timestamp": "2024-11-11T11:10:49.017Z",
+        "timestamp": "2024-11-11T14:36:25.343Z",
+        "type": "video_process",
+        "status": "uploaded",
+        "fileName": "TN định tính mẫu_P2.mp4",
+        "fileId": "1LSXa2SFEaaR8XQT0Ar7l7RWI09OdaQKD",
+        "targetFolderId": "1tMRmtezSiKlUXUtjw7WQfkdpqI4sIUr8",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:35:02.365Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:35:14.051Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:35:50.122Z",
+            "fileSize": 127731304,
+            "duration": 47757
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:36:25.343Z",
+            "fileSize": 127731304,
+            "duration": 82978
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 127731304,
+        "duration": 82978
+      },
+      {
+        "timestamp": "2024-11-11T14:38:09.504Z",
+        "type": "video_process",
+        "status": "uploaded",
+        "fileName": "Bài giảng_P5.mp4",
+        "fileId": "1M6HJ5yuijFxOX0Mj3-_Dn-8fdr78Doxr",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:36:33.176Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:36:39.791Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:37:21.275Z",
+            "fileSize": 150197232,
+            "duration": 48099
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:38:09.504Z",
+            "fileSize": 150197232,
+            "duration": 96328
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 150197232,
+        "duration": 96328
+      },
+      {
+        "timestamp": "2024-11-11T14:38:04.782Z",
+        "type": "video_process",
+        "status": "uploaded",
+        "fileName": "Bài giảng_P3.mp4",
+        "fileId": "17GxQ91XniMuOvUl1nzOk6nEd5-xn6BpG",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:36:33.188Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:36:38.995Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:37:22.181Z",
+            "fileSize": 160685929,
+            "duration": 48993
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:38:04.782Z",
+            "fileSize": 160685929,
+            "duration": 91594
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 160685929,
+        "duration": 91594
+      },
+      {
+        "timestamp": "2024-11-11T14:38:11.462Z",
+        "type": "video_process",
+        "status": "uploaded",
+        "fileName": "Bài giảng_P4.mp4",
+        "fileId": "1mAGQJ7xTWi4vaxLU2ID11g6RReADmjeD",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:36:33.197Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:36:39.761Z",
+            "quality": 1080
+          },
+          {
+            "status": "downloaded",
+            "timestamp": "2024-11-11T14:37:21.139Z",
+            "fileSize": 163636465,
+            "duration": 47942
+          },
+          {
+            "status": "uploaded",
+            "timestamp": "2024-11-11T14:38:11.462Z",
+            "fileSize": 163636465,
+            "duration": 98265
+          }
+        ],
+        "quality": 1080,
+        "fileSize": 163636465,
+        "duration": 98265
+      },
+      {
+        "timestamp": "2024-11-11T14:38:17.656Z",
         "type": "video_process",
         "status": "url_found",
-        "fileName": "Lý thuyết cơ bản_P2.mp4",
-        "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
+        "fileName": "Bài giảng_P6.mp4",
+        "fileId": "1dVNN32Wvc8u-bNxqA_WSPjPdT8SgayVl",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:38:11.967Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:38:17.656Z",
+            "quality": 1080
+          }
+        ],
         "quality": 1080
       },
       {
-        "timestamp": "2024-11-11T11:10:49.986Z",
+        "timestamp": "2024-11-11T14:38:17.625Z",
         "type": "video_process",
         "status": "url_found",
-        "fileName": "Lý thuyết cơ bản_P1.mp4",
-        "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-        "quality": 1080
-      },
-      {
-        "timestamp": "2024-11-11T11:11:21.452Z",
-        "type": "video_process",
-        "status": "downloaded",
-        "fileName": "Lý thuyết cơ bản_P1.mp4",
-        "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-        "fileSize": 173670407,
-        "duration": 38012
-      },
-      {
-        "timestamp": "2024-11-11T11:11:26.607Z",
-        "type": "video_process",
-        "status": "downloaded",
-        "fileName": "Lý thuyết cơ bản_P2.mp4",
-        "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-        "fileSize": 184355472,
-        "duration": 43196
-      },
-      {
-        "timestamp": "2024-11-11T11:11:59.743Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "Lý thuyết cơ bản_P1.mp4",
-        "fileId": "1jMngFrL1uEdJLHYIJHpuqOM90ENXiWIy",
-        "fileSize": 173670407,
-        "duration": 76303
-      },
-      {
-        "timestamp": "2024-11-11T11:12:03.056Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "Lý thuyết cơ bản_P2.mp4",
-        "fileId": "1Wh52hbqN0BhTyEt10jtZvb373CuU4LIf",
-        "fileSize": 184355472,
-        "duration": 79645
-      },
-      {
-        "timestamp": "2024-11-11T11:12:05.826Z",
-        "type": "video_process",
-        "status": "start",
-        "fileName": "TN định tính mẫu.mp4",
-        "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-        "targetFolderId": "11wReA-zZ7tQAvW2fFdf-hgCIUHZliZ3L"
-      },
-      {
-        "timestamp": "2024-11-11T11:12:13.129Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "TN định tính mẫu.mp4",
-        "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-        "quality": 1080
-      },
-      {
-        "timestamp": "2024-11-11T11:12:21.660Z",
-        "type": "video_process",
-        "status": "downloaded",
-        "fileName": "TN định tính mẫu.mp4",
-        "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-        "fileSize": 89886476,
-        "duration": 15834
-      },
-      {
-        "timestamp": "2024-11-11T11:12:36.853Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "TN định tính mẫu.mp4",
-        "fileId": "165nM-X16F_623Mb4qiH2TwIf9WPvIx3E",
-        "fileSize": 89886476,
-        "duration": 31027
-      },
-      {
-        "timestamp": "2024-11-11T11:12:44.938Z",
-        "type": "video_process",
-        "status": "start",
         "fileName": "Bài giảng_P2.mp4",
-        "fileId": "1xH-zjaWHs7aVdc2Oh3mm6Kc60X0e6btw",
-        "targetFolderId": "1r99AcYXeonNDOr3oYkv2lwGBoKLm1KXc"
-      },
-      {
-        "timestamp": "2024-11-11T11:12:44.950Z",
-        "type": "video_process",
-        "status": "start",
-        "fileName": "Bài giảng_P1.mp4",
-        "fileId": "1RgAtsZDcV_QoexDFn2f0DDOROxtRqvYK",
-        "targetFolderId": "1r99AcYXeonNDOr3oYkv2lwGBoKLm1KXc"
-      },
-      {
-        "timestamp": "2024-11-11T11:12:44.959Z",
-        "type": "video_process",
-        "status": "start",
-        "fileName": "Bài giảng_P9.mp4",
-        "fileId": "1DsBROTF0N37rA6fIjxQpDB4mhcgLnLwL",
-        "targetFolderId": "1r99AcYXeonNDOr3oYkv2lwGBoKLm1KXc"
-      },
-      {
-        "timestamp": "2024-11-11T11:12:50.613Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "Bài giảng_P2.mp4",
-        "fileId": "1xH-zjaWHs7aVdc2Oh3mm6Kc60X0e6btw",
+        "fileId": "1GkdVp53EK02FUmLJTll27qhwJqT4RMmU",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:38:11.974Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:38:17.625Z",
+            "quality": 1080
+          }
+        ],
         "quality": 1080
       },
       {
-        "timestamp": "2024-11-11T11:12:50.877Z",
+        "timestamp": "2024-11-11T14:38:18.502Z",
         "type": "video_process",
         "status": "url_found",
-        "fileName": "Bài giảng_P9.mp4",
-        "fileId": "1DsBROTF0N37rA6fIjxQpDB4mhcgLnLwL",
-        "quality": 1080
-      },
-      {
-        "timestamp": "2024-11-11T11:12:50.882Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "Bài giảng_P1.mp4",
-        "fileId": "1RgAtsZDcV_QoexDFn2f0DDOROxtRqvYK",
+        "fileName": "Bài giảng_P7.mp4",
+        "fileId": "1XawHuT7tZesW77B-EVk6Asxxw_Kl1ywN",
+        "targetFolderId": "1LKtix4U4GoeqK5XR3pABDZSzoyVC9znx",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T14:38:11.982Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T14:38:18.502Z",
+            "quality": 1080
+          }
+        ],
         "quality": 1080
       }
     ]

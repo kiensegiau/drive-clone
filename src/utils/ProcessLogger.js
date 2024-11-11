@@ -3,54 +3,24 @@ const path = require('path');
 
 class ProcessLogger {
   constructor() {
-    this.logFile = path.join(__dirname, '../../logs/process_log.json');
-    this.ensureLogDirectory();
-    this.loadExistingLog();
-    
-    // Đảm bảo cấu trúc logs luôn tồn tại
-    if (!this.logs) {
-      this.logs = {
-        sessions: [],
-        currentSession: null
-      };
-    }
-    if (!Array.isArray(this.logs.sessions)) {
-      this.logs.sessions = [];
-    }
+    this.logPath = path.join(__dirname, '../../logs/process_log.json');
+    this.loadLog();
   }
 
-  ensureLogDirectory() {
-    const dir = path.dirname(this.logFile);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    
-    // Tạo file log mới nếu chưa tồn tại
-    if (!fs.existsSync(this.logFile)) {
-      fs.writeFileSync(this.logFile, JSON.stringify({
-        sessions: [],
-        currentSession: null
-      }, null, 2));
-    }
-  }
-
-  loadExistingLog() {
+  loadLog() {
     try {
-      const content = fs.readFileSync(this.logFile, 'utf8');
-      this.logs = JSON.parse(content);
-      
-      // Kiểm tra và sửa cấu trúc nếu không hợp lệ
-      if (!this.logs || typeof this.logs !== 'object') {
+      if (fs.existsSync(this.logPath)) {
+        const data = fs.readFileSync(this.logPath, 'utf8');
+        this.logs = JSON.parse(data);
+      } else {
         this.logs = {
           sessions: [],
           currentSession: null
         };
-      }
-      if (!Array.isArray(this.logs.sessions)) {
-        this.logs.sessions = [];
+        this.saveLog();
       }
     } catch (error) {
-      console.log('⚠️ Tạo file log mới');
+      console.error('❌ Lỗi đọc log:', error);
       this.logs = {
         sessions: [],
         currentSession: null
@@ -59,13 +29,8 @@ class ProcessLogger {
   }
 
   startNewSession() {
-    // Đảm bảo sessions là mảng
-    if (!Array.isArray(this.logs.sessions)) {
-      this.logs.sessions = [];
-    }
-
     const sessionId = Date.now().toString();
-    const session = {
+    const newSession = {
       id: sessionId,
       startTime: new Date().toISOString(),
       endTime: null,
@@ -74,67 +39,105 @@ class ProcessLogger {
       errors: [],
       logs: []
     };
-    
-    this.logs.currentSession = session;
-    this.logs.sessions.push(session);
+
+    // Kết thúc session cũ nếu có
+    if (this.logs.currentSession) {
+      this.endSession(this.logs.currentSession.id);
+    }
+
+    // Cập nhật session mới
+    this.logs.sessions.push(newSession);
+    this.logs.currentSession = newSession;
     this.saveLog();
-    
+
     return sessionId;
   }
 
-  endSession(sessionId) {
-    const session = this.logs.sessions.find(s => s.id === sessionId);
-    if (session) {
-      session.endTime = new Date().toISOString();
-      this.logs.currentSession = null;
-      this.saveLog();
-    }
-  }
-
   logProcess(data) {
+    // Kiểm tra và tạo session mới nếu chưa có
+    if (!this.logs.currentSession) {
+      this.startNewSession();
+    }
+
     const logEntry = {
       timestamp: new Date().toISOString(),
       ...data
     };
 
     if (this.logs.currentSession) {
-      this.logs.currentSession.logs.push(logEntry);
-      
-      // Cập nhật thống kê
-      if (data.type === 'file') {
-        this.logs.currentSession.totalFiles++;
-        if (data.status === 'success') {
-          this.logs.currentSession.processedFiles++;
-        }
+      // Tìm log hiện có
+      const existingLog = this.logs.currentSession.logs.find(log => 
+        log.fileName === data.fileName && 
+        log.type === data.type &&
+        log.fileId === data.fileId
+      );
+
+      if (existingLog) {
+        // Cập nhật log hiện có
+        Object.assign(existingLog, {
+          timestamp: logEntry.timestamp,
+          status: data.status,
+          ...data,
+          history: [
+            ...existingLog.history || [],
+            {
+              status: data.status,
+              timestamp: logEntry.timestamp,
+              ...(data.quality && { quality: data.quality }),
+              ...(data.fileSize && { fileSize: data.fileSize }),
+              ...(data.duration && { duration: data.duration }),
+              ...(data.error && { error: data.error })
+            }
+          ]
+        });
+      } else {
+        // Tạo log mới
+        this.logs.currentSession.logs.push({
+          ...logEntry,
+          history: [{
+            status: data.status,
+            timestamp: logEntry.timestamp,
+            ...(data.quality && { quality: data.quality }),
+            ...(data.fileSize && { fileSize: data.fileSize }),
+            ...(data.duration && { duration: data.duration }),
+            ...(data.error && { error: data.error })
+          }]
+        });
       }
-      if (data.status === 'error') {
+
+      // Cập nhật thống kê
+      if (data.status === 'start') {
+        this.logs.currentSession.totalFiles++;
+      } else if (data.status === 'uploaded') {
+        this.logs.currentSession.processedFiles++;
+      } else if (data.status === 'error') {
         this.logs.currentSession.errors.push({
           timestamp: logEntry.timestamp,
           error: data.error,
-          context: data
+          fileName: data.fileName
         });
       }
-    }
 
-    this.saveLog();
+      this.saveLog();
+    }
   }
 
   saveLog() {
     try {
-      // Đảm bảo cấu trúc hợp lệ trước khi lưu
-      if (!this.logs || typeof this.logs !== 'object') {
-        this.logs = {
-          sessions: [],
-          currentSession: null
-        };
-      }
-      if (!Array.isArray(this.logs.sessions)) {
-        this.logs.sessions = [];
-      }
-
-      fs.writeFileSync(this.logFile, JSON.stringify(this.logs, null, 2));
+      fs.writeFileSync(this.logPath, JSON.stringify(this.logs, null, 2));
     } catch (error) {
-      console.error('❌ Lỗi khi lưu log:', error.message);
+      console.error('❌ Lỗi lưu log:', error);
+    }
+  }
+
+  endSession(sessionId) {
+    const session = this.logs.sessions.find(s => s.id === sessionId);
+    if (session) {
+      session.endTime = new Date().toISOString();
+      if (this.logs.currentSession?.id === sessionId) {
+        this.logs.currentSession = null;
+      }
+      this.saveLog();
     }
   }
 
@@ -142,20 +145,15 @@ class ProcessLogger {
     const session = this.logs.sessions.find(s => s.id === sessionId);
     if (!session) return null;
 
-    const duration = session.endTime ? 
-      new Date(session.endTime) - new Date(session.startTime) : 
-      new Date() - new Date(session.startTime);
-
+    const startTime = new Date(session.startTime);
+    const endTime = session.endTime ? new Date(session.endTime) : new Date();
+    
     return {
-      sessionId: session.id,
-      startTime: session.startTime,
-      endTime: session.endTime,
-      duration: duration,
+      duration: endTime - startTime,
       totalFiles: session.totalFiles,
       processedFiles: session.processedFiles,
       successRate: session.totalFiles ? 
-        (session.processedFiles / session.totalFiles * 100).toFixed(2) + '%' : 
-        '0%',
+        ((session.processedFiles / session.totalFiles) * 100).toFixed(1) + '%' : '0%',
       errorCount: session.errors.length,
       mostCommonErrors: this.getMostCommonErrors(session.errors)
     };
@@ -169,9 +167,9 @@ class ProcessLogger {
     });
 
     return Object.entries(errorCounts)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 5)
-      .map(([message, count]) => ({ message, count }));
+      .map(([message, count]) => ({ message, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
   }
 }
 

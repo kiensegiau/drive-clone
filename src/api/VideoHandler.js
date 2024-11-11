@@ -112,38 +112,24 @@ class VideoHandler {
         browser = await this.chromeManager.getBrowser(profileId);
 
         const pages = await browser.pages();
-        this.page = pages[0] || (await browser.newPage());
+        const page = pages[0] || (await browser.newPage());
 
-        // Set request interception
-        await this.page.setRequestInterception(true);
-
+        // Sửa phần xử lý request
         let resolveVideoUrl;
-        let rejectVideoUrl;
-        let timeoutId;
-        let checkIntervalId;
-
-        const videoUrlPromise = new Promise((resolve, reject) => {
+        const videoUrlPromise = new Promise((resolve) => {
           resolveVideoUrl = resolve;
-          rejectVideoUrl = reject;
-
-          timeoutId = setTimeout(() => {
-            console.log(`${indent}⏰ Timeout sau 30s`);
-            reject(new Error("Timeout chờ URL video"));
-          }, 30000);
         });
 
         // Mảng lưu tất cả các URL video tìm được
         let foundVideoUrls = [];
 
-        // Bắt tất cả response
-        this.page.on("response", async (response) => {
+        // Bắt response trước khi enable request interception
+        page.on("response", async (response) => {
           const url = response.url();
           try {
-            // Bắt các request liên quan đến video
             if (url.includes("get_video_info") || url.includes("videoplayback")) {
               console.log(`${indent}🔍 Phát hiện request video:`, url);
               
-              // Parse URL parameters
               const urlParams = new URLSearchParams(url);
               const itag = urlParams.get("itag");
               
@@ -156,7 +142,7 @@ class VideoHandler {
                 console.log(`${indent}📝 Tìm thấy video itag=${itag} (${this.getVideoQuality(parseInt(itag))}p)`);
               }
 
-              // Kiểm tra response body
+              // Kiểm tra response
               try {
                 const text = await response.text();
                 const params = new URLSearchParams(text);
@@ -228,7 +214,7 @@ class VideoHandler {
                   });
                 }
 
-                // Nếu ��ã tìm được đủ URL, chọn URL chất lượng cao nhất
+                // Nếu ã tìm được đủ URL, chọn URL chất lượng cao nhất
                 if (foundVideoUrls.length > 0) {
                   // Sắp xếp theo chất lượng giảm dần
                   foundVideoUrls.sort((a, b) => b.quality - a.quality);
@@ -243,33 +229,56 @@ class VideoHandler {
                   bestQuality = foundVideoUrls[0];
                   console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
                   resolveVideoUrl(bestQuality.url);
-                  clearTimeout(timeoutId);
                 }
               } catch (error) {
-                console.error(`${indent}❌ Lỗi parse response:`, error.message);
+                console.error(`${indent}⚠️ Không thể parse response:`, error.message);
               }
             }
           } catch (error) {
-            console.error(`${indent}❌ Lỗi xử lý response:`, error.message);
+            console.log(`${indent}⚠️ Lỗi xử lý response:`, error.message);
           }
         });
 
-        // Bắt requests để continue
-        this.page.on("request", (request) => {
-          request.continue();
+        // Enable request interception sau khi đã set up response listener
+        await page.setRequestInterception(true);
+
+        // Xử lý request riêng biệt
+        page.on("request", (request) => {
+          try {
+            request.continue();
+          } catch (error) {
+            console.log(`${indent}⚠️ Không thể continue request:`, error.message);
+          }
         });
 
+        // Set timeout riêng
+        const timeout = setTimeout(() => {
+          if (foundVideoUrls.length > 0) {
+            // Sắp xếp và chọn URL chất lượng cao nhất
+            foundVideoUrls.sort((a, b) => b.quality - a.quality);
+            console.log(`${indent}📊 Tất cả URL tìm được:`);
+            foundVideoUrls.forEach(v => {
+              console.log(`${indent}  - ${v.quality}p (itag=${v.itag})`);
+            });
+            const bestQuality = foundVideoUrls[0];
+            console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
+            resolveVideoUrl(bestQuality.url);
+          } else {
+            resolveVideoUrl(null);
+          }
+        }, 30000);
+
         console.log(`${indent}🌐 Đang mở trang video...`);
-        await this.page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+        await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
           waitUntil: "networkidle0",
           timeout: 30000,
         });
 
         const url = await videoUrlPromise;
-        console.log(`${indent}✅ Đã tìm thấy URL video!`);
+        clearTimeout(timeout);
 
-        // Lấy cookies trước khi đóng browser
-        this.cookies = await this.page.cookies();
+        // Lấy cookies trước khi đóng page
+        this.cookies = await page.cookies();
 
         return url;
       });
