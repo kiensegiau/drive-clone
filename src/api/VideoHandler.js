@@ -731,39 +731,64 @@ class VideoHandler {
       console.log(`🔗 View URL: https://drive.google.com/file/d/${response.data.id}/view`);
       console.log(`⬇️ Download URL: https://drive.google.com/uc?export=download&id=${response.data.id}`);
 
-      // Sau khi upload thành công, cập nhật metadata và permissions riêng
-      try {
-        // Cập nhật metadata bổ sung
-        await drive.files.update({
-          fileId: response.data.id,
-          requestBody: {
-            properties: {
-              'video_quality': videoResolution.height >= 1080 ? 'fullhd' : 'hd',
-              'resolution': `${videoResolution.height}p`,
-              'width': videoResolution.width.toString(),
-              'height': videoResolution.height.toString(),
-            }
+      // Sau khi upload xong, chỉ cần cấu hình để yêu cầu xử lý chất lượng cao
+      console.log(`🔄 Đang cấu hình xử lý video chất lượng cao...`);
+      
+      await drive.files.update({
+        fileId: response.data.id,
+        requestBody: {
+          contentHints: {
+            indexableText: 'video/mp4 1080p 720p high-quality original',
           },
-          supportsAllDrives: true
-        });
+          properties: {
+            'video_quality': 'original',
+            'target_resolution': videoResolution.height >= 1080 ? '1080p' : '720p',
+            'processing_requested': 'true',
+            'force_processing': 'true',
+            'preserve_original_quality': 'true'
+          }
+        },
+        supportsAllDrives: true
+      });
 
-        // Set permissions
-        await drive.permissions.create({
-          fileId: response.data.id,
-          requestBody: {
-            role: 'reader',
-            type: 'anyone',
-          },
-          supportsAllDrives: true,
-        });
+      // Cấu hình quyền xem
+      await drive.permissions.create({
+        fileId: response.data.id,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone',
+          allowFileDiscovery: false,
+          viewersCanCopyContent: true
+        },
+        supportsAllDrives: true
+      });
 
-      } catch (error) {
-        console.log('⚠️ Lỗi cập nhật metadata:', error.message);
-        // Không throw error vì file đã upload thành công
-      }
+      console.log(`ℹ️ Video đã được upload và sẽ được Drive xử lý trong vài giờ tới`);
+      console.log(`🔗 View URL: https://drive.google.com/file/d/${response.data.id}/view`);
+      
+      // Log thành công và kết thúc
+      this.processLogger.logProcess({
+        type: 'video_upload',
+        status: 'success',
+        fileName,
+        fileId: response.data.id,
+        fileSize: stats.size,
+        resolution: `${videoResolution.width}x${videoResolution.height}`,
+        driveViewUrl: `https://drive.google.com/file/d/${response.data.id}/view`,
+        timestamp: new Date().toISOString()
+      });
 
-      return response.data; // Trả về thông tin file đã upload
+      return response.data;
     } catch (error) {
+      // Log lỗi upload
+      this.processLogger.logProcess({
+        type: 'video_upload',
+        status: 'error',
+        fileName,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+
       console.error("\n❌ Lỗi upload:", error.message);
       throw error;
     }
