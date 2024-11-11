@@ -228,6 +228,19 @@ class VideoHandler {
                   // Chọn URL có chất lượng cao nhất
                   bestQuality = foundVideoUrls[0];
                   console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
+                  
+                  // Log URL gốc khi tìm thấy
+                  this.processLogger.logProcess({
+                    type: 'video_process',
+                    status: 'url_found',
+                    fileName,
+                    fileId,
+                    targetFolderId,
+                    quality: bestQuality.quality,
+                    sourceUrl: bestQuality.url, // Thêm URL gốc
+                    timestamp: new Date().toISOString()
+                  });
+
                   resolveVideoUrl(bestQuality.url);
                 }
               } catch (error) {
@@ -320,7 +333,7 @@ class VideoHandler {
         "video/mp4"
       );
 
-      // Log hoàn thành upload
+      // Log hoàn thành upload với URLs
       this.processLogger.logProcess({
         type: 'video_process',
         status: 'uploaded',
@@ -329,6 +342,8 @@ class VideoHandler {
         targetFileId: uploadedFile.id,
         fileSize: stats.size,
         duration: Date.now() - startTime,
+        driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
+        driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
         timestamp: new Date().toISOString()
       });
 
@@ -713,6 +728,8 @@ class VideoHandler {
       process.stdout.write("\n");
       console.log(`✅ Upload hoàn tất: ${fileName}`);
       console.log(`📎 File ID: ${response.data.id}`);
+      console.log(`🔗 View URL: https://drive.google.com/file/d/${response.data.id}/view`);
+      console.log(`⬇️ Download URL: https://drive.google.com/uc?export=download&id=${response.data.id}`);
 
       // Sau khi upload thành công, cập nhật metadata và permissions riêng
       try {
@@ -745,7 +762,7 @@ class VideoHandler {
         // Không throw error vì file đã upload thành công
       }
 
-      return true;
+      return response.data; // Trả về thông tin file đã upload
     } catch (error) {
       console.error("\n❌ Lỗi upload:", error.message);
       throw error;
