@@ -105,7 +105,8 @@ class DriveAPI {
   }
 
   async start(sourceFolderId) {
-    console.log("🚀 Bắt đầu chương trình...");
+    const sessionId = this.processLogger.startNewSession();
+    console.log(`🔄 Bắt đầu phiên xử lý mới: ${sessionId}`);
 
     try {
       // Lấy tên folder gốc
@@ -124,9 +125,33 @@ class DriveAPI {
       // Bắt đầu xử lý từ folder gốc
       await this.processFolder(sourceFolderId, subFolderId);
 
-      console.log("\n✅ Hoàn thành toàn bộ!");
+      console.log("\n✅ Hoàn th��nh toàn bộ!");
+
+      // Log kết quả cuối cùng
+      const stats = this.processLogger.getSessionStats(sessionId);
+      console.log('\n📊 Thống kê phiên làm việc:');
+      console.log(`⏱️  Thời gian: ${(stats.duration / 1000 / 60).toFixed(2)} phút`);
+      console.log(`📁 Tổng số file: ${stats.totalFiles}`);
+      console.log(`✅ Đã xử lý: ${stats.processedFiles}`);
+      console.log(`📈 Tỷ lệ thành công: ${stats.successRate}`);
+      console.log(`❌ Số lỗi: ${stats.errorCount}`);
+
+      if (stats.errorCount > 0) {
+        console.log('\n🔍 Các lỗi phổ biến:');
+        stats.mostCommonErrors.forEach(({message, count}) => {
+          console.log(`  • ${message}: ${count} lần`);
+        });
+      }
+
     } catch (error) {
-      console.error("❌ Lỗi:", error.message);
+      this.processLogger.logProcess({
+        type: 'session',
+        status: 'error',
+        error: error.message
+      });
+      throw error;
+    } finally {
+      this.processLogger.endSession(sessionId);
     }
   }
 
@@ -222,7 +247,6 @@ class DriveAPI {
 
   async processFolder(sourceFolderId, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
-    const startTime = new Date();
 
     try {
       // Kiểm tra folder đích tồn tại
@@ -261,11 +285,8 @@ class DriveAPI {
 
       // Xử lý các folders trước
       for (const folder of folders) {
-        // Tạo folder tương ứng trong folder đích
         const subFolderName = folder.name;
         const subFolderId = await this.findOrCreateFolder(subFolderName, targetFolderId);
-        
-        // Đệ quy xử lý folder con
         await this.processFolder(folder.id, subFolderId, depth + 1);
       }
 
@@ -358,8 +379,8 @@ class DriveAPI {
             
             const allFiles = [...browserFiles, ...browserPDFs];
             const CONCURRENT_BROWSERS = 3;
-            const videoHandler = new VideoHandler(this.oauth2Client, this.drive);
-            const pdfDownloader = new PDFDownloader(this);
+            const videoHandler = new VideoHandler(this.oauth2Client, this.drive, this.processLogger);
+            const pdfDownloader = new PDFDownloader(this, this.processLogger);
             
             for (let i = 0; i < allFiles.length; i += CONCURRENT_BROWSERS) {
               const chunk = allFiles.slice(i, i + CONCURRENT_BROWSERS);
@@ -396,26 +417,8 @@ class DriveAPI {
 
       console.log(`${indent}✅ Hoàn thành xử lý folder`);
 
-      // Log kết quả xử lý folder
-      this.processLogger.logProcess({
-        type: 'folder',
-        sourceId: sourceFolderId,
-        targetId: targetFolderId,
-        status: 'success',
-        duration: new Date() - startTime,
-        filesProcessed: nonFolders.length,
-        foldersProcessed: folders.length
-      });
-
     } catch (error) {
-      this.processLogger.logProcess({
-        type: 'folder',
-        sourceId: sourceFolderId,
-        targetId: targetFolderId,
-        status: 'error',
-        error: error.message,
-        duration: new Date() - startTime
-      });
+      console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
       throw error;
     }
   }

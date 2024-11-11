@@ -7,6 +7,7 @@ const fetch = require("node-fetch");
 const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../config/auth.js"); // Import auth config
 const ChromeManager = require("./ChromeManager");
+const ProcessLogger = require('../utils/ProcessLogger');
 
 class VideoHandler {
   constructor() {
@@ -20,6 +21,8 @@ class VideoHandler {
     this.TEMP_DIR = path.join(__dirname, "temp");
     this.cookies = null;
     this.chromeManager = ChromeManager.getInstance();
+
+    this.processLogger = new ProcessLogger();
 
     // Tạo thư mục temp nếu chưa tồn tại
     if (!fs.existsSync(this.TEMP_DIR)) {
@@ -70,22 +73,34 @@ class VideoHandler {
     const indent = "  ".repeat(depth);
     let browser;
     let videoUrl = null;
+    let foundVideoUrls = [];
     const tempFiles = [];
+    const startTime = Date.now();
+    let bestQuality = null;
 
-    // Tạo tên file an toàn
-    const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
-    const outputPath = path.join(this.TEMP_DIR, safeFileName);
-    tempFiles.push(outputPath);
-
-    // Thêm vào hàng đợi nếu đang tải quá nhiều
-    if (this.activeDownloads >= this.MAX_CONCURRENT_DOWNLOADS) {
-      console.log(`${indent}⏳ Đang chờ slot tải: ${fileName}`);
-      await new Promise((resolve) => this.downloadQueue.push(resolve));
-    }
+    // Log bắt đầu xử lý
+    this.processLogger.logProcess({
+      type: 'video_process',
+      status: 'start',
+      fileName,
+      fileId,
+      targetFolderId,
+      timestamp: new Date().toISOString()
+    });
 
     try {
       console.log(`${indent}=== Xử lý video: ${fileName} ===`);
-      this.activeDownloads++;
+      
+      // Tạo tên file an toàn
+      const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
+      const outputPath = path.join(this.TEMP_DIR, safeFileName);
+      tempFiles.push(outputPath);
+
+      // Thêm vào hàng đợi nếu đang tải quá nhiều
+      if (this.activeDownloads >= this.MAX_CONCURRENT_DOWNLOADS) {
+        console.log(`${indent}⏳ Đang chờ slot tải: ${fileName}`);
+        await new Promise((resolve) => this.downloadQueue.push(resolve));
+      }
 
       // Sử dụng this.retryOperation thay vì retryOperation
       videoUrl = await this.retryOperation(async () => {
@@ -213,7 +228,7 @@ class VideoHandler {
                   });
                 }
 
-                // Nếu đã tìm được đủ URL, chọn URL chất lượng cao nhất
+                // Nếu ��ã tìm được đủ URL, chọn URL chất lượng cao nhất
                 if (foundVideoUrls.length > 0) {
                   // Sắp xếp theo chất lượng giảm dần
                   foundVideoUrls.sort((a, b) => b.quality - a.quality);
@@ -225,7 +240,7 @@ class VideoHandler {
                   });
 
                   // Chọn URL có chất lượng cao nhất
-                  const bestQuality = foundVideoUrls[0];
+                  bestQuality = foundVideoUrls[0];
                   console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
                   resolveVideoUrl(bestQuality.url);
                   clearTimeout(timeoutId);
@@ -259,58 +274,69 @@ class VideoHandler {
         return url;
       });
 
-      // Tải và upload với retry
-      const downloadAndUpload = async () => {
-        try {
-          await this.retryOperation(async () => {
-            console.log(`${indent}📥 Bắt đầu tải: ${fileName}`);
-            await this.downloadVideoWithChunks(videoUrl, outputPath);
-          });
+      // Log khi tìm thấy URL
+      if (this.processLogger) {
+        this.processLogger.logProcess({
+          type: 'video_process',
+          status: 'url_found',
+          fileName,
+          fileId,
+          quality: bestQuality ? bestQuality.quality : null,
+          timestamp: new Date().toISOString()
+        });
+      }
 
-          await this.retryOperation(async () => {
-            console.log(`${indent}📤 Đang upload: ${fileName}`);
-            await this.uploadFile(
-              outputPath,
-              fileName,
-              targetFolderId,
-              "video/mp4"
-            );
-          });
+      // Tải video
+      console.log(`${indent}📥 Bắt đầu tải video: ${fileName}`);
+      await this.downloadVideoWithChunks(videoUrl, outputPath);
 
-          console.log(`${indent}✅ Hoàn thành: ${fileName}`);
-        } catch (error) {
-          console.error(
-            `${indent}❌ Lỗi tải/upload ${fileName}:`,
-            error.message
-          );
-          // Không throw error để tiếp tục xử lý các video khác
-        } finally {
-          // Dọn dẹp
-          if (fs.existsSync(outputPath)) {
-            try {
-              fs.unlinkSync(outputPath);
-            } catch (e) {
-              console.error(
-                `${indent}⚠️ Không thể xóa file tạm: ${outputPath}`
-              );
-            }
-          }
+      // Log hoàn thành tải
+      const stats = fs.statSync(outputPath);
+      this.processLogger.logProcess({
+        type: 'video_process',
+        status: 'downloaded',
+        fileName,
+        fileId,
+        fileSize: stats.size,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
 
-          this.activeDownloads--;
-          if (this.downloadQueue.length > 0) {
-            const nextDownload = this.downloadQueue.shift();
-            nextDownload();
-          }
-        }
-      };
+      // Upload video
+      console.log(`${indent}📤 Đang upload video lên Drive...`);
+      const uploadedFile = await this.uploadFile(
+        outputPath,
+        fileName,
+        targetFolderId,
+        "video/mp4"
+      );
 
-      // Thực hiện không đồng bộ
-      downloadAndUpload().catch((error) => {
-        console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
+      // Log hoàn thành upload
+      this.processLogger.logProcess({
+        type: 'video_process',
+        status: 'uploaded',
+        fileName,
+        fileId,
+        targetFileId: uploadedFile.id,
+        fileSize: stats.size,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
       });
 
       return true;
+
     } catch (error) {
+      // Log lỗi
+      this.processLogger.logProcess({
+        type: 'video_process',
+        status: 'error',
+        fileName,
+        fileId,
+        error: error.message,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+
       console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
       return false;
     } finally {
@@ -401,6 +427,7 @@ class VideoHandler {
 
   async downloadVideoWithChunks(url, outputPath, retryCount = 0) {
     const MAX_DOWNLOAD_RETRIES = 3;
+    const startTime = Date.now();
 
     try {
       // Thêm kiểm tra URL
@@ -503,7 +530,7 @@ class VideoHandler {
               console.log(
                 `\n⚠️ Kích thước không khớp (${
                   stats.size
-                } != ${fileSize}), đang thử lại l���n ${retryCount + 1}...`
+                } != ${fileSize}), đang thử lại lần ${retryCount + 1}...`
               );
               writer.close();
               // Xóa file không hoàn chỉnh
@@ -547,15 +574,20 @@ class VideoHandler {
         writer.end();
       });
     } catch (error) {
-      // Xóa file nếu có lỗi
-      if (fs.existsSync(outputPath)) {
-        fs.unlinkSync(outputPath);
-      }
+      // Log lỗi tải
+      this.processLogger.logProcess({
+        type: 'video_download',
+        status: 'error',
+        fileName: path.basename(outputPath),
+        error: error.message,
+        retryCount,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+
       if (retryCount < MAX_DOWNLOAD_RETRIES) {
-        console.log(
-          `\n⚠️ Lỗi tải xuống, đang thử lại lần ${retryCount + 1}...`
-        );
-        await new Promise((r) => setTimeout(r, 2000));
+        console.log(`\n⚠️ Lỗi tải video, thử lại lần ${retryCount + 1}...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
         return this.downloadVideoWithChunks(url, outputPath, retryCount + 1);
       }
       throw error;
