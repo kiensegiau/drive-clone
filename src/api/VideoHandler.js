@@ -569,6 +569,32 @@ class VideoHandler {
 
   async uploadFile(filePath, fileName, folderId, mimeType) {
     try {
+      // Kiểm tra độ phân giải thực tế của video trước khi upload
+      const videoResolution = await this.getVideoResolution(filePath);
+      console.log(`📊 Độ phân giải video: ${videoResolution.width}x${videoResolution.height}`);
+
+      const fileMetadata = {
+        name: fileName,
+        parents: [folderId],
+        videoMediaMetadata: {
+          width: videoResolution.width,
+          height: videoResolution.height,
+        },
+        properties: {
+          'video_quality': videoResolution.height >= 1080 ? 'fullhd' : 'hd',
+          'original_quality': 'true',
+          'resolution': `${videoResolution.height}p`,
+          'width': videoResolution.width.toString(),
+          'height': videoResolution.height.toString(),
+        },
+        appProperties: {
+          'processing_status': 'pending',
+          'original_resolution': `${videoResolution.height}p`,
+          'target_qualities': videoResolution.height >= 1080 ? 
+            '1080p,720p,480p,360p' : '720p,480p,360p'
+        }
+      };
+
       // Kiểm tra đầu vào
       if (!filePath || !fileName || !folderId || !mimeType) {
         throw new Error("Thiếu thông tin upload");
@@ -601,11 +627,6 @@ class VideoHandler {
           JSON.stringify(this.oAuth2Client.credentials)
         );
       }
-
-      const fileMetadata = {
-        name: fileName,
-        parents: [folderId],
-      };
 
       // Tạo readable stream với buffer lớn hơn
       const media = {
@@ -681,6 +702,83 @@ class VideoHandler {
       console.error("\n❌ Lỗi upload:", error.message);
       throw error;
     }
+  }
+
+  // Thêm hàm mới để lấy độ phân giải video
+  async getVideoResolution(filePath) {
+    return new Promise((resolve, reject) => {
+        const ffprobe = require('ffprobe');
+        const ffprobeStatic = require('ffprobe-static');
+
+        ffprobe(filePath, { path: ffprobeStatic.path })
+            .then(info => {
+                const videoStream = info.streams.find(stream => stream.codec_type === 'video');
+                if (videoStream) {
+                    resolve({
+                        width: videoStream.width,
+                        height: videoStream.height,
+                        codec: videoStream.codec_name,
+                        bitrate: videoStream.bit_rate
+                    });
+                } else {
+                    reject(new Error('Không tìm thấy video stream'));
+                }
+            })
+            .catch(err => {
+                console.error('❌ Lỗi đọc thông tin video:', err);
+                // Fallback to default HD resolution if cannot read
+                resolve({ width: 1280, height: 720 });
+            });
+    });
+  }
+
+  // Thêm hàm kiểm tra và force xử lý video sau khi upload
+  async ensureVideoProcessing(fileId, targetResolution) {
+    const drive = google.drive({ version: 'v3', auth: this.oAuth2Client });
+    
+    // Force xử lý với nhiều độ phân giải
+    await drive.files.update({
+        fileId: fileId,
+        requestBody: {
+            contentHints: {
+                indexableText: `video/mp4 ${targetResolution} high-quality original`,
+                thumbnail: {
+                    image: Buffer.from('').toString('base64'),
+                    mimeType: 'image/jpeg'
+                }
+            },
+            properties: {
+                'processed': 'false',
+                'target_resolution': targetResolution,
+                'processing_requested': Date.now().toString(),
+                'force_high_quality': 'true'
+            }
+        },
+        supportsAllDrives: true
+    });
+
+    // Set permissions để cho phép xem ở chất lượng cao nhất
+    await drive.permissions.create({
+        fileId: fileId,
+        requestBody: {
+            role: 'reader',
+            type: 'anyone',
+            allowFileDiscovery: false,
+            viewersCanCopyContent: true
+        },
+        supportsAllDrives: true
+    });
+
+    // Đặt cấu hình sharing nâng cao
+    await drive.files.update({
+        fileId: fileId,
+        requestBody: {
+            copyRequiresWriterPermission: false,
+            viewersCanCopyContent: true,
+            writersCanShare: true
+        },
+        supportsAllDrives: true
+    });
   }
 
   // Hàm retry với delay
