@@ -157,6 +157,33 @@
     {
       "id": "1731342427463",
       "startTime": "2024-11-11T16:27:07.463Z",
+      "endTime": "2024-11-11T16:32:58.718Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731342778717",
+      "startTime": "2024-11-11T16:32:58.717Z",
+      "endTime": "2024-11-11T16:34:49.429Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731342889427",
+      "startTime": "2024-11-11T16:34:49.427Z",
+      "endTime": "2024-11-11T16:38:55.134Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731343135133",
+      "startTime": "2024-11-11T16:38:55.133Z",
       "endTime": null,
       "totalFiles": 0,
       "processedFiles": 0,
@@ -165,114 +192,335 @@
     }
   ],
   "currentSession": {
-    "id": "1731342427463",
-    "startTime": "2024-11-11T16:27:07.463Z",
+    "id": "1731343135133",
+    "startTime": "2024-11-11T16:38:55.133Z",
     "endTime": null,
-    "totalFiles": 3,
+    "totalFiles": 13,
     "processedFiles": 0,
     "errors": [],
     "logs": [
       {
-        "timestamp": "2024-11-11T16:28:19.495Z",
+        "timestamp": "2024-11-11T16:39:22.374Z",
         "type": "video_process",
-        "status": "downloaded",
-        "fileName": "Bài giảng_P2.mp4",
-        "fileId": "1xH-zjaWHs7aVdc2Oh3mm6Kc60X0e6btw",
+        "status": "url_found",
+        "fileName": "Bài giảng_P8.mp4",
+        "fileId": "1k97dANso8h7rZTUSNMZaET1TpMfotH--",
         "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-11T16:27:25.288Z"
+            "timestamp": "2024-11-11T16:39:14.396Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:29.903Z",
+            "timestamp": "2024-11-11T16:39:19.239Z",
             "quality": 1080
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:31.866Z",
+            "timestamp": "2024-11-11T16:39:22.374Z",
             "quality": 1080
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-11T16:28:19.495Z",
-            "fileSize": 204913560,
-            "duration": 54207
           }
         ],
         "quality": 1080,
-        "sourceUrl": "https://rr4---sn-npoeeney.c.drive.google.com/videoplayback?expire=1731353277&ei=jTAyZ-eVBNOVmvUPnbPKgQY&ip=14.180.84.75&id=c1c4e87d66e20606&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731342477,&mh=At&mm=32,26&mn=sn-npoeeney,sn-ogul7nel&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1xH-zjaWHs7aVdc2Oh3mm6Kc60X0e6btw&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=977.629&lmt=1721272801384885&mt=1731342053&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgFj7js6EiHeiaj-FyNACneMwbd38ph9gl1GU1cVQdIHcCIDN95LZu5TmStbm7xjFORdyHOkGNG-km0rt32eyjXvoD&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAMy7nDxvoz3N1lsxyXptAcEY1rimxejEX0kVfZbr-cxnAiAdWdUWR0uQPsN652JSeDi7mGTPAfla-NaTyZzDPiOrjw==",
-        "fileSize": 204913560,
-        "duration": 54207
+        "sourceUrl": "https://rr5---sn-npoe7ne7.c.drive.google.com/videoplayback?expire=1731353986&ei=UjMyZ_rPEZ-gmvUP8vTqkQM&ip=14.180.84.75&id=62468a175fc1d405&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343186,&mh=J4&mm=32,26&mn=sn-npoe7ne7,sn-oguesnde&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1k97dANso8h7rZTUSNMZaET1TpMfotH--&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=1020.725&lmt=1722957208009213&mt=1731342780&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAKlxnnCC6OD731TBE3FEjRwxiv-1tJQ6pRPjNtjtQpNpAiEA0G4YT0-smLd7EzQq-OdB8iCLOnnYPbGSLli33K3QyAw=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAJ69Zlj_DzM5XaH2NU81scIY1bgTLEFps5byxUu61aPhAiEA7-PyQOftUEkDEzLOW_7JrwI5qa7wwi2tU-mM6-N9xac="
       },
       {
-        "timestamp": "2024-11-11T16:28:20.720Z",
+        "timestamp": "2024-11-11T16:39:21.056Z",
         "type": "video_process",
-        "status": "downloaded",
-        "fileName": "Bài giảng_P1.mp4",
-        "fileId": "1RgAtsZDcV_QoexDFn2f0DDOROxtRqvYK",
+        "status": "url_found",
+        "fileName": "Bài giảng_P3.mp4",
+        "fileId": "1KLKpIML9cwSi6KciBbu6qVmN9DxrKciw",
         "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-11T16:27:25.322Z"
+            "timestamp": "2024-11-11T16:39:14.428Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:29.696Z",
+            "timestamp": "2024-11-11T16:39:19.082Z",
             "quality": 1080
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:31.836Z",
+            "timestamp": "2024-11-11T16:39:21.056Z",
             "quality": 1080
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-11T16:28:20.720Z",
-            "fileSize": 151625376,
-            "duration": 55398
           }
         ],
         "quality": 1080,
-        "sourceUrl": "https://rr2---sn-npoeenly.c.drive.google.com/videoplayback?expire=1731353276&ei=jDAyZ7GFNvGcmvUPp8Sx8Ac&ip=14.180.84.75&id=17e5d636b403729e&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731342476,&mh=Ib&mm=32,26&mn=sn-npoeenly,sn-oguesn6r&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1RgAtsZDcV_QoexDFn2f0DDOROxtRqvYK&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=803.503&lmt=1721272343787420&mt=1731342053&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgK0ESaKai-GtA4YCHM-N2wy0fmSoyiTTnXWq4ctOneLICIBdJwJVOJzTyXn_wewmBFm8RUZXHxuTuoi9vxrrSjlg4&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgBXlDcL2CQ5utGKyYCF2jnBBMpjLlNki1oORh0YNmtRICIFAXdOziTCTvVDs_FyvdOv_8j4-L_6iMXCe24VWSyd1G",
-        "fileSize": 151625376,
-        "duration": 55398
+        "sourceUrl": "https://rr2---sn-npoe7ney.c.drive.google.com/videoplayback?expire=1731353986&ei=UjMyZ62ICb2q-LYP4tTi4A8&ip=14.180.84.75&id=bc8ba87f6d5e377b&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343186,&mh=DY&mm=32,26&mn=sn-npoe7ney,sn-oguesn6s&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1KLKpIML9cwSi6KciBbu6qVmN9DxrKciw&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=738.510&lmt=1723533076089611&mt=1731342780&fvip=5&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgPoSynvTxvtHqtZgzw9jp166vWaRdDm7SCYgBFdbiG5cCIHtiSlWBTUIhiEr8A0jRcbeW1nq-06y_BwAk8cN5glq7&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgRCnRqWp28moUNpoQYke9AQMMZBjOS60hkrdLZAii5ykCIQCMVfFQa1Lb20isGTO__0QEaQw1krlChb2e7pPNjVVwsA=="
       },
       {
-        "timestamp": "2024-11-11T16:28:19.744Z",
+        "timestamp": "2024-11-11T16:39:20.305Z",
         "type": "video_process",
-        "status": "downloaded",
+        "status": "url_found",
+        "fileName": "Bài giảng_P6.mp4",
+        "fileId": "12uoUmR3Eut-HkCzk8rQTHrjUW1RyOyct",
+        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:14.438Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:19.060Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:20.305Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr4---sn-npoeenlk.c.drive.google.com/videoplayback?expire=1731353986&ei=UjMyZ_n3C-TU-LYPtpS_iQM&ip=14.180.84.75&id=3d8b516843321f0e&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343186,&mh=KB&mm=32,26&mn=sn-npoeenlk,sn-oguelnsz&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=12uoUmR3Eut-HkCzk8rQTHrjUW1RyOyct&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=996.855&lmt=1723533233212284&mt=1731342780&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgOvHjVEWX1Z7hOFdcBgxN9w27dDjGO10iB_FeL4LNebUCIQDC3KdKdFFYIUoJm-pRSnn__iXV37_W6XrDulyXWJcxrQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAMIhjB3_h21iFzvTo1_Ja6DLmw-4Z9Ob3qAyBS0b0ItwAiEA-o8N6L_Eq__QoNgvn5gEWOtyrdJfNHBp1GQWzummBAE="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:29.071Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P5.mp4",
+        "fileId": "1fXwspzEV6icD68eK1MS3zyLE-hvwYxyg",
+        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:22.557Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:27.132Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:29.071Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr5---sn-npoeeney.c.drive.google.com/videoplayback?expire=1731353994&ei=WjMyZ46xDrfJ-LYPw8HwoAg&ip=14.180.84.75&id=d603f66d1b8f810d&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343194,&mh=rJ&mm=32,26&mn=sn-npoeeney,sn-oguesndz&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1fXwspzEV6icD68eK1MS3zyLE-hvwYxyg&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=875.578&lmt=1723533051843668&mt=1731342780&fvip=5&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgU6sGG3v6TC8JJq7uzAageTmQvoRkVG4TwHORqSqQCVQCIQDm2P3jrdRALTOmbanWqQ8XPuB6b6_5yTJVR38l5ld6zw==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAImkzltT5bELhmktioV-AWoord9sMQEwfE19wDZygwm0AiAH2F5unuAAskRYkR0FzCU0OTr-vvqK8346SwReBNAoKQ=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:29.454Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P7.mp4",
+        "fileId": "1rFfQDkoxdoL8HYuuzXN6XGNy5jX-LGQz",
+        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:22.564Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:27.321Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:29.454Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr2---sn-npoldn7z.c.drive.google.com/videoplayback?expire=1731353994&ei=WjMyZ8jUGJyZmvUP8tqK6QY&ip=14.180.84.75&id=8005ba4808a0c237&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343194,&mh=ig&mm=32,26&mn=sn-npoldn7z,sn-oguelnze&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1rFfQDkoxdoL8HYuuzXN6XGNy5jX-LGQz&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=970.826&lmt=1722958175596192&mt=1731342780&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAJMwuOsd2CfJkk-VJNxm7DXpo-KC_5yHLyVJzjbAukCxAiEA-B9VgcgIiGt-gaCOZmA9FBAexID1xCmm9GBw02xCdYM=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAOwCRL42PA1qWKUDvTA4_5u3_iIduHm6hrA_-mwzoDc1AiEAlT8WyTdgCmhwVzV2qguZlyZihHHlKNr4yS6uWU51YTI="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:29.119Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P10.mp4",
+        "fileId": "1aVoPCM6xuWgVbRrLPu9zhHiyqgwNV37O",
+        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:22.569Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:27.103Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:29.119Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr3---sn-npoe7nsl.c.drive.google.com/videoplayback?expire=1731353994&ei=WjMyZ9WPD56Bp84PwMr-kAU&ip=14.180.84.75&id=c0ff020d513a75e4&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343194,&mh=eM&mm=32,26&mn=sn-npoe7nsl,sn-oguelnzs&ms=su,onr&mv=m&mvi=3&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1aVoPCM6xuWgVbRrLPu9zhHiyqgwNV37O&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=776.777&lmt=1722957136057502&mt=1731342780&fvip=5&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAKfWeJng2w1fCn6EUzUZGu2tGTWx7H-i3fLZsJSWwrJGAiBVfqlV-Gf-Wt1zcBn7pbYf3L-iWC6i5HG7z8kw-xRlXA==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgHKmrPcCFP_3GUUshex-FVxsrY5_WKDcV6SsIV83WY1kCIQD38YFGvHYdJ6pa-ERXZ_qIpXcMvW8CdoY_VSyOkPHlxA=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:36.156Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P4.mp4",
+        "fileId": "1FQCDmkv9LAK5Tm-TrHkZouCYuTUSZLvT",
+        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:29.635Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:34.074Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:36.156Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr5---sn-npoe7nlz.c.drive.google.com/videoplayback?expire=1731354001&ei=YTMyZ-KSCrvT-LYP8oqH0AM&ip=14.180.84.75&id=21d04d7a1d780760&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343201,&mh=np&mm=32,26&mn=sn-npoe7nlz,sn-oguelnsk&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1FQCDmkv9LAK5Tm-TrHkZouCYuTUSZLvT&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=1014.410&lmt=1723533753227371&mt=1731342780&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhALiRrl87plCUgEyT-2bDB5yiECj8Ps_lbv6ThRc36B-kAiEAv6ReiUdfo51H4s6DxjwDVLsDyvOTafbTn6oveTgCd40=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAOS-h10BVBPhCFAZcEk6_LLvfgx8NHVsZkrwBFq8QWPHAiEAh7AHHwEfYAzKo3MTMCChnDXjBa0YsET64pg7YpNPkPw="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:47.537Z",
+        "type": "video_process",
+        "status": "url_found",
         "fileName": "Bài giảng_P9.mp4",
-        "fileId": "1DsBROTF0N37rA6fIjxQpDB4mhcgLnLwL",
-        "targetFolderId": "1EGMdvx8b8bhTZuLPEX-F360cFRCtkc2-",
+        "fileId": "1BpAsorNzIM_IVQA9RaT6gyYkHgjbYmyR",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-11T16:27:25.332Z"
+            "timestamp": "2024-11-11T16:39:40.818Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:29.883Z",
+            "timestamp": "2024-11-11T16:39:45.346Z",
             "quality": 1080
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-11T16:27:31.896Z",
+            "timestamp": "2024-11-11T16:39:47.537Z",
             "quality": 1080
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-11T16:28:19.744Z",
-            "fileSize": 185072720,
-            "duration": 54412
           }
         ],
         "quality": 1080,
-        "sourceUrl": "https://rr2---sn-npoldn7e.c.drive.google.com/videoplayback?expire=1731353277&ei=jTAyZ_X5A-fJ-LYP3bbE6QI&ip=14.180.84.75&id=b5418f2ba6963c24&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731342477,&mh=En&mm=32,26&mn=sn-npoldn7e,sn-ogueln67&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1DsBROTF0N37rA6fIjxQpDB4mhcgLnLwL&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=849.060&lmt=1722957206778340&mt=1731342053&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAOOdUnpSrO5ewEJ6Y0TeGoXNJYip33hwz5jYWaA77-SzAiEA-V2GnOBRlXsLKImIHHGJnK_-LjaWpiAPI8E0soD39HU=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgUaXoYuLOowdXUOtopsGreR4muuJCsnz0P3gXYPXYxMQCIQDaDOYj4t9whYQ687tXMs3F3KNSkavhsKHtAw5Iku8DfQ==",
-        "fileSize": 185072720,
-        "duration": 54412
+        "sourceUrl": "https://rr4---sn-npoeenly.c.drive.google.com/videoplayback?expire=1731354012&ei=bDMyZ-PeGs2VmvUPwbuJoQY&ip=14.180.84.75&id=1ca8c0f1680fa284&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343212,&mh=Gh&mm=32,26&mn=sn-npoeenly,sn-oguelnlz&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1BpAsorNzIM_IVQA9RaT6gyYkHgjbYmyR&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&dur=652.480&lmt=1721348255608351&mt=1731342780&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0001224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,dur,lmt&sig=AJfQdSswRgIhAN7guHDOz_NfFBtysFtZNQsHuTH72zgyXxTycz4R0Qy2AiEAuP1AEICqPJ6c5arCdQscC9Sjbloq4Cp6Z2NahLBADFM=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgEJ4rKQVDuHi2MfxX0pbm_PytXBJF-mhWzfNC3XzMzJsCIQCsSjvmB9X1_gyPzeIQn4uCZAb76KFHcEE4mrBN2511CA=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:48.701Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P7.mp4",
+        "fileId": "1Q3CwVS27ziym-fYrsndWM65b3bQxrUOH",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:40.826Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:45.496Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:48.701Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr4---sn-npoldn7d.c.drive.google.com/videoplayback?expire=1731354012&ei=bDMyZ73hJtGcmvUPy-KA4QY&ip=14.180.84.75&id=a1edaa0830715756&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343212,&mh=LU&mm=32,26&mn=sn-npoldn7d,sn-oguesn6s&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1Q3CwVS27ziym-fYrsndWM65b3bQxrUOH&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=690.050&lmt=1721269999926930&mt=1731342780&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgYlVe92zOnlYJ2SvWdSzKStpSm4jZ1LkYKIwWCIczIjICIQDJ72mAYabZMVRW_80q66s8k4Z2cAZnN2rGI9d0KPuyEw==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAIlJ-9U1Qc22UJjsYSkwCdlC9DtAS7b1UUPj2pK4PuQUAiAY75m4aujpEWQVtnS9RsC4ZJsy3MuUFmkWRE_joDWRNw=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:47.363Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P3.mp4",
+        "fileId": "1Iwz00QDuWW7qT_aQwBnQMacRz6ynqppv",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:40.834Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:45.764Z",
+            "quality": 1080
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:47.363Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr2---sn-npoldn7z.c.drive.google.com/videoplayback?expire=1731354012&ei=bDMyZ4qyN_LJ-LYP8--ggAM&ip=14.180.84.75&id=6d078361564baf81&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343212,&mh=RG&mm=32,26&mn=sn-npoldn7z,sn-ogueln66&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1Iwz00QDuWW7qT_aQwBnQMacRz6ynqppv&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=769.277&lmt=1721269932679699&mt=1731342780&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgXg_2qeNrSMzBW1Ksr4jq_bbJ3vCGKsFhx14dgqBpBsICIH4xuKRZOwv06gS0-lYnItGcm2X4a9XFQujyJhatBxEx&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAPbfvLPPyYKApSJAiOYK3G-P2aRknDkrHX8Pi7GaJIp2AiAtTX-SkxGkxE0FP4CXpfMCNW0btCYQsUJFEIY8HYa2cg=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:53.754Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P5.mp4",
+        "fileId": "1fTlUSnchs_RzHyPgb3YB5o5YNdF360wH",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:48.908Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:53.754Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr4---sn-npoe7nek.c.drive.google.com/videoplayback?expire=1731354020&ei=dDMyZ-iDNbfJ-LYPw8HwoAg&ip=14.180.84.75&id=1ffabdea05904756&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343220,&mh=nN&mm=32,26&mn=sn-npoe7nek,sn-oguelnzs&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1fTlUSnchs_RzHyPgb3YB5o5YNdF360wH&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=1016.964&lmt=1721353508559496&mt=1731342780&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAImKQGtS3mfd490PQBe2xsBMOwWDLYt-SefVVWGKQpI9AiEAxqOj3xzanwuo8lDiQwXKhUdyZWSSVSSEntZFyF61Imw=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhANmOLYQJ0_pVliaWz_kq-vhsKTkKimAUIOBk2APcuGv5AiADnecMK1WYJZrXj_djGtFLpGlnR3FteDA4Eni9TMaNOA=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:53.475Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P1.mp4",
+        "fileId": "1tR8-x44n9ysmZmsuhJzwFNw1g8qjy_pb",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:48.916Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:53.475Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr4---sn-npoe7nsr.c.drive.google.com/videoplayback?expire=1731354020&ei=dDMyZ6-xIerJ-LYPtNfgsQc&ip=14.180.84.75&id=061971e6aed3f59b&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343220,&mh=cI&mm=32,26&mn=sn-npoe7nsr,sn-oguesn6s&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1tR8-x44n9ysmZmsuhJzwFNw1g8qjy_pb&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=806.521&lmt=1721269911945789&mt=1731342780&fvip=5&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAM02K1R9Fp7FW7tbtafmBqwiyzr0HeO_uoOOzvQEqiWgAiEA4NIKvpDjCQvJb9jRgmy1-Jp0JIzyW-ff0l1EvbdlfGY=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAI-ODbJD4oIkK1GtLVVVfEgzt-TKrESFMjhk0qN9MnASAiBMJLdkzMFTfUSpCvqucQ7rt3EKimCsePp7FnPWdNjbmA=="
+      },
+      {
+        "timestamp": "2024-11-11T16:39:53.747Z",
+        "type": "video_process",
+        "status": "url_found",
+        "fileName": "Bài giảng_P2.mp4",
+        "fileId": "1Zv9l6I5C0UaiViUZymzIwff1pyZyLq4z",
+        "targetFolderId": "1-J1c17lsKnoRvcVSWD8NSr1TNKODaqAk",
+        "history": [
+          {
+            "status": "start",
+            "timestamp": "2024-11-11T16:39:48.922Z"
+          },
+          {
+            "status": "url_found",
+            "timestamp": "2024-11-11T16:39:53.747Z",
+            "quality": 1080
+          }
+        ],
+        "quality": 1080,
+        "sourceUrl": "https://rr1---sn-npoldn7e.c.drive.google.com/videoplayback?expire=1731354020&ei=dDMyZ935MaydmvUPo-eI4Qw&ip=14.180.84.75&id=d991397e51ab1509&itag=37&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731343220,&mh=dE&mm=32,26&mn=sn-npoldn7e,sn-oguesnd6&ms=su,onr&mv=m&mvi=1&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1Zv9l6I5C0UaiViUZymzIwff1pyZyLq4z&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=883.008&lmt=1721269884761054&mt=1731342780&fvip=4&subapp=DRIVE_WEB_FILE_VIEWER&txp=0011224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgR2ZRZMxYBOXBnt3ssRmLYWIL38aRxbpkp_FA0K-VxhQCIQChPQMY62iFYWl1fFwzh7KJnRAY_jwq2j7IyqKRpnIqOg==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhAJkEZ3DMdML9sT4QCuY6cFj5TgM9BvmF45ciaJKDyociAiASNvgr8wQDOpofloXtpv44OC01ZqQeU9L3wVuUvt-ZgA=="
       }
     ]
   }

@@ -24,6 +24,10 @@ class VideoHandler {
 
     this.processLogger = new ProcessLogger();
 
+    this.MAX_CONCURRENT_BROWSERS = 3; // Số lượng browser có thể mở cùng lúc
+    this.activeBrowsers = 0;
+    this.browserQueue = [];
+
     // Tạo thư mục temp nếu chưa tồn tại
     if (!fs.existsSync(this.TEMP_DIR)) {
       fs.mkdirSync(this.TEMP_DIR, { recursive: true });
@@ -102,6 +106,14 @@ class VideoHandler {
         await new Promise((resolve) => this.downloadQueue.push(resolve));
       }
 
+      // Thêm vào hàng đợi nếu đang có quá nhiều browser đang mở
+      if (this.activeBrowsers >= this.MAX_CONCURRENT_BROWSERS) {
+        console.log(`${indent}⏳ Đang chờ slot browser cho: ${fileName}`);
+        await new Promise((resolve) => this.browserQueue.push(resolve));
+      }
+
+      this.activeBrowsers++;
+      
       // Sử dụng this.retryOperation thay vì retryOperation
       videoUrl = await this.retryOperation(async () => {
         // Kill Chrome trước
@@ -310,43 +322,77 @@ class VideoHandler {
 
       // Tải video
       console.log(`${indent}📥 Bắt đầu tải video: ${fileName}`);
-      await this.downloadVideoWithChunks(videoUrl, outputPath);
+      
+      // Bắt đầu tải video và đóng browser ngay sau đó
+      const downloadPromise = this.downloadVideoWithChunks(videoUrl, outputPath);
+      
+      // Đóng browser sau khi bắt đầu tải
+      if (browser) {
+        console.log(`${indent}🔒 Đóng trình duyệt sau khi bắt đầu tải...`);
+        await browser.close();
+        browser = null;
+        
+        // Giảm số browser đang active và cho phép browser tiếp theo trong queue
+        this.activeBrowsers--;
+        if (this.browserQueue.length > 0) {
+          const nextResolve = this.browserQueue.shift();
+          nextResolve();
+        }
+      }
 
-      // Log hoàn thành tải
-      const stats = fs.statSync(outputPath);
-      this.processLogger.logProcess({
-        type: 'video_process',
-        status: 'downloaded',
-        fileName,
-        fileId,
-        fileSize: stats.size,
-        duration: Date.now() - startTime,
-        timestamp: new Date().toISOString()
+      // Xử lý tải và upload trong background
+      downloadPromise.then(async () => {
+        try {
+          // Log hoàn thành tải
+          const stats = fs.statSync(outputPath);
+          this.processLogger.logProcess({
+            type: 'video_process',
+            status: 'downloaded',
+            fileName,
+            fileId,
+            fileSize: stats.size,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+
+          // Upload video
+          console.log(`${indent}📤 Đang upload video lên Drive...`);
+          const uploadedFile = await this.uploadFile(
+            outputPath,
+            fileName,
+            targetFolderId,
+            "video/mp4"
+          );
+
+          // Log hoàn thành upload với URLs
+          this.processLogger.logProcess({
+            type: 'video_process',
+            status: 'uploaded',
+            fileName,
+            fileId,
+            targetFileId: uploadedFile.id,
+            fileSize: stats.size,
+            duration: Date.now() - startTime,
+            driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
+            driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
+            timestamp: new Date().toISOString()
+          });
+        } catch (error) {
+          // Log lỗi
+          this.processLogger.logProcess({
+            type: 'video_process',
+            status: 'error',
+            fileName,
+            fileId, 
+            error: error.message,
+            duration: Date.now() - startTime,
+            timestamp: new Date().toISOString()
+          });
+          console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
+        }
       });
 
-      // Upload video
-      console.log(`${indent}📤 Đang upload video lên Drive...`);
-      const uploadedFile = await this.uploadFile(
-        outputPath,
-        fileName,
-        targetFolderId,
-        "video/mp4"
-      );
-
-      // Log hoàn thành upload với URLs
-      this.processLogger.logProcess({
-        type: 'video_process',
-        status: 'uploaded',
-        fileName,
-        fileId,
-        targetFileId: uploadedFile.id,
-        fileSize: stats.size,
-        duration: Date.now() - startTime,
-        driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
-        driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
-        timestamp: new Date().toISOString()
-      });
-
+      // Return true ngay sau khi bắt đầu tải
       return true;
 
     } catch (error) {
@@ -364,8 +410,19 @@ class VideoHandler {
       console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
       return false;
     } finally {
-      // Không đóng browser ở đây nữa
-      // if (browser) await browser.close();
+      // Đảm bảo browser luôn được đóng trong trường hợp có lỗi
+      if (browser) {
+        try {
+          await browser.close();
+          this.activeBrowsers--;
+          if (this.browserQueue.length > 0) {
+            const nextResolve = this.browserQueue.shift();
+            nextResolve();
+          }
+        } catch (err) {
+          console.error(`${indent}⚠️ Lỗi khi đóng browser:`, err.message);
+        }
+      }
     }
   }
 
