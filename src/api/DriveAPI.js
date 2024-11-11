@@ -8,6 +8,7 @@ const VideoHandler = require("./VideoHandler");
 const { credentials, SCOPES } = require("../config/auth");
 const readline = require("readline");
 const ChromeManager = require("./ChromeManager");
+const ProcessLogger = require('../utils/ProcessLogger');
 
 class DriveAPI {
   constructor() {
@@ -27,6 +28,7 @@ class DriveAPI {
     this.oauth2Client = null;
     this.drive = null;
     this.chromeManager = ChromeManager.getInstance();
+    this.processLogger = new ProcessLogger();
   }
 
   async authenticate() {
@@ -220,6 +222,7 @@ class DriveAPI {
 
   async processFolder(sourceFolderId, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
+    const startTime = new Date();
 
     try {
       // Kiểm tra folder đích tồn tại
@@ -328,7 +331,7 @@ class DriveAPI {
 
           if (apiFiles.length > 0) {
             console.log(`${indent}📥 Tải song song ${apiFiles.length} videos qua API...`);
-            const videoHandler = new VideoHandler(this.oauth2Client, this.drive);
+            const videoHandler = new VideoHandler(this.oauth2Client, this.drive, this.processLogger);
             await Promise.all(
               apiFiles.map(file => 
                 videoHandler.processVideo(file.id, file.name, targetFolderId, depth)
@@ -338,7 +341,7 @@ class DriveAPI {
 
           if (apiPDFs.length > 0) {
             console.log(`${indent}📥 Tải song song ${apiPDFs.length} PDFs qua API...`);
-            const pdfDownloader = new PDFDownloader(this);
+            const pdfDownloader = new PDFDownloader(this, this.processLogger);
             await Promise.all(
               apiPDFs.map(file => 
                 pdfDownloader.downloadPDF(file.id, file.name, targetFolderId)
@@ -393,9 +396,27 @@ class DriveAPI {
 
       console.log(`${indent}✅ Hoàn thành xử lý folder`);
 
+      // Log kết quả xử lý folder
+      this.processLogger.logProcess({
+        type: 'folder',
+        sourceId: sourceFolderId,
+        targetId: targetFolderId,
+        status: 'success',
+        duration: new Date() - startTime,
+        filesProcessed: nonFolders.length,
+        foldersProcessed: folders.length
+      });
+
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
-      await this.chromeManager.closeInactiveBrowsers();
+      this.processLogger.logProcess({
+        type: 'folder',
+        sourceId: sourceFolderId,
+        targetId: targetFolderId,
+        status: 'error',
+        error: error.message,
+        duration: new Date() - startTime
+      });
+      throw error;
     }
   }
 

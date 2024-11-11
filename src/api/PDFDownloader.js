@@ -4,9 +4,10 @@ const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const axios = require("axios");
 const ChromeManager = require("./ChromeManager");
+const ProcessLogger = require('../utils/ProcessLogger');
 
 class PDFDownloader {
-  constructor(driveAPI) {
+  constructor(driveAPI, processLogger = null) {
     this.browser = null;
     this.page = null;
     this.outputDir = path.join(__dirname, "output");
@@ -16,7 +17,8 @@ class PDFDownloader {
     this.userAgent = null;
     this.driveAPI = driveAPI;
     this.chromeManager = ChromeManager.getInstance();
-
+    this.processLogger = processLogger || new ProcessLogger();
+    
     [this.outputDir, this.tempDir].forEach((dir) => {
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -25,29 +27,81 @@ class PDFDownloader {
   }
 
   async downloadPDF(fileId, fileName, targetFolderId, profileId = null) {
+    const startTime = new Date();
     const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
     const outputPath = path.join(this.tempDir, safeFileName);
+    let originalSize = 0;
+    let processedSize = 0;
+    let uploadedFile = null;
 
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
-      await this.downloadFromDriveAPI(fileId, outputPath, targetFolderId);
+      const result = await this.downloadFromDriveAPI(fileId, outputPath, targetFolderId);
+      
+      if (result && result.uploadedFile) {
+        uploadedFile = result.uploadedFile;
+        originalSize = result.originalSize;
+        processedSize = result.processedSize;
+        
+        this.processLogger.logProcess({
+          type: 'pdf',
+          fileName,
+          sourceId: fileId,
+          targetId: uploadedFile.id,
+          sourceUrl: `https://drive.google.com/file/d/${fileId}`,
+          targetUrl: `https://drive.google.com/file/d/${uploadedFile.id}`,
+          fileSize: {
+            original: originalSize,
+            processed: processedSize
+          },
+          method: 'api',
+          status: 'success',
+          duration: new Date() - startTime
+        });
+      }
+      
       return {
         success: true,
         filePath: outputPath,
         method: "api",
       };
     } catch (error) {
-      if (
-        error?.error?.code === 403 ||
-        error.message.includes("cannotDownloadFile")
-      ) {
+      if (error?.error?.code === 403 || error.message.includes("cannotDownloadFile")) {
         console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
-        return await this.captureAndCreatePDF(
-          fileId,
-          outputPath,
-          targetFolderId
-        );
+        const captureResult = await this.captureAndCreatePDF(fileId, outputPath, targetFolderId);
+        
+        if (captureResult.success) {
+          const stats = await fs.promises.stat(outputPath);
+          uploadedFile = captureResult.uploadedFile;
+          processedSize = stats.size;
+          
+          this.processLogger.logProcess({
+            type: 'pdf',
+            fileName,
+            sourceId: fileId,
+            targetId: uploadedFile.id,
+            sourceUrl: `https://drive.google.com/file/d/${fileId}`,
+            targetUrl: `https://drive.google.com/file/d/${uploadedFile.id}`,
+            fileSize: {
+              original: 'unknown',
+              processed: processedSize
+            },
+            method: 'capture',
+            status: 'success',
+            duration: new Date() - startTime
+          });
+        }
+        return captureResult;
       }
+
+      this.processLogger.logProcess({
+        type: 'pdf',
+        fileName,
+        sourceId: fileId,
+        status: 'error',
+        error: error.message,
+        duration: new Date() - startTime
+      });
       throw error;
     }
   }
@@ -60,8 +114,8 @@ class PDFDownloader {
       { responseType: "stream" }
     );
 
-    const fileSize = parseInt(response.headers["content-length"], 10);
-    const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+    const originalSize = parseInt(response.headers["content-length"], 10);
+    const fileSizeMB = (originalSize / (1024 * 1024)).toFixed(2);
     console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
 
     return new Promise((resolve, reject) => {
@@ -76,12 +130,10 @@ class PDFDownloader {
           downloadedSize += chunk.length;
           const now = Date.now();
           if (now - lastLogTime >= logInterval) {
-            const progress = (downloadedSize / fileSize) * 100;
+            const progress = (downloadedSize / originalSize) * 100;
             const downloadedMB = (downloadedSize / (1024 * 1024)).toFixed(2);
             console.log(
-              `⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(
-                1
-              )}%)`
+              `⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(1)}%)`
             );
             lastLogTime = now;
           }
@@ -90,14 +142,28 @@ class PDFDownloader {
           console.log(`\n✅ Tải PDF hoàn tất!`);
 
           const stats = await fs.promises.stat(outputPath);
-          const downloadedSize = (stats.size / (1024 * 1024)).toFixed(2);
-          console.log(`📦 File đã tải: ${downloadedSize}MB`);
-
+          const processedSize = stats.size;
+          
           console.log(`\n📤 Đang upload lên Drive...`);
           try {
-            await this.driveAPI.uploadFile(outputPath, targetFolderId);
+            const uploadedFile = await this.driveAPI.uploadFile(outputPath, targetFolderId);
             console.log(`✨ Upload hoàn tất!`);
-            resolve(outputPath);
+            
+            // Cập nhật permissions để file có thể xem công khai
+            await this.driveAPI.drive.permissions.create({
+              fileId: uploadedFile.id,
+              requestBody: {
+                role: 'reader',
+                type: 'anyone'
+              }
+            });
+
+            resolve({
+              uploadedFile,
+              originalSize,
+              processedSize,
+              newUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`
+            });
           } catch (error) {
             console.error(`❌ Lỗi upload:`, error.message);
             reject(error);
