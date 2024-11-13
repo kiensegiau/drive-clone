@@ -733,56 +733,61 @@ class VideoHandler {
   }
 
   async uploadFile(filePath, fileName, targetFolderId, mimeType) {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 2000;
+    const MAX_RETRIES = 5;
+    const RETRY_DELAY = 5000;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const fileSize = fs.statSync(filePath).size;
         const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
         
-        console.log(`📤 Bắt đầu upload ${fileName} (${fileSizeMB}MB)...`);
+        console.log(`📤 Đang upload ${fileName}...`);
+        console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
 
-        // Chỉ giữ lại các trường cần thiết và có thể ghi được
+        // Thiết lập metadata giống hệt trình duyệt web
         const fileMetadata = {
           name: fileName,
-          mimeType: mimeType || 'video/mp4',
           parents: [targetFolderId],
           description: '',
+          // Thêm các thuộc tính để xử lý video giống web UI
           properties: {
+            'source': 'web_client',
+            'upload_source': 'web_client',
+            'upload_time': Date.now().toString(),
+            'upload_agent': 'Mozilla/5.0 Chrome/120.0.0.0',
             'processed': 'false',
-            'target_resolution': '1080p',
+            'processing_status': 'PENDING'
+          },
+          appProperties: {
             'force_high_quality': 'true',
-            'processing_requested': Date.now().toString()
+            'processing_priority': 'HIGH'
           }
         };
 
-        // Upload file với metadata đã điều chỉnh
+        // Tạo readable stream với chunk size giống web
+        const media = {
+          mimeType: mimeType,
+          body: fs.createReadStream(filePath, {
+            highWaterMark: 256 * 1024 // 256KB chunks như web
+          })
+        };
+
+        // Upload với cấu hình giống web UI
         const response = await this.drive.files.create({
           requestBody: fileMetadata,
-          media: {
-            mimeType: mimeType || 'video/mp4',
-            body: fs.createReadStream(filePath)
-          },
-          fields: '*',
+          media: media,
+          fields: 'id, name, size, mimeType, webViewLink, webContentLink',
           supportsAllDrives: true,
-          uploadType: 'resumable'
+          enforceSingleParent: true,
+          ignoreDefaultVisibility: true,
+          keepRevisionForever: true,
+          uploadType: fileSize > 5 * 1024 * 1024 ? 'resumable' : 'multipart'
         });
 
-        console.log(`\n✅ Upload hoàn tất!`);
+        console.log(`✨ Upload thành công: ${fileName}`);
+        console.log(`📎 File ID: ${response.data.id}`);
 
-        // Sau khi upload xong mới set contentHints
-        await this.drive.files.update({
-          fileId: response.data.id,
-          requestBody: {
-            contentHints: {
-              indexableText: 'video/mp4 1080p high-quality original'
-            }
-          },
-          supportsAllDrives: true
-        });
-
-        // Set permissions
+        // Set permissions giống web UI
         await this.drive.permissions.create({
           fileId: response.data.id,
           requestBody: {
@@ -791,18 +796,14 @@ class VideoHandler {
             allowFileDiscovery: false,
             viewersCanCopyContent: true
           },
-          supportsAllDrives: true
+          supportsAllDrives: true,
+          sendNotificationEmail: false
         });
 
-        return {
-          id: response.data.id,
-          name: response.data.name,
-          size: response.data.size,
-          mimeType: response.data.mimeType,
-          viewUrl: response.data.webViewLink,
-          downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
-          embedUrl: `https://drive.google.com/file/d/${response.data.id}/preview`
-        };
+        // Force xử lý video chất lượng cao
+        await this.ensureVideoProcessing(response.data.id, '1080p');
+
+        return response.data;
 
       } catch (error) {
         console.error(`❌ Lỗi upload (lần ${attempt + 1}/${MAX_RETRIES}):`, error.message);
@@ -811,9 +812,8 @@ class VideoHandler {
           throw error;
         }
 
-        const currentDelay = RETRY_DELAY * (attempt + 1);
-        console.log(`⏳ Đợi ${currentDelay/1000}s trước khi thử lại...`);
-        await new Promise(resolve => setTimeout(resolve, currentDelay));
+        console.log(`⏳ Thử lại sau 5s...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       }
     }
   }
