@@ -580,7 +580,7 @@ class VideoHandler {
             writer.write(data);
             totalBytesWritten += data.length;
 
-            // Hiển thị tiến độ
+            // Hiển thị ti��n độ
             const percent = (totalBytesWritten / fileSize) * 100;
             const elapsedSeconds = (Date.now() - startTime) / 1000;
             const speed = totalBytesWritten / elapsedSeconds / (1024 * 1024);
