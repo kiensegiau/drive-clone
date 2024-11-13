@@ -99,6 +99,9 @@ class PDFDownloader {
   }
 
   async downloadFromDriveAPI(fileId, outputPath, targetFolderId) {
+    const MAX_UPLOAD_RETRIES = 5;
+    const RETRY_DELAY = 5000; // 5 giây
+
     console.log(`\n📥 Bắt đầu tải PDF từ Drive API...`);
 
     const response = await this.driveAPI.drive.files.get(
@@ -137,28 +140,64 @@ class PDFDownloader {
           const processedSize = stats.size;
           
           console.log(`\n📤 Đang upload lên Drive...`);
-          try {
-            const uploadedFile = await this.driveAPI.uploadFile(outputPath, targetFolderId);
-            console.log(`✨ Upload hoàn tất!`);
-            
-            // Cập nhật permissions để file có thể xem công khai
-            await this.driveAPI.drive.permissions.create({
-              fileId: uploadedFile.id,
-              requestBody: {
-                role: 'reader',
-                type: 'anyone'
-              }
-            });
 
-            resolve({
-              uploadedFile,
-              originalSize,
-              processedSize,
-              newUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`
-            });
-          } catch (error) {
-            console.error(`❌ Lỗi upload:`, error.message);
-            reject(error);
+          // Thêm retry logic cho upload
+          let uploadAttempt = 0;
+          let uploadedFile = null;
+
+          while (uploadAttempt < MAX_UPLOAD_RETRIES) {
+            try {
+              uploadedFile = await this.driveAPI.uploadFile(outputPath, targetFolderId);
+              console.log(`✨ Upload hoàn tất!`);
+              
+              // Cập nhật permissions với retry
+              let permissionAttempt = 0;
+              while (permissionAttempt < MAX_UPLOAD_RETRIES) {
+                try {
+                  await this.driveAPI.drive.permissions.create({
+                    fileId: uploadedFile.id,
+                    requestBody: {
+                      role: 'reader',
+                      type: 'anyone'
+                    },
+                    // Thêm retry và timeout options
+                    retryConfig: {
+                      retry: 5,
+                      onRetryAttempt: (err) => {
+                        console.log(`⚠️ Retry permission attempt ${permissionAttempt + 1}: ${err.message}`);
+                      }
+                    },
+                    timeout: 30000
+                  });
+                  break;
+                } catch (permError) {
+                  permissionAttempt++;
+                  if (permissionAttempt === MAX_UPLOAD_RETRIES) {
+                    throw permError;
+                  }
+                  console.log(`⚠️ Lỗi set permission (${permissionAttempt}/${MAX_UPLOAD_RETRIES}): ${permError.message}`);
+                  await new Promise(r => setTimeout(r, RETRY_DELAY));
+                }
+              }
+
+              resolve({
+                uploadedFile,
+                originalSize,
+                processedSize,
+                newUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`
+              });
+              break;
+            } catch (error) {
+              uploadAttempt++;
+              if (uploadAttempt === MAX_UPLOAD_RETRIES) {
+                console.error(`❌ Lỗi upload sau ${MAX_UPLOAD_RETRIES} lần thử:`, error.message);
+                reject(error);
+                return;
+              }
+              console.log(`⚠️ Lỗi upload (${uploadAttempt}/${MAX_UPLOAD_RETRIES}): ${error.message}`);
+              console.log(`⏳ Thử lại sau ${RETRY_DELAY/1000}s...`);
+              await new Promise(r => setTimeout(r, RETRY_DELAY));
+            }
           }
         })
         .on("error", (error) => {

@@ -294,7 +294,7 @@ class VideoHandler {
               console.log(`${indent}  - ${v.quality}p (itag=${v.itag})`);
             });
             const bestQuality = foundVideoUrls[0];
-            console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
+            console.log(`${indent}🎯 Chọn ch���t lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
             resolveVideoUrl(bestQuality.url);
           } else {
             resolveVideoUrl(null);
@@ -598,7 +598,7 @@ class VideoHandler {
           if (stats.size === 0) {
             if (retryCount < MAX_DOWNLOAD_RETRIES) {
               console.log(
-                `\n⚠️ File tải xuống rỗng, đang thử lại lần ${
+                `\n⚠️ File t���i xuống rỗng, đang thử lại lần ${
                   retryCount + 1
                 }...`
               );
@@ -646,7 +646,7 @@ class VideoHandler {
         });
 
         writer.on("error", (error) => {
-          console.error("\n�� Lỗi ghi file:", error.message);
+          console.error("\n Lỗi ghi file:", error.message);
           writer.close();
           if (retryCount < MAX_DOWNLOAD_RETRIES) {
             console.log(`\n⚠️ Đang thử lại lần ${retryCount + 1}...`);
@@ -735,7 +735,6 @@ class VideoHandler {
   async uploadFile(filePath, fileName, targetFolderId, mimeType) {
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 2000;
-    const UPLOAD_TIMEOUT = 3600000; // 1 giờ
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
@@ -744,72 +743,58 @@ class VideoHandler {
         
         console.log(`📤 Bắt đầu upload ${fileName} (${fileSizeMB}MB)...`);
 
-        // 1. Lấy token
-        const tokens = await this.oAuth2Client.getAccessToken();
-        const accessToken = tokens.token;
-
-        // 2. Tạo form data
-        const form = new FormData();
-        
-        // 3. Thêm metadata
-        const metadata = {
+        // Chỉ giữ lại các trường cần thiết và có thể ghi được
+        const fileMetadata = {
           name: fileName,
-          mimeType: mimeType,
-          parents: [targetFolderId]
+          mimeType: mimeType || 'video/mp4',
+          parents: [targetFolderId],
+          description: '',
+          properties: {
+            'processed': 'false',
+            'target_resolution': '1080p',
+            'force_high_quality': 'true'
+          }
         };
 
-        form.append('metadata', JSON.stringify(metadata), {
-          contentType: 'application/json; charset=UTF-8',
+        // Upload file với metadata đã điều chỉnh
+        const response = await this.drive.files.create({
+          requestBody: fileMetadata,
+          media: {
+            mimeType: mimeType || 'video/mp4',
+            body: fs.createReadStream(filePath)
+          },
+          fields: '*',
+          supportsAllDrives: true,
+          uploadType: 'resumable'
         });
 
-        // 4. Thêm file dưới dạng stream
-        const fileStream = fs.createReadStream(filePath);
-        form.append('file', fileStream, {
-          contentType: mimeType,
-          knownLength: fileSize // Quan trọng: set length cho form
-        });
+        console.log(`\n✅ Upload hoàn tất!`);
 
-        // 5. Upload với axios
-        console.log(`🚀 Đang upload...`);
-        const startTime = Date.now();
-
-        const response = await axios.post(
-          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,mimeType,webViewLink',
-          form,
-          {
-            headers: {
-              ...form.getHeaders(),
-              'Authorization': `Bearer ${accessToken}`,
-              'Content-Length': form.getLengthSync()
-            },
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity,
-            timeout: UPLOAD_TIMEOUT,
-            onUploadProgress: (progressEvent) => {
-              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              process.stdout.write(`\r📤 Upload progress: ${percentCompleted}%`);
+        // Sau khi upload xong mới set các thuộc tính bổ sung
+        await this.drive.files.update({
+          fileId: response.data.id,
+          requestBody: {
+            contentHints: {
+              indexableText: 'video/mp4 1080p high-quality original',
+              thumbnail: {
+                image: Buffer.from('').toString('base64'),
+                mimeType: 'image/jpeg'
+              }
             }
-          }
-        );
+          },
+          supportsAllDrives: true
+        });
 
-        const uploadTime = (Date.now() - startTime) / 1000;
-        const uploadSpeed = (fileSize / uploadTime / (1024 * 1024)).toFixed(2);
-        console.log(`\n✅ Upload hoàn tất! (${uploadSpeed} MB/s)`);
-
-        // 6. Set permissions
-        await axios.post(
-          `https://www.googleapis.com/drive/v3/files/${response.data.id}/permissions`,
-          {
+        // Set permissions
+        await this.drive.permissions.create({
+          fileId: response.data.id,
+          requestBody: {
             role: 'reader',
             type: 'anyone',
             allowFileDiscovery: false
           },
-          {
-            headers: {
-              'Authorization': `Bearer ${accessToken}`
-            }
-          }
-        );
+          supportsAllDrives: true
+        });
 
         return {
           id: response.data.id,
