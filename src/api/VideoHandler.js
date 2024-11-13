@@ -8,6 +8,8 @@ const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../config/auth.js"); // Import auth config
 const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require('../utils/ProcessLogger');
+const http = require('http');
+const https = require('https');
 
 class VideoHandler {
   constructor() {
@@ -49,6 +51,12 @@ class VideoHandler {
       // Nếu chưa có token, tạo URL để lấy token
       this.getAccessToken();
     }
+
+    // Thêm khởi tạo drive client
+    this.drive = google.drive({ 
+      version: 'v3',
+      auth: this.oAuth2Client 
+    });
   }
 
   async getAccessToken() {
@@ -638,7 +646,7 @@ class VideoHandler {
         });
 
         writer.on("error", (error) => {
-          console.error("\n❌ Lỗi ghi file:", error.message);
+          console.error("\n�� Lỗi ghi file:", error.message);
           writer.close();
           if (retryCount < MAX_DOWNLOAD_RETRIES) {
             console.log(`\n⚠️ Đang thử lại lần ${retryCount + 1}...`);
@@ -724,159 +732,136 @@ class VideoHandler {
     }
   }
 
-  async uploadFile(filePath, fileName, folderId, mimeType) {
-    try {
-      // Kiểm tra độ phân giải thực tế của video trước khi upload
-      const videoResolution = await this.getVideoResolution(filePath);
-      console.log(`📊 Độ phân giải video: ${videoResolution.width}x${videoResolution.height}`);
+  async uploadFile(filePath, fileName, targetFolderId, mimeType) {
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 2000;
+    const UPLOAD_TIMEOUT = 3600000; // 1 giờ
 
-      // Đơn giản hóa fileMetadata, chỉ giữ các trường cơ bản
-      const fileMetadata = {
-        name: fileName,
-        parents: [folderId]
-      };
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const fileSize = fs.statSync(filePath).size;
+        const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+        
+        console.log(`📤 Bắt đầu upload ${fileName} (${fileSizeMB}MB)...`);
 
-      // Kiểm tra đầu vào
-      if (!filePath || !fileName || !folderId || !mimeType) {
-        throw new Error("Thiếu thông tin upload");
-      }
+        // 1. Lấy token
+        const tokens = await this.oAuth2Client.getAccessToken();
+        const accessToken = tokens.token;
 
-      // Kiểm tra file tồn tại và kích thước
-      if (!fs.existsSync(filePath)) {
-        throw new Error(`File không tồn tại: ${filePath}`);
-      }
+        // 2. Tạo form data
+        const form = new FormData();
+        
+        // 3. Thêm metadata
+        const metadata = {
+          name: fileName,
+          mimeType: mimeType,
+          parents: [targetFolderId]
+        };
 
-      const stats = fs.statSync(filePath);
-      if (stats.size === 0) {
-        throw new Error(`File rỗng: ${filePath}`);
-      }
+        form.append('metadata', JSON.stringify(metadata), {
+          contentType: 'application/json; charset=UTF-8',
+        });
 
-      console.log(`📤 Bắt đầu upload ${fileName}...`);
+        // 4. Thêm file dưới dạng stream
+        const fileStream = fs.createReadStream(filePath);
+        form.append('file', fileStream, {
+          contentType: mimeType,
+          knownLength: fileSize // Quan trọng: set length cho form
+        });
 
-      // Tạo readable stream với buffer lớn hơn
-      const media = {
-        mimeType: mimeType,
-        body: fs.createReadStream(filePath, {
-          highWaterMark: 256 * 1024 * 1024, // 256MB buffer
-        }),
-      };
+        // 5. Upload với axios
+        console.log(`🚀 Đang upload...`);
+        const startTime = Date.now();
 
-      const drive = google.drive({
-        version: "v3",
-        auth: this.oAuth2Client,
-      });
-
-      // Upload file trước
-      const response = await drive.files.create(
-        {
-          requestBody: fileMetadata,
-          media: media,
-          fields: "id, name, size, mimeType",
-          supportsAllDrives: true,
-        },
-        {
-          onUploadProgress: (evt) => {
-            const progress = (evt.bytesRead / stats.size) * 100;
-            process.stdout.write(`\r📤 Upload: ${progress.toFixed(1)}%`);
-          },
-        }
-      );
-
-      process.stdout.write("\n");
-      console.log(`✅ Upload hoàn tất: ${fileName}`);
-      console.log(`📎 File ID: ${response.data.id}`);
-      console.log(`🔗 View URL: https://drive.google.com/file/d/${response.data.id}/view`);
-      console.log(`⬇️ Download URL: https://drive.google.com/uc?export=download&id=${response.data.id}`);
-
-      // Sau khi upload xong, chỉ cần cấu hình để yêu cầu xử lý chất lượng cao
-      console.log(`🔄 Đang cấu hình xử lý video chất lượng cao...`);
-      
-      await drive.files.update({
-        fileId: response.data.id,
-        requestBody: {
-          contentHints: {
-            indexableText: 'video/mp4 1080p 720p high-quality original',
-          },
-          properties: {
-            'video_quality': 'original',
-            'target_resolution': videoResolution.height >= 1080 ? '1080p' : '720p',
-            'processing_requested': 'true',
-            'force_processing': 'true',
-            'preserve_original_quality': 'true'
+        const response = await axios.post(
+          'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,size,mimeType,webViewLink',
+          form,
+          {
+            headers: {
+              ...form.getHeaders(),
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Length': form.getLengthSync()
+            },
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
+            timeout: UPLOAD_TIMEOUT,
+            onUploadProgress: (progressEvent) => {
+              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              process.stdout.write(`\r📤 Upload progress: ${percentCompleted}%`);
+            }
           }
-        },
-        supportsAllDrives: true
-      });
+        );
 
-      // Cấu hình quyền xem
-      await drive.permissions.create({
-        fileId: response.data.id,
-        requestBody: {
-          role: 'reader',
-          type: 'anyone',
-          allowFileDiscovery: false,
-          viewersCanCopyContent: true
-        },
-        supportsAllDrives: true
-      });
+        const uploadTime = (Date.now() - startTime) / 1000;
+        const uploadSpeed = (fileSize / uploadTime / (1024 * 1024)).toFixed(2);
+        console.log(`\n✅ Upload hoàn tất! (${uploadSpeed} MB/s)`);
 
-      console.log(`ℹ️ Video đã được upload và sẽ được Drive xử lý trong vài giờ tới`);
-      console.log(`🔗 View URL: https://drive.google.com/file/d/${response.data.id}/view`);
-      
-      // Log thành công và kết thúc
-      this.processLogger.logProcess({
-        type: 'video_upload',
-        status: 'success',
-        fileName,
-        fileId: response.data.id,
-        fileSize: stats.size,
-        resolution: `${videoResolution.width}x${videoResolution.height}`,
-        driveViewUrl: `https://drive.google.com/file/d/${response.data.id}/view`,
-        timestamp: new Date().toISOString()
-      });
+        // 6. Set permissions
+        await axios.post(
+          `https://www.googleapis.com/drive/v3/files/${response.data.id}/permissions`,
+          {
+            role: 'reader',
+            type: 'anyone',
+            allowFileDiscovery: false
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`
+            }
+          }
+        );
 
-      return response.data;
-    } catch (error) {
-      // Log lỗi upload
-      this.processLogger.logProcess({
-        type: 'video_upload',
-        status: 'error',
-        fileName,
-        error: error.message,
-        timestamp: new Date().toISOString()
-      });
+        return {
+          id: response.data.id,
+          name: response.data.name,
+          size: response.data.size,
+          mimeType: response.data.mimeType,
+          viewUrl: response.data.webViewLink,
+          downloadUrl: `https://drive.google.com/uc?export=download&id=${response.data.id}`,
+          embedUrl: `https://drive.google.com/file/d/${response.data.id}/preview`
+        };
 
-      console.error("\n❌ Lỗi upload:", error.message);
-      throw error;
+      } catch (error) {
+        console.error(`❌ Lỗi upload (lần ${attempt + 1}/${MAX_RETRIES}):`, error.message);
+        
+        if (attempt === MAX_RETRIES - 1) {
+          throw error;
+        }
+
+        const currentDelay = RETRY_DELAY * (attempt + 1);
+        console.log(`⏳ Đợi ${currentDelay/1000}s trước khi thử lại...`);
+        await new Promise(resolve => setTimeout(resolve, currentDelay));
+      }
     }
   }
 
-  // Thêm hàm mới để lấy độ phân giải video
-  async getVideoResolution(filePath) {
-    return new Promise((resolve, reject) => {
-        const ffprobe = require('ffprobe');
-        const ffprobeStatic = require('ffprobe-static');
+  // Thêm hàm để theo dõi tiến độ xử lý video
+  async checkVideoProcessing(fileId, maxAttempts = 10) {
+    console.log(`⏳ Đang đợi video được xử lý...`);
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const file = await this.drive.files.get({
+          fileId: fileId,
+          fields: 'videoMediaMetadata,processingMetadata',
+          supportsAllDrives: true
+        });
 
-        ffprobe(filePath, { path: ffprobeStatic.path })
-            .then(info => {
-                const videoStream = info.streams.find(stream => stream.codec_type === 'video');
-                if (videoStream) {
-                    resolve({
-                        width: videoStream.width,
-                        height: videoStream.height,
-                        codec: videoStream.codec_name,
-                        bitrate: videoStream.bit_rate
-                    });
-                } else {
-                    reject(new Error('Không tìm thấy video stream'));
-                }
-            })
-            .catch(err => {
-                console.error('❌ Lỗi đọc thông tin video:', err);
-                // Fallback to default HD resolution if cannot read
-                resolve({ width: 1280, height: 720 });
-            });
-    });
+        if (file.data.videoMediaMetadata?.height >= 720) {
+          console.log(`✅ Video đã được xử lý ở ${file.data.videoMediaMetadata.height}p`);
+          return true;
+        }
+
+        console.log(`🔄 Lần kiểm tra ${attempt + 1}/${maxAttempts}: Video đang được xử lý...`);
+        await new Promise(r => setTimeout(r, 30000)); // Đợi 30s giữa các lần kiểm tra
+
+      } catch (error) {
+        console.log(`⚠️ Lỗi kiểm tra xử lý video:`, error.message);
+      }
+    }
+
+    console.log(`⚠️ Hết thời gian đợi xử lý video`);
+    return false;
   }
 
   // Thêm hàm kiểm tra và force xử lý video sau khi upload
