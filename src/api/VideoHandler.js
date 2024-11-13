@@ -294,7 +294,7 @@ class VideoHandler {
               console.log(`${indent}  - ${v.quality}p (itag=${v.itag})`);
             });
             const bestQuality = foundVideoUrls[0];
-            console.log(`${indent}🎯 Chọn ch���t lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
+            console.log(`${indent}🎯 Chọn chất lượng cao nhất: ${bestQuality.quality}p (itag=${bestQuality.itag})`);
             resolveVideoUrl(bestQuality.url);
           } else {
             resolveVideoUrl(null);
@@ -598,7 +598,7 @@ class VideoHandler {
           if (stats.size === 0) {
             if (retryCount < MAX_DOWNLOAD_RETRIES) {
               console.log(
-                `\n⚠️ File t���i xuống rỗng, đang thử lại lần ${
+                `\n⚠️ File ti xuống rỗng, đang thử lại lần ${
                   retryCount + 1
                 }...`
               );
@@ -752,7 +752,8 @@ class VideoHandler {
           properties: {
             'processed': 'false',
             'target_resolution': '1080p',
-            'force_high_quality': 'true'
+            'force_high_quality': 'true',
+            'processing_requested': Date.now().toString()
           }
         };
 
@@ -770,16 +771,12 @@ class VideoHandler {
 
         console.log(`\n✅ Upload hoàn tất!`);
 
-        // Sau khi upload xong mới set các thuộc tính bổ sung
+        // Sau khi upload xong mới set contentHints
         await this.drive.files.update({
           fileId: response.data.id,
           requestBody: {
             contentHints: {
-              indexableText: 'video/mp4 1080p high-quality original',
-              thumbnail: {
-                image: Buffer.from('').toString('base64'),
-                mimeType: 'image/jpeg'
-              }
+              indexableText: 'video/mp4 1080p high-quality original'
             }
           },
           supportsAllDrives: true
@@ -791,7 +788,8 @@ class VideoHandler {
           requestBody: {
             role: 'reader',
             type: 'anyone',
-            allowFileDiscovery: false
+            allowFileDiscovery: false,
+            viewersCanCopyContent: true
           },
           supportsAllDrives: true
         });

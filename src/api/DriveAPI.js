@@ -125,7 +125,7 @@ class DriveAPI {
       // Bắt đầu xử lý từ folder gốc
       await this.processFolder(sourceFolderId, subFolderId);
 
-      console.log("\n✅ Hoàn th��nh toàn bộ!");
+      console.log("\n✅ Hoàn thành toàn bộ!");
 
       // Log kết quả cuối cùng
       const stats = this.processLogger.getSessionStats(sessionId);
@@ -459,37 +459,71 @@ class DriveAPI {
   }
 
   async uploadFile(filePath, parentId = null) {
-    try {
-      const fileName = path.basename(filePath);
-      const mimeType = "application/pdf";
+    const MAX_RETRIES = 5;
+    const RETRY_DELAY = 5000;
 
-      const fileMetadata = {
-        name: fileName,
-        mimeType: mimeType,
-      };
-      if (parentId) {
-        fileMetadata.parents = [parentId];
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        // Kiểm tra file tồn tại
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File không tồn tại: ${filePath}`);
+        }
+
+        const fileName = path.basename(filePath);
+        const fileSize = fs.statSync(filePath).size;
+        const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+
+        console.log(`\n📤 Đang upload ${fileName}...`);
+        console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
+
+        const fileMetadata = {
+          name: fileName,
+          mimeType: "application/pdf"
+        };
+
+        if (parentId) {
+          fileMetadata.parents = [parentId];
+        }
+
+        // Sử dụng resumable upload
+        const file = await this.drive.files.create({
+          requestBody: fileMetadata,
+          media: {
+            mimeType: "application/pdf",
+            body: fs.createReadStream(filePath)
+          },
+          fields: "id, name, size",
+          supportsAllDrives: true,
+          // Quan trọng: Sử dụng resumable upload
+          uploadType: 'resumable'
+        });
+
+        console.log(`✨ Upload thành công: ${file.data.name}`);
+        console.log(`📎 File ID: ${file.data.id}`);
+
+        // Set permissions
+        await this.drive.permissions.create({
+          fileId: file.data.id,
+          requestBody: {
+            role: 'reader',
+            type: 'anyone',
+            allowFileDiscovery: false
+          },
+          supportsAllDrives: true
+        });
+
+        return file.data;
+
+      } catch (error) {
+        console.error(`❌ Lỗi upload (lần ${attempt}/${MAX_RETRIES}):`, error.message);
+        
+        if (attempt === MAX_RETRIES) {
+          throw error;
+        }
+
+        console.log(`⏳ Thử lại sau ${RETRY_DELAY/1000}s...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY));
       }
-
-      const media = {
-        mimeType: mimeType,
-        body: fs.createReadStream(filePath),
-      };
-
-      console.log(`\n📤 Đang upload ${fileName}...`);
-      const file = await this.drive.files.create({
-        requestBody: fileMetadata,
-        media: media,
-        fields: "id, name, size",
-      });
-
-      console.log(`✨ Upload thành công: ${file.data.name}`);
-      console.log(`📎 File ID: ${file.data.id}`);
-
-      return file.data;
-    } catch (error) {
-      console.error("❌ Lỗi upload:", error.message);
-      throw error;
     }
   }
 }
