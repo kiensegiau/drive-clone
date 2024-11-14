@@ -57,6 +57,45 @@ class VideoHandler {
       version: 'v3',
       auth: this.oAuth2Client 
     });
+
+    // Kiểm tra hardware encoder có sẵn
+    this.hasNVENC = false;
+    this.hasQSV = false;
+    this.hasAMF = false;
+    
+    try {
+      // Kiểm tra NVIDIA NVENC
+      exec('ffmpeg -encoders | findstr nvenc', (error, stdout) => {
+        this.hasNVENC = !error && stdout.includes('nvenc');
+      });
+      // Kiểm tra Intel Quick Sync
+      exec('ffmpeg -encoders | findstr qsv', (error, stdout) => {
+        this.hasQSV = !error && stdout.includes('qsv');
+      });
+      // Kiểm tra AMD AMF
+      exec('ffmpeg -encoders | findstr amf', (error, stdout) => {
+        this.hasAMF = !error && stdout.includes('amf');
+      });
+    } catch (error) {
+      console.log('⚠️ Không thể kiểm tra hardware encoders');
+    }
+
+    this.VIDEO_PRESETS = {
+      '1080p': {
+        resolution: '1920x1080',
+        bitrate: '8M',
+        maxrate: '10M',
+        bufsize: '16M',
+        crf: 23
+      },
+      '720p': {
+        resolution: '1280x720',
+        bitrate: '4M',
+        maxrate: '5M',
+        bufsize: '8M',
+        crf: 23
+      }
+    };
   }
 
   async getAccessToken() {
@@ -81,32 +120,50 @@ class VideoHandler {
     throw new Error("Cần xác thực Google Drive trước khi upload");
   }
 
+  // Thêm hàm tạo tên file an toàn và unique
+  _generateSafeFileName(originalName, quality) {
+    // Loại bỏ ký tự đặc biệt và khoảng trắng đầu/cuối
+    const baseName = originalName
+      .replace(/\.mp4$/, '')
+      .trim()
+      .replace(/[/\\?%*:|"<>]/g, '-');
+    
+    // Thêm timestamp để đảm bảo unique
+    const timestamp = Date.now();
+    
+    // Tạo tên file mới với format: name_quality_timestamp.mp4
+    return `${baseName}_${quality}_${timestamp}.mp4`;
+  }
+
+  // Thêm hàm dọn dẹp files
+  async _cleanupFiles(files) {
+    for (const file of files) {
+      try {
+        if (fs.existsSync(file)) {
+          await fs.promises.unlink(file);
+          console.log(`🗑️ Đã xóa file: ${path.basename(file)}`);
+        }
+      } catch (error) {
+        console.error(`⚠️ Không thể xóa file ${path.basename(file)}:`, error.message);
+      }
+    }
+  }
+
   async processVideo(fileId, fileName, targetFolderId, depth = 0, profileId = null) {
     const indent = "  ".repeat(depth);
     let browser;
     let videoUrl = null;
-    let foundVideoUrls = [];
-    const tempFiles = [];
+    const tempFiles = []; // Mảng lưu các file cần dọn dẹp
     const startTime = Date.now();
     let bestQuality = null;
-
-    // Log bắt đầu xử lý
-    this.processLogger.logProcess({
-      type: 'video_process',
-      status: 'start',
-      fileName,
-      fileId,
-      targetFolderId,
-      timestamp: new Date().toISOString()
-    });
 
     try {
       console.log(`${indent}=== Xử lý video: ${fileName} ===`);
       
-      // Tạo tên file an toàn
-      const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
+      // Tạo tên file an toàn cho file gốc
+      const safeFileName = this._generateSafeFileName(fileName, 'original');
       const outputPath = path.join(this.TEMP_DIR, safeFileName);
-      tempFiles.push(outputPath);
+      tempFiles.push(outputPath); // Thêm vào danh sách cần dọn dẹp
 
       // Thêm vào hàng đợi nếu đang tải quá nhiều
       if (this.activeDownloads >= this.MAX_CONCURRENT_DOWNLOADS) {
@@ -287,7 +344,7 @@ class VideoHandler {
         // Set timeout riêng
         const timeout = setTimeout(() => {
           if (foundVideoUrls.length > 0) {
-            // Sắp xếp và chọn URL chất lượng cao nhất
+            // Sắp xếp và chn URL chất lượng cao nhất
             foundVideoUrls.sort((a, b) => b.quality - a.quality);
             console.log(`${indent}📊 Tất cả URL tìm được:`);
             foundVideoUrls.forEach(v => {
@@ -363,28 +420,72 @@ class VideoHandler {
             timestamp: new Date().toISOString()
           });
 
-          // Upload video
-          console.log(`${indent}📤 Đang upload video lên Drive...`);
-          const uploadedFile = await this.uploadFile(
-            outputPath,
-            fileName,
-            targetFolderId,
-            "video/mp4"
-          );
+          // Sau khi tải video, xử lý các phiên bản chất lượng khác nhau
+          const processedVideos = [];
+          
+          if (bestQuality.quality >= 1080) {
+            // Nếu video gốc >= 1080p, xử lý 1080p
+            console.log(`\n🎯 Video gốc ${bestQuality.quality}p, xử lý 1080p...`);
+            const output1080p = path.join(
+              this.TEMP_DIR, 
+              this._generateSafeFileName(fileName, '1080p')
+            );
+            tempFiles.push(output1080p); // Thêm vào danh sách cần dọn dẹp
+            
+            await this.processVideoWithFFmpeg(outputPath, output1080p, '1080p', true);
+            processedVideos.push({
+              path: output1080p,
+              quality: '1080p'
+            });
+          } else if (bestQuality.quality >= 720) {
+            // Nếu video gốc >= 720p nhưng < 1080p, xử lý 720p
+            console.log(`\n🎯 Video gốc ${bestQuality.quality}p, xử lý 720p...`);
+            const output720p = path.join(
+              this.TEMP_DIR,
+              this._generateSafeFileName(fileName, '720p')
+            );
+            tempFiles.push(output720p); // Thêm vào danh sách cần dọn dẹp
+            
+            await this.processVideoWithFFmpeg(outputPath, output720p, '720p', true);
+            processedVideos.push({
+              path: output720p,
+              quality: '720p'
+            });
+          } else {
+            // Nếu video gốc < 720p, giữ nguyên chất lượng
+            console.log(`\n⚠️ Video gốc ${bestQuality.quality}p, giữ nguyên chất lượng...`);
+            const outputOriginal = path.join(
+              this.TEMP_DIR,
+              this._generateSafeFileName(fileName, `${bestQuality.quality}p`)
+            );
+            tempFiles.push(outputOriginal); // Thêm vào danh sách cần dọn dẹp
+            
+            await this.processVideoWithFFmpeg(outputPath, outputOriginal, `${bestQuality.quality}p`, true);
+            processedVideos.push({
+              path: outputOriginal,
+              quality: `${bestQuality.quality}p`
+            });
+          }
 
-          // Log hoàn thành upload với URLs
-          this.processLogger.logProcess({
-            type: 'video_process',
-            status: 'uploaded',
-            fileName,
-            fileId,
-            targetFileId: uploadedFile.id,
-            fileSize: stats.size,
-            duration: Date.now() - startTime,
-            driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
-            driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
-            timestamp: new Date().toISOString()
-          });
+          // Upload video đã xử lý
+          const uploadResults = [];
+          for (const video of processedVideos) {
+            const uploadedFile = await this.uploadFile(
+              video.path,
+              path.basename(video.path), // Sử dụng tên file đã được xử lý an toàn
+              targetFolderId,
+              'video/mp4'
+            );
+            uploadResults.push(uploadedFile);
+          }
+
+          // Dọn dẹp tất cả files tạm sau khi upload xong
+          console.log('\n🧹 Bắt đầu dọn dẹp files tạm...');
+          await this._cleanupFiles(tempFiles);
+          console.log('✨ Đã dọn dẹp xong!');
+
+          return uploadResults;
+
         } catch (error) {
           // Log lỗi
           this.processLogger.logProcess({
@@ -397,6 +498,7 @@ class VideoHandler {
             timestamp: new Date().toISOString()
           });
           console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
+          return false;
         }
       });
 
@@ -580,7 +682,7 @@ class VideoHandler {
             writer.write(data);
             totalBytesWritten += data.length;
 
-            // Hiển thị ti��n độ
+            // Hiển thị tiến độ
             const percent = (totalBytesWritten / fileSize) * 100;
             const elapsedSeconds = (Date.now() - startTime) / 1000;
             const speed = totalBytesWritten / elapsedSeconds / (1024 * 1024);
@@ -910,6 +1012,181 @@ class VideoHandler {
         await new Promise((resolve) => setTimeout(resolve, this.RETRY_DELAY));
       }
     }
+  }
+
+  // Thêm hàm xử lý video với ffmpeg
+  async processVideoWithFFmpeg(inputPath, outputPath, quality = '1080p', useCopy = false) {
+    console.log(`\n🎬 Bắt đầu xử lý video ${quality}...`);
+    console.log(`📁 Input: ${inputPath}`);
+    console.log(`📁 Output: ${outputPath}`);
+    
+    const preset = this.VIDEO_PRESETS[quality];
+    if (!preset) {
+      throw new Error(`Không hỗ trợ chất lượng ${quality}`);
+    }
+
+    // Escape đường dẫn
+    const safeInputPath = this._escapeFilePath(inputPath);
+    const safeOutputPath = this._escapeFilePath(outputPath);
+
+    let ffmpegCommand;
+    
+    if (useCopy) {
+      // Mode copy - nhanh nhất có thể
+      ffmpegCommand = [
+        'ffmpeg',
+        '-hwaccel auto', // Tự động chọn hardware acceleration
+        '-i', safeInputPath,
+        '-c:v', 'copy',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        '-y',
+        safeOutputPath
+      ];
+    } else {
+      // Mode encode với hardware acceleration
+      let videoCodec = '-c:v libx264'; // Default software encoder
+      let extraParams = [];
+
+      if (this.hasNVENC) {
+        // Sử dụng NVIDIA GPU
+        videoCodec = '-c:v h264_nvenc';
+        extraParams = [
+          '-preset', 'p7', // Preset nhanh nhất cho NVENC
+          '-tune', 'hq',
+          '-rc', 'vbr',
+          '-rc-lookahead', '20'
+        ];
+      } else if (this.hasQSV) {
+        // Sử dụng Intel Quick Sync
+        videoCodec = '-c:v h264_qsv';
+        extraParams = [
+          '-preset', 'veryfast',
+          '-look_ahead', '0'
+        ];
+      } else if (this.hasAMF) {
+        // Sử dụng AMD GPU
+        videoCodec = '-c:v h264_amf';
+        extraParams = [
+          '-quality', 'speed',
+          '-usage', 'ultralowlatency'
+        ];
+      }
+
+      ffmpegCommand = [
+        'ffmpeg',
+        '-hwaccel auto',
+        '-i', safeInputPath,
+        videoCodec,
+        ...extraParams,
+        '-vf', `scale=${preset.resolution}:force_original_aspect_ratio=decrease`,
+        '-b:v', preset.bitrate,
+        '-maxrate', preset.maxrate,
+        '-bufsize', preset.bufsize,
+        '-threads', '0', // Sử dụng tất cả CPU cores
+        '-movflags', '+faststart',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-y',
+        safeOutputPath
+      ];
+    }
+
+    // Log thông tin xử lý
+    console.log('\n🔧 Cấu hình xử lý:');
+    console.log(`Mode: ${useCopy ? 'Copy (Siêu nhanh)' : 'Encode (Tối ưu)'}`);
+    console.log(`Hardware Acceleration: ${
+      this.hasNVENC ? 'NVIDIA NVENC' :
+      this.hasQSV ? 'Intel Quick Sync' :
+      this.hasAMF ? 'AMD AMF' :
+      'Software Only'
+    }`);
+
+    // Log command
+    console.log('\n📝 FFmpeg Command:');
+    console.log(ffmpegCommand.join(' '));
+
+    return new Promise((resolve, reject) => {
+      let startTime = Date.now();
+      let lastProgress = '';
+      let inputDuration = 0;
+
+      const process = exec(ffmpegCommand.join(' '), (error, stdout, stderr) => {
+        if (error) {
+          console.error('\n❌ Lỗi FFmpeg:', error.message);
+          reject(error);
+          return;
+        }
+
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        try {
+          const stats = fs.statSync(outputPath);
+          const sizeMB = (stats.size / (1024 * 1024)).toFixed(2);
+          
+          console.log('\n✅ Xử lý video hoàn tất:');
+          console.log(`⏱️  Thời gian: ${duration}s`);
+          console.log(`📦 Dung lượng: ${sizeMB}MB`);
+          console.log(`🎯 Chất lượng: ${quality}`);
+          
+          // Tính tốc độ xử lý
+          const processSpeed = (sizeMB / duration).toFixed(2);
+          console.log(`🚀 Tốc độ xử lý: ${processSpeed}MB/s`);
+        } catch (err) {
+          console.error('\n⚠️ Không thể đọc thông tin file output:', err.message);
+        }
+
+        resolve(outputPath);
+      });
+
+      // Log tiến độ chi tiết
+      process.stderr.on('data', (data) => {
+        // Lấy tổng thời lượng video
+        const durationMatch = data.match(/Duration: (\d{2}):(\d{2}):(\d{2})/);
+        if (durationMatch) {
+          const [_, hours, minutes, seconds] = durationMatch;
+          inputDuration = parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
+          console.log(`\n⏱️  Tổng thời lượng: ${hours}:${minutes}:${seconds}`);
+        }
+
+        // Lấy tiến độ xử l
+        const timeMatch = data.match(/time=(\d{2}):(\d{2}):(\d{2}.\d{2})/);
+        if (timeMatch) {
+          const [_, hours, minutes, seconds] = timeMatch;
+          const currentTime = parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseFloat(seconds);
+          
+          // Tính phần trăm và tốc độ
+          const percent = inputDuration ? (currentTime / inputDuration * 100).toFixed(1) : 0;
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          const speed = currentTime / elapsed;
+          
+          // Tạo chuỗi progress
+          const progress = `\r⏳ ${hours}:${minutes}:${seconds} [${percent}%] (${speed.toFixed(2)}x)`;
+          
+          // Chỉ log khi có thay đổi
+          if (progress !== lastProgress) {
+            process.stdout.write(progress);
+            lastProgress = progress;
+          }
+        }
+
+        // Log các thông tin khác của FFmpeg
+        if (data.includes('fps=')) {
+          const fpsMatch = data.match(/fps=\s*(\d+)/);
+          const bitrateMatch = data.match(/bitrate=\s*([\d.]+\w+)/);
+          if (fpsMatch || bitrateMatch) {
+            let info = '\r💫 ';
+            if (fpsMatch) info += `FPS: ${fpsMatch[1]} `;
+            if (bitrateMatch) info += `Bitrate: ${bitrateMatch[1]}`;
+            process.stdout.write(info);
+          }
+        }
+      });
+    });
+  }
+
+  // Thêm hàm để escape đường dẫn file
+  _escapeFilePath(filePath) {
+    return `"${filePath.replace(/"/g, '\\"')}"`;
   }
 }
 
