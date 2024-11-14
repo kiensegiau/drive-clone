@@ -1,0 +1,228 @@
+{
+  "totalVideos": 23,
+  "resolution": {
+    "1080p": 20,
+    "720p": 0,
+    "480p": 0,
+    "360p": 0,
+    "lower": 3
+  },
+  "details": [
+    {
+      "name": "07. TN định lượng mẫu [P3].mp4",
+      "id": "1FoGK190IkFpDU-lcDfSSYl8v06xpZT8m",
+      "width": 1920,
+      "height": 1080,
+      "duration": "1026519",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "06. TN định lượng mẫu [P2].mp4",
+      "id": "1QXIrv7MO1eZp95hZI6aTiO3Fcw5s32o1",
+      "width": 1920,
+      "height": 1080,
+      "duration": "927200",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "23. TN định lượng mẫu [P18].mp4",
+      "id": "1X-aN8aJxHYty5DqURIIHbz-Ktuw07d0j",
+      "width": 1920,
+      "height": 1080,
+      "duration": "744759",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "05. TN định lượng mẫu [P1].mp4",
+      "id": "1N1oAYxLixUTP1Mtr538hgetp9lZv3C_8",
+      "width": 1920,
+      "height": 1080,
+      "duration": "702840",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "20. TN định lượng mẫu [P15].mp4",
+      "id": "1nCyUXoA_AHLrswYKVZb38kKHsYpxCI8d",
+      "width": 1920,
+      "height": 1080,
+      "duration": "811399",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "22. TN định lượng mẫu [P17].mp4",
+      "id": "14JoF3ekRl1TqyE2XcH0X_DZ4vrQ1scfm",
+      "width": 1920,
+      "height": 1080,
+      "duration": "736000",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "08. TN định lượng mẫu [P4].mp4",
+      "id": "1FpJBar4zFMcrzJWUFm4RDkDPivb2X980",
+      "width": 0,
+      "height": 0,
+      "duration": 0,
+      "resolution": "unknown",
+      "status": "no_metadata",
+      "fileSize": "102881834",
+      "createdTime": "2024-11-13T09:31:01.786Z",
+      "modifiedTime": "2024-11-13T09:31:07.812Z"
+    },
+    {
+      "name": "19. TN định lượng mẫu [P14].mp4",
+      "id": "17PylEEEtxByw4SSYgt_QJjQgsN1ZVB06",
+      "width": 1920,
+      "height": 1080,
+      "duration": "604600",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "17. TN định lượng mẫu [P12].mp4",
+      "id": "1HexTCEBpuoxx2A_O0eXNyc1TuFW_xe7S",
+      "width": 1920,
+      "height": 1080,
+      "duration": "644600",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "21. TN định lượng mẫu [P16].mp4",
+      "id": "1UjWUumL_-HGip8v0uO0GNQJ2hpkL_yCj",
+      "width": 1920,
+      "height": 1080,
+      "duration": "771919",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "09. TN định lượng mẫu [P5].mp4",
+      "id": "1YkSWT31KKURyFmwGyzeq94cFXrK-05FT",
+      "width": 0,
+      "height": 0,
+      "duration": 0,
+      "resolution": "unknown",
+      "status": "no_metadata",
+      "fileSize": "134716233",
+      "createdTime": "2024-11-13T09:30:34.122Z",
+      "modifiedTime": "2024-11-13T09:30:39.731Z"
+    },
+    {
+      "name": "15. TN định lượng mẫu [P10].mp4",
+      "id": "1OTHo5wwPR30GW1pYf5_EPHZMP4V4Vgr8",
+      "width": 1920,
+      "height": 1080,
+      "duration": "576879",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "24. TN định lượng mẫu [P19].mp4",
+      "id": "1hjqF7hOinoG62bLVVh8cgYzxNz-z4_WK",
+      "width": 1920,
+      "height": 1080,
+      "duration": "744840",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "03. TN định tính mẫu [P2].mp4",
+      "id": "1PTGrtfAGTv5SxiZZz9YDO9PXluf3dwM9",
+      "width": 1920,
+      "height": 1080,
+      "duration": "698399",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "11. TN định lượng mẫu [P7].mp4",
+      "id": "1dBF-BmTVZMEXYrs_O0k5gVrhIvibutkM",
+      "width": 1920,
+      "height": 1080,
+      "duration": "531080",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "13. TN định lượng mẫu [P8].mp4",
+      "id": "18GMHCQctvgZj0LcQ-MX_k0F_ojQJNbOC",
+      "width": 0,
+      "height": 0,
+      "duration": 0,
+      "resolution": "unknown",
+      "status": "no_metadata",
+      "fileSize": "61397276",
+      "createdTime": "2024-11-13T09:29:31.586Z",
+      "modifiedTime": "2024-11-13T09:29:37.523Z"
+    },
+    {
+      "name": "18. TN định lượng mẫu [P13].mp4",
+      "id": "1hVpSwiaknNioyJHV3_WcjMXhMIIhQNx_",
+      "width": 1920,
+      "height": 1080,
+      "duration": "365240",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "01. Lý thuyết cơ bản.mp4",
+      "id": "19nIgdJQqfNERk-fzJCVa8XxJFZ_eX4t7",
+      "width": 1920,
+      "height": 1080,
+      "duration": "897600",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "16. TN định lượng mẫu [P11].mp4",
+      "id": "1btRGBEbFHtbGRBT-EGzB4HuJlbfC1j1S",
+      "width": 1920,
+      "height": 1080,
+      "duration": "441000",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "02. TN định tính mẫu [P1].mp4",
+      "id": "1FnulqBxYwESWYWaRzueCjDX42xJG9qUh",
+      "width": 1920,
+      "height": 1080,
+      "duration": "701399",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "14. TN định lượng mẫu [P9].mp4",
+      "id": "16MdhG837yZdj4bkb4FxVEBh0kA65-if_",
+      "width": 1920,
+      "height": 1080,
+      "duration": "501240",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "10. TN định lượng mẫu [P6].mp4",
+      "id": "1kcPt2p7-bPItYVty1zYOetxKoDj2u7uy",
+      "width": 1920,
+      "height": 1080,
+      "duration": "476560",
+      "resolution": "1080p+",
+      "status": "success"
+    },
+    {
+      "name": "04. TN định tính mẫu [P3].mp4",
+      "id": "1kAKF6kGRbAQi_0WWihjMsXAf-T8kH_XV",
+      "width": 1920,
+      "height": 1080,
+      "duration": "659840",
+      "resolution": "1080p+",
+      "status": "success"
+    }
+  ]
+}
