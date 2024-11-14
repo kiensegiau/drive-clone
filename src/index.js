@@ -26,7 +26,7 @@ function cleanupTempFiles() {
   }
 }
 
-async function main() {
+async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
 
   try {
@@ -36,7 +36,6 @@ async function main() {
     const driveAPI = new DriveAPI();
     await driveAPI.authenticate();
 
-    const folderUrl = process.argv[2];
     if (!folderUrl) {
       throw new Error("Vui lòng cung cấp URL folder Google Drive");
     }
@@ -61,26 +60,22 @@ async function main() {
       await driveAPI.start(sourceFolderId);
     } catch (error) {
       console.error("❌ Lỗi xử lý folder gốc:", error.message);
-      // Không throw error để chương trình không dừng đột ngột
     }
 
     console.log("✅ Hoàn thành chương trình");
   } catch (error) {
     console.error("❌ Lỗi khởi động:", error.message);
+    throw error;
   }
 }
 
-// Xử lý lỗi không bắt được
-process.on("uncaughtException", (error) => {
-  console.error("❌ Lỗi không xử lý được:", error.message);
-  // Không exit process để chương trình tiếp tục chạy
-});
+module.exports = { main };
 
-process.on("unhandledRejection", (error) => {
-  console.error("❌ Promise rejection không xử lý:", error.message);
-  // Không exit process để chương trình tiếp tục chạy
-});
-
-main().catch((error) => {
-  console.error("❌ Lỗi chương trình:", error.message);
-});
+// Chỉ chạy khi gọi trực tiếp từ command line
+if (require.main === module) {
+  const url = process.argv[2];
+  main(url).catch((error) => {
+    console.error("❌ Lỗi chương trình:", error.message);
+    process.exit(1);
+  });
+}

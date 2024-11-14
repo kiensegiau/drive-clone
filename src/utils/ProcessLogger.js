@@ -2,29 +2,35 @@ const fs = require('fs');
 const path = require('path');
 
 class ProcessLogger {
-  constructor() {
-    this.logPath = path.join(__dirname, '../../logs/process_log.json');
-    this.loadLog();
+  constructor(sessionId) {
+    this.logFile = 'process.log';
+    this.sessionId = sessionId;
+    
+    try {
+      this.log = this.loadLog();
+      if (!this.log.sessions) {
+        this.log.sessions = [];
+      }
+    } catch (error) {
+      console.log('⚠️ Không thể đọc file log cũ, tạo log mới...');
+      this.log = {
+        sessions: []
+      };
+    }
   }
 
   loadLog() {
     try {
-      if (fs.existsSync(this.logPath)) {
-        const data = fs.readFileSync(this.logPath, 'utf8');
-        this.logs = JSON.parse(data);
-      } else {
-        this.logs = {
-          sessions: [],
-          currentSession: null
-        };
-        this.saveLog();
+      if (fs.existsSync(this.logFile)) {
+        const data = fs.readFileSync(this.logFile, 'utf8');
+        return JSON.parse(data);
       }
+      return {};
     } catch (error) {
-      console.error('❌ Lỗi đọc log:', error);
-      this.logs = {
-        sessions: [],
-        currentSession: null
-      };
+      if (fs.existsSync(this.logFile)) {
+        fs.unlinkSync(this.logFile);
+      }
+      return {};
     }
   }
 
@@ -40,22 +46,19 @@ class ProcessLogger {
       logs: []
     };
 
-    // Kết thúc session cũ nếu có
-    if (this.logs.currentSession) {
-      this.endSession(this.logs.currentSession.id);
+    if (this.log.currentSession) {
+      this.endSession(this.log.currentSession.id);
     }
 
-    // Cập nhật session mới
-    this.logs.sessions.push(newSession);
-    this.logs.currentSession = newSession;
+    this.log.sessions.push(newSession);
+    this.log.currentSession = newSession;
     this.saveLog();
 
     return sessionId;
   }
 
   logProcess(data) {
-    // Kiểm tra và tạo session mới nếu chưa có
-    if (!this.logs.currentSession) {
+    if (!this.log.currentSession) {
       this.startNewSession();
     }
 
@@ -64,16 +67,14 @@ class ProcessLogger {
       ...data
     };
 
-    if (this.logs.currentSession) {
-      // Tìm log hiện có
-      const existingLog = this.logs.currentSession.logs.find(log => 
+    if (this.log.currentSession) {
+      const existingLog = this.log.currentSession.logs.find(log => 
         log.fileName === data.fileName && 
         log.type === data.type &&
         log.fileId === data.fileId
       );
 
       if (existingLog) {
-        // Cập nhật log hiện có
         Object.assign(existingLog, {
           timestamp: logEntry.timestamp,
           status: data.status,
@@ -91,8 +92,7 @@ class ProcessLogger {
           ]
         });
       } else {
-        // Tạo log mới
-        this.logs.currentSession.logs.push({
+        this.log.currentSession.logs.push({
           ...logEntry,
           history: [{
             status: data.status,
@@ -105,13 +105,12 @@ class ProcessLogger {
         });
       }
 
-      // Cập nhật thống kê
       if (data.status === 'start') {
-        this.logs.currentSession.totalFiles++;
+        this.log.currentSession.totalFiles++;
       } else if (data.status === 'uploaded') {
-        this.logs.currentSession.processedFiles++;
+        this.log.currentSession.processedFiles++;
       } else if (data.status === 'error') {
-        this.logs.currentSession.errors.push({
+        this.log.currentSession.errors.push({
           timestamp: logEntry.timestamp,
           error: data.error,
           fileName: data.fileName
@@ -124,25 +123,25 @@ class ProcessLogger {
 
   saveLog() {
     try {
-      fs.writeFileSync(this.logPath, JSON.stringify(this.logs, null, 2));
+      fs.writeFileSync(this.logFile, JSON.stringify(this.log, null, 2));
     } catch (error) {
       console.error('❌ Lỗi lưu log:', error);
     }
   }
 
   endSession(sessionId) {
-    const session = this.logs.sessions.find(s => s.id === sessionId);
+    const session = this.log.sessions.find(s => s.id === sessionId);
     if (session) {
       session.endTime = new Date().toISOString();
-      if (this.logs.currentSession?.id === sessionId) {
-        this.logs.currentSession = null;
+      if (this.log.currentSession?.id === sessionId) {
+        this.log.currentSession = null;
       }
       this.saveLog();
     }
   }
 
   getSessionStats(sessionId) {
-    const session = this.logs.sessions.find(s => s.id === sessionId);
+    const session = this.log.sessions.find(s => s.id === sessionId);
     if (!session) return null;
 
     const startTime = new Date(session.startTime);
