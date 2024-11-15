@@ -10,6 +10,7 @@ const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require('../utils/ProcessLogger');
 const http = require('http');
 const https = require('https');
+const readline = require('readline');
 
 class VideoHandler {
   constructor() {
@@ -30,6 +31,9 @@ class VideoHandler {
     this.activeBrowsers = 0;
     this.browserQueue = [];
 
+    this.processingQueue = []; // Thêm queue để xử lý tuần tự
+    this.isProcessing = false;
+
     // Tạo thư mục temp nếu chưa tồn tại
     if (!fs.existsSync(this.TEMP_DIR)) {
       fs.mkdirSync(this.TEMP_DIR, { recursive: true });
@@ -42,46 +46,175 @@ class VideoHandler {
       credentials.redirect_uris[0]
     );
 
-    // Đọc token từ file nếu có
-    const tokenPath = path.join(__dirname, "../../token.json");
-    if (fs.existsSync(tokenPath)) {
-      const token = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
-      this.oAuth2Client.setCredentials(token);
-    } else {
-      // Nếu chưa có token, tạo URL để lấy token
-      this.getAccessToken();
-    }
+    // Thêm refresh token handler
+    this.oAuth2Client.on('tokens', (tokens) => {
+      if (tokens.refresh_token) {
+        this.saveTokens(tokens);
+      }
+    });
 
-    // Thêm khởi tạo drive client
+    this.tokenPath = path.join(__dirname, "../../token.json");
+
+    // Khởi tạo Drive client với auth callback
     this.drive = google.drive({ 
       version: 'v3',
-      auth: this.oAuth2Client 
+      auth: this.oAuth2Client,
+      // Thêm refresh token handler
+      authHandler: async () => {
+        try {
+          const tokens = JSON.parse(fs.readFileSync(this.tokenPath));
+          if (!tokens.refresh_token) {
+            throw new Error('Không tìm thấy refresh token');
+          }
+          const { tokens: newTokens } = await this.oAuth2Client.refreshToken(tokens.refresh_token);
+          this.saveTokens(newTokens);
+          return newTokens.access_token;
+        } catch (error) {
+          console.error('Lỗi refresh token:', error);
+          await this.getNewToken();
+          return this.oAuth2Client.credentials.access_token;
+        }
+      }
     });
   }
 
-  async getAccessToken() {
+  async initializeAuth() {
+    if (fs.existsSync(this.tokenPath)) {
+      try {
+        const tokens = JSON.parse(fs.readFileSync(this.tokenPath, 'utf8'));
+        this.oAuth2Client.setCredentials(tokens);
+        
+        // Kiểm tra token có hợp lệ không
+        await this.validateToken();
+      } catch (error) {
+        console.error('Token không hợp lệ:', error.message);
+        await this.getNewToken();
+      }
+    } else {
+      await this.getNewToken();
+    }
+  }
+
+  async validateToken() {
+    try {
+      // Thử gọi một API đơn giản để kiểm tra token
+      await this.drive.files.list({
+        pageSize: 1,
+        fields: 'files(id, name)',
+      });
+    } catch (error) {
+      throw new Error('Token không hợp lệ');
+    }
+  }
+
+  async getNewToken() {
+    // Xóa token cũ nếu có
+    if (fs.existsSync(this.tokenPath)) {
+      fs.unlinkSync(this.tokenPath);
+    }
+
     const authUrl = this.oAuth2Client.generateAuthUrl({
-      access_type: "offline",
+      access_type: 'offline',
       scope: SCOPES,
+      prompt: 'consent' // Luôn yêu cầu refresh token mới
     });
 
-    console.log("🔑 Truy cập URL này để xác thực:");
+    console.log('🔑 Truy cập URL này để xác thực:');
     console.log(authUrl);
-    console.log(
-      "\nSau khi xác thực, copy code và lưu vào file token.json với định dạng:"
-    );
-    console.log(`{
-      "access_token": "your_access_token",
-      "refresh_token": "your_refresh_token",
-      "scope": "${SCOPES.join(" ")}",
-      "token_type": "Bearer",
-      "expiry_date": 1234567890000
-    }`);
+    
+    // Đợi người dùng nhập code
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
-    throw new Error("Cần xác thực Google Drive trước khi upload");
+    const code = await new Promise((resolve) => {
+      rl.question('Nhập code xác thực: ', (code) => {
+        rl.close();
+        resolve(code);
+      });
+    });
+
+    try {
+      const { tokens } = await this.oAuth2Client.getToken(code);
+      this.saveTokens(tokens);
+      this.oAuth2Client.setCredentials(tokens);
+    } catch (error) {
+      console.error('Lỗi khi lấy token:', error.message);
+      throw error;
+    }
+  }
+
+  saveTokens(tokens) {
+    // Lưu cả refresh_token nếu có
+    const existingTokens = fs.existsSync(this.tokenPath) 
+      ? JSON.parse(fs.readFileSync(this.tokenPath, 'utf8'))
+      : {};
+
+    const newTokens = {
+      ...existingTokens,
+      ...tokens,
+      // Thêm thời gian hết hạn nếu chưa có
+      expiry_date: tokens.expiry_date || Date.now() + tokens.expires_in * 1000
+    };
+
+    fs.writeFileSync(this.tokenPath, JSON.stringify(newTokens, null, 2));
+    console.log('Token đã được lưu vào:', this.tokenPath);
   }
 
   async processVideo(fileId, fileName, targetFolderId, depth = 0, profileId = null) {
+    // Thêm vào queue
+    return new Promise((resolve, reject) => {
+      this.processingQueue.push({
+        fileId,
+        fileName,
+        targetFolderId,
+        depth,
+        profileId,
+        resolve,
+        reject
+      });
+      
+      // Bắt đầu xử lý nếu chưa có video nào đang xử lý
+      if (!this.isProcessing) {
+        this.processNextVideo();
+      }
+    });
+  }
+
+  async processNextVideo() {
+    if (this.processingQueue.length === 0) {
+      this.isProcessing = false;
+      return;
+    }
+
+    this.isProcessing = true;
+    const task = this.processingQueue.shift();
+    
+    try {
+      // Kiểm tra token trước khi xử lý
+      await this.ensureValidToken();
+      
+      // Xử lý video
+      const result = await this._processVideo(
+        task.fileId,
+        task.fileName,
+        task.targetFolderId,
+        task.depth,
+        task.profileId
+      );
+      
+      task.resolve(result);
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý video ${task.fileName}:`, error.message);
+      task.reject(error);
+    } finally {
+      // Xử lý video tiếp theo trong queue
+      this.processNextVideo();
+    }
+  }
+
+  async _processVideo(fileId, fileName, targetFolderId, depth, profileId) {
     const indent = "  ".repeat(depth);
     let browser;
     let videoUrl = null;
@@ -580,7 +713,7 @@ class VideoHandler {
             writer.write(data);
             totalBytesWritten += data.length;
 
-            // Hiển thị ti��n độ
+            // Hiển thị tiến độ
             const percent = (totalBytesWritten / fileSize) * 100;
             const elapsedSeconds = (Date.now() - startTime) / 1000;
             const speed = totalBytesWritten / elapsedSeconds / (1024 * 1024);
@@ -734,10 +867,12 @@ class VideoHandler {
 
   async uploadFile(filePath, fileName, targetFolderId, mimeType) {
     const MAX_RETRIES = 5;
-    const RETRY_DELAY = 5000;
-
+    
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
+        // Kiểm tra và refresh token trước khi upload
+        await this.ensureValidToken();
+
         const fileSize = fs.statSync(filePath).size;
         const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
         
@@ -808,13 +943,91 @@ class VideoHandler {
       } catch (error) {
         console.error(`❌ Lỗi upload (lần ${attempt + 1}/${MAX_RETRIES}):`, error.message);
         
-        if (attempt === MAX_RETRIES - 1) {
-          throw error;
+        if (error.message.includes('No access') || error.message.includes('invalid_grant')) {
+          await this.getNewToken();
+          continue;
         }
-
-        console.log(`⏳ Thử lại sau 5s...`);
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        
+        if (attempt === MAX_RETRIES - 1) throw error;
+        await new Promise(r => setTimeout(r, 5000));
       }
+    }
+  }
+
+  async ensureValidToken() {
+    try {
+      if (!fs.existsSync(this.tokenPath)) {
+        await this.getNewToken();
+        return;
+      }
+
+      const tokens = JSON.parse(fs.readFileSync(this.tokenPath));
+      
+      // Kiểm tra token hết hạn
+      if (!tokens.expiry_date || Date.now() >= tokens.expiry_date - 300000) { // Refresh trước 5 phút
+        if (!tokens.refresh_token) {
+          await this.getNewToken();
+          return;
+        }
+        
+        try {
+          const { tokens: newTokens } = await this.oAuth2Client.refreshToken(tokens.refresh_token);
+          this.saveTokens(newTokens);
+          this.oAuth2Client.setCredentials(newTokens);
+          console.log('🔄 Đã refresh token thành công');
+        } catch (error) {
+          console.error('❌ Lỗi refresh token:', error.message);
+          await this.getNewToken();
+        }
+      }
+
+      // Verify token
+      await this.drive.files.list({ pageSize: 1 });
+      
+    } catch (error) {
+      console.error('❌ Token không hợp lệ:', error.message);
+      await this.getNewToken();
+    }
+  }
+
+  async getNewToken() {
+    // Xóa token cũ
+    if (fs.existsSync(this.tokenPath)) {
+      fs.unlinkSync(this.tokenPath);
+    }
+
+    const authUrl = this.oAuth2Client.generateAuthUrl({
+      access_type: 'offline',
+      scope: SCOPES,
+      prompt: 'consent'
+    });
+
+    console.log('\n🔑 Cần xác thực lại Google Drive');
+    console.log('1. Truy cập URL sau trong trình duyệt:');
+    console.log(authUrl);
+    console.log('\n2. Đăng nhập và cấp quyền cho ứng dụng');
+    console.log('3. Copy code xác thực và dán vào đây\n');
+
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
+    const code = await new Promise(resolve => {
+      rl.question('Nhập code xác thực: ', code => {
+        rl.close();
+        resolve(code);
+      });
+    });
+
+    try {
+      const { tokens } = await this.oAuth2Client.getToken(code);
+      this.saveTokens(tokens);
+      this.oAuth2Client.setCredentials(tokens);
+      console.log('✅ Xác thực thành công\n');
+    } catch (error) {
+      console.error('❌ Lỗi xác thực:', error.message);
+      throw error;
     }
   }
 
