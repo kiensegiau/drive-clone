@@ -46,14 +46,15 @@ class VideoHandler {
       credentials.redirect_uris[0]
     );
 
-    // Thêm refresh token handler
+    // Thêm listener cho token
     this.oAuth2Client.on('tokens', (tokens) => {
-      if (tokens.refresh_token) {
-        this.saveTokens(tokens);
-      }
+      this.saveTokens(tokens);
     });
 
     this.tokenPath = path.join(__dirname, "../../token.json");
+
+    // Load token ngay khi khởi tạo
+    this.initializeToken();
 
     // Khởi tạo Drive client với auth callback
     this.drive = google.drive({ 
@@ -78,88 +79,60 @@ class VideoHandler {
     });
   }
 
-  async initializeAuth() {
-    if (fs.existsSync(this.tokenPath)) {
-      try {
-        const tokens = JSON.parse(fs.readFileSync(this.tokenPath, 'utf8'));
+  async initializeToken() {
+    try {
+      if (fs.existsSync(this.tokenPath)) {
+        const tokens = JSON.parse(fs.readFileSync(this.tokenPath));
         this.oAuth2Client.setCredentials(tokens);
         
-        // Kiểm tra token có hợp lệ không
-        await this.validateToken();
-      } catch (error) {
-        console.error('Token không hợp lệ:', error.message);
-        await this.getNewToken();
+        // Kiểm tra và refresh token nếu cần
+        if (tokens.expiry_date && Date.now() >= tokens.expiry_date - 300000) {
+          if (tokens.refresh_token) {
+            await this.refreshToken(tokens.refresh_token);
+          }
+        }
       }
-    } else {
-      await this.getNewToken();
-    }
-  }
-
-  async validateToken() {
-    try {
-      // Thử gọi một API đơn giản để kiểm tra token
-      await this.drive.files.list({
-        pageSize: 1,
-        fields: 'files(id, name)',
-      });
     } catch (error) {
-      throw new Error('Token không hợp lệ');
+      console.error('Lỗi khởi tạo token:', error);
     }
   }
 
-  async getNewToken() {
-    // Xóa token cũ nếu có
-    if (fs.existsSync(this.tokenPath)) {
-      fs.unlinkSync(this.tokenPath);
-    }
-
-    const authUrl = this.oAuth2Client.generateAuthUrl({
-      access_type: 'offline',
-      scope: SCOPES,
-      prompt: 'consent' // Luôn yêu cầu refresh token mới
-    });
-
-    console.log('🔑 Truy cập URL này để xác thực:');
-    console.log(authUrl);
-    
-    // Đợi người dùng nhập code
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    });
-
-    const code = await new Promise((resolve) => {
-      rl.question('Nhập code xác thực: ', (code) => {
-        rl.close();
-        resolve(code);
-      });
-    });
-
+  async refreshToken(refresh_token) {
     try {
-      const { tokens } = await this.oAuth2Client.getToken(code);
-      this.saveTokens(tokens);
+      const { tokens } = await this.oAuth2Client.refreshToken(refresh_token);
+      this.saveTokens({
+        ...tokens,
+        refresh_token: refresh_token // Giữ lại refresh_token cũ
+      });
       this.oAuth2Client.setCredentials(tokens);
+      console.log('🔄 Đã refresh token thành công');
     } catch (error) {
-      console.error('Lỗi khi lấy token:', error.message);
+      console.error('Lỗi refresh token:', error);
       throw error;
     }
   }
 
   saveTokens(tokens) {
-    // Lưu cả refresh_token nếu có
-    const existingTokens = fs.existsSync(this.tokenPath) 
-      ? JSON.parse(fs.readFileSync(this.tokenPath, 'utf8'))
-      : {};
+    try {
+      // Đọc token cũ (nếu có)
+      let existingTokens = {};
+      if (fs.existsSync(this.tokenPath)) {
+        existingTokens = JSON.parse(fs.readFileSync(this.tokenPath));
+      }
 
-    const newTokens = {
-      ...existingTokens,
-      ...tokens,
-      // Thêm thời gian hết hạn nếu chưa có
-      expiry_date: tokens.expiry_date || Date.now() + tokens.expires_in * 1000
-    };
+      // Merge token mới với token cũ, ưu tiên giữ refresh_token cũ
+      const newTokens = {
+        ...existingTokens,
+        ...tokens,
+        refresh_token: tokens.refresh_token || existingTokens.refresh_token,
+        expiry_date: tokens.expiry_date || Date.now() + (tokens.expires_in * 1000)
+      };
 
-    fs.writeFileSync(this.tokenPath, JSON.stringify(newTokens, null, 2));
-    console.log('Token đã được lưu vào:', this.tokenPath);
+      // Lưu token
+      fs.writeFileSync(this.tokenPath, JSON.stringify(newTokens, null, 2));
+    } catch (error) {
+      console.error('Lỗi lưu token:', error);
+    }
   }
 
   async processVideo(fileId, fileName, targetFolderId, depth = 0, profileId = null) {
@@ -963,30 +936,24 @@ class VideoHandler {
 
       const tokens = JSON.parse(fs.readFileSync(this.tokenPath));
       
-      // Kiểm tra token hết hạn
-      if (!tokens.expiry_date || Date.now() >= tokens.expiry_date - 300000) { // Refresh trước 5 phút
+      // Kiểm tra và refresh token nếu cần
+      if (tokens.expiry_date && Date.now() >= tokens.expiry_date - 300000) {
         if (!tokens.refresh_token) {
           await this.getNewToken();
           return;
         }
-        
-        try {
-          const { tokens: newTokens } = await this.oAuth2Client.refreshToken(tokens.refresh_token);
-          this.saveTokens(newTokens);
-          this.oAuth2Client.setCredentials(newTokens);
-          console.log('🔄 Đã refresh token thành công');
-        } catch (error) {
-          console.error('❌ Lỗi refresh token:', error.message);
-          await this.getNewToken();
-        }
+        await this.refreshToken(tokens.refresh_token);
       }
 
       // Verify token
       await this.drive.files.list({ pageSize: 1 });
       
     } catch (error) {
-      console.error('❌ Token không hợp lệ:', error.message);
-      await this.getNewToken();
+      if (error.message.includes('invalid_grant') || error.message.includes('No access')) {
+        await this.getNewToken();
+      } else {
+        throw error;
+      }
     }
   }
 

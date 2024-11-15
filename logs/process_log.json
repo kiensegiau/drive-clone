@@ -2083,6 +2083,332 @@
     {
       "id": "1731683592839",
       "startTime": "2024-11-15T15:13:12.839Z",
+      "endTime": "2024-11-15T15:20:50.309Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731684050308",
+      "startTime": "2024-11-15T15:20:50.308Z",
+      "endTime": "2024-11-15T15:21:33.947Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": [
+        {
+          "timestamp": "2024-11-15T15:21:13.630Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 04- Ứng dụng đạo hàm giải toán thực tế.pdf",
+          "sourceId": "1O4BzkUJJE_Eu-6UHaDvUB0Q2p4QvRzDg",
+          "targetId": "18jWwcCY7MDG5FDLKnBczyHkqz5sHk1Sr",
+          "sourceUrl": "https://drive.google.com/file/d/1O4BzkUJJE_Eu-6UHaDvUB0Q2p4QvRzDg",
+          "targetUrl": "https://drive.google.com/file/d/18jWwcCY7MDG5FDLKnBczyHkqz5sHk1Sr",
+          "fileSize": {
+            "original": null,
+            "processed": 1429959
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 8789,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:21:13.630Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1429959
+              },
+              "duration": 8789
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:21:15.161Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 04- Ứng dụng đạo hàm giải toán thực tế giải chi tiết.pdf",
+          "sourceId": "11TvckZbMN2jKGcgfOrQMaMjbIMQ_0Ex3",
+          "targetId": "1A6YBpyV-S4lS3KqQ5-GV82TPqB4uHSVC",
+          "sourceUrl": "https://drive.google.com/file/d/11TvckZbMN2jKGcgfOrQMaMjbIMQ_0Ex3",
+          "targetUrl": "https://drive.google.com/file/d/1A6YBpyV-S4lS3KqQ5-GV82TPqB4uHSVC",
+          "fileSize": {
+            "original": null,
+            "processed": 2342451
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 10323,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:21:15.161Z",
+              "fileSize": {
+                "original": null,
+                "processed": 2342451
+              },
+              "duration": 10323
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "1731684093946",
+      "startTime": "2024-11-15T15:21:33.946Z",
+      "endTime": "2024-11-15T15:23:37.564Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731684217562",
+      "startTime": "2024-11-15T15:23:37.562Z",
+      "endTime": "2024-11-15T15:24:19.791Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731684259789",
+      "startTime": "2024-11-15T15:24:19.789Z",
+      "endTime": "2024-11-15T15:26:07.139Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": [
+        {
+          "timestamp": "2024-11-15T15:24:44.466Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 02- Giá trị lớn nhất và nhỏ nhất.pdf",
+          "sourceId": "1MCbFcN4iKQHDy_xSr_c1Gb2knNuIB028",
+          "targetId": "1KCe9omfzSv0OQp2GzSh84F03sjLmotVo",
+          "sourceUrl": "https://drive.google.com/file/d/1MCbFcN4iKQHDy_xSr_c1Gb2knNuIB028",
+          "targetUrl": "https://drive.google.com/file/d/1KCe9omfzSv0OQp2GzSh84F03sjLmotVo",
+          "fileSize": {
+            "original": null,
+            "processed": 1522902
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 7066,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:24:44.466Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1522902
+              },
+              "duration": 7066
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:24:47.335Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 02- Giá trị lớn nhất và nhỏ nhất giải chi tiết.pdf",
+          "sourceId": "119b0W6Q-fVFJxRAiEl68Er-3cfBOgWrJ",
+          "targetId": "1meY8AQflE3zbot9krq5TPBgprJWNyoWk",
+          "sourceUrl": "https://drive.google.com/file/d/119b0W6Q-fVFJxRAiEl68Er-3cfBOgWrJ",
+          "targetUrl": "https://drive.google.com/file/d/1meY8AQflE3zbot9krq5TPBgprJWNyoWk",
+          "fileSize": {
+            "original": null,
+            "processed": 1905044
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 9937,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:24:47.335Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1905044
+              },
+              "duration": 9937
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:25:09.531Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 01- Xét tính đơn điệu và cực trị.pdf",
+          "sourceId": "1TnWgWAIp8uDhaQuQuDWgm7vI5g0Q9LH5",
+          "targetId": "1sHhvWAhIrCw7OQVNgBGgi5VNkMnDVZwu",
+          "sourceUrl": "https://drive.google.com/file/d/1TnWgWAIp8uDhaQuQuDWgm7vI5g0Q9LH5",
+          "targetUrl": "https://drive.google.com/file/d/1sHhvWAhIrCw7OQVNgBGgi5VNkMnDVZwu",
+          "fileSize": {
+            "original": null,
+            "processed": 1236639
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 9493,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:25:09.531Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1236639
+              },
+              "duration": 9493
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:25:09.893Z",
+          "type": "pdf",
+          "fileName": "Chủ đề 01- Xét tính đơn điệu và cực trị giải chi tiết.pdf",
+          "sourceId": "1YNflH--Xy_ndVTb0l-zncz96CGsKBZRb",
+          "targetId": "18X-YoPcUriLq5TaA1vY_AxGn5DGaHp18",
+          "sourceUrl": "https://drive.google.com/file/d/1YNflH--Xy_ndVTb0l-zncz96CGsKBZRb",
+          "targetUrl": "https://drive.google.com/file/d/18X-YoPcUriLq5TaA1vY_AxGn5DGaHp18",
+          "fileSize": {
+            "original": null,
+            "processed": 1870805
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 9857,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:25:09.893Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1870805
+              },
+              "duration": 9857
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:25:43.473Z",
+          "type": "pdf",
+          "fileName": "00. Bài Toán 02 - Phương Trình Đường Thẳng - Đề Bài - Thầy Thuận.pdf",
+          "sourceId": "1Phas_X3qI2wDPFRIuQyKg8UBDAVLJS6q",
+          "targetId": "1DX5GhyV5A-DJPoOmAxekCp4hlDYJMr2S",
+          "sourceUrl": "https://drive.google.com/file/d/1Phas_X3qI2wDPFRIuQyKg8UBDAVLJS6q",
+          "targetUrl": "https://drive.google.com/file/d/1DX5GhyV5A-DJPoOmAxekCp4hlDYJMr2S",
+          "fileSize": {
+            "original": null,
+            "processed": 1262105
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 7891,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:25:43.473Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1262105
+              },
+              "duration": 7891
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:25:59.387Z",
+          "type": "pdf",
+          "fileName": "00ĐÁP ÁN BÀI TOÁN 01. PHƯƠNG TRÌNH MẶT PHẲNG.pdf",
+          "sourceId": "1y2EhTZq6ezf7uLgXWgoZCxbLqDwVQHVE",
+          "targetId": "1tFwKuF5ptigUDEIw4DQrPfCGP73j_A5O",
+          "sourceUrl": "https://drive.google.com/file/d/1y2EhTZq6ezf7uLgXWgoZCxbLqDwVQHVE",
+          "targetUrl": "https://drive.google.com/file/d/1tFwKuF5ptigUDEIw4DQrPfCGP73j_A5O",
+          "fileSize": {
+            "original": null,
+            "processed": 204909
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 7938,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:25:59.387Z",
+              "fileSize": {
+                "original": null,
+                "processed": 204909
+              },
+              "duration": 7938
+            }
+          ]
+        },
+        {
+          "timestamp": "2024-11-15T15:26:00.925Z",
+          "type": "pdf",
+          "fileName": "00. Bài Toán 01 - Phương Trình Mặt Phẳng - Đề Bài - Thầy Thuận.pdf",
+          "sourceId": "1UDCldPx9SdLC44f9i-Jp8jQCOwE6WyK8",
+          "targetId": "16D05IGvRHSsyX300PlIu8IWa559XER8E",
+          "sourceUrl": "https://drive.google.com/file/d/1UDCldPx9SdLC44f9i-Jp8jQCOwE6WyK8",
+          "targetUrl": "https://drive.google.com/file/d/16D05IGvRHSsyX300PlIu8IWa559XER8E",
+          "fileSize": {
+            "original": null,
+            "processed": 1001425
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 9475,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-15T15:26:00.925Z",
+              "fileSize": {
+                "original": null,
+                "processed": 1001425
+              },
+              "duration": 9475
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "1731684367138",
+      "startTime": "2024-11-15T15:26:07.138Z",
+      "endTime": "2024-11-15T15:32:45.855Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731684765853",
+      "startTime": "2024-11-15T15:32:45.854Z",
+      "endTime": "2024-11-15T15:34:48.314Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731684888313",
+      "startTime": "2024-11-15T15:34:48.313Z",
+      "endTime": "2024-11-15T15:38:21.342Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731685101340",
+      "startTime": "2024-11-15T15:38:21.340Z",
+      "endTime": "2024-11-15T15:39:23.867Z",
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    },
+    {
+      "id": "1731685163866",
+      "startTime": "2024-11-15T15:39:23.866Z",
       "endTime": null,
       "totalFiles": 0,
       "processedFiles": 0,
@@ -2091,313 +2417,85 @@
     }
   ],
   "currentSession": {
-    "id": "1731683592839",
-    "startTime": "2024-11-15T15:13:12.839Z",
+    "id": "1731685163866",
+    "startTime": "2024-11-15T15:39:23.866Z",
     "endTime": null,
-    "totalFiles": 7,
-    "processedFiles": 7,
+    "totalFiles": 3,
+    "processedFiles": 0,
     "errors": [],
     "logs": [
       {
-        "timestamp": "2024-11-15T15:14:21.968Z",
+        "timestamp": "2024-11-15T15:39:38.113Z",
         "type": "video_process",
-        "status": "uploaded",
-        "fileName": "12. Skill. Trải phẳng hình.mp4",
-        "fileId": "1EPEKyWEsU9id9wo9QnruCgZgF-ZbkU59",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
+        "status": "url_found",
+        "fileName": "TOÁN THỰC TẾ CHẮC CHẮN THI 2025.mp4",
+        "fileId": "1326UztClQDtQ_XTzWej4Xv1HZ22WwXMl",
+        "targetFolderId": "1rHer25UHBbsDKzaKxmZv6FrHWdCvaUTR",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-15T15:13:49.929Z"
+            "timestamp": "2024-11-15T15:39:31.612Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-15T15:13:54.568Z",
+            "timestamp": "2024-11-15T15:39:35.965Z",
             "quality": 720
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-15T15:13:57.601Z",
+            "timestamp": "2024-11-15T15:39:38.113Z",
             "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:14:04.009Z",
-            "fileSize": 58756203,
-            "duration": 14080
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:14:21.968Z",
-            "fileSize": 58756203,
-            "duration": 32039
           }
         ],
         "quality": 720,
-        "sourceUrl": "https://rr4---sn-npoe7nds.c.drive.google.com/videoplayback?expire=1731694467&ei=U2U3Z-uxMeqSmvUPm_uykA0&ip=14.180.84.75&id=9548b476af51cd22&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683667,&mh=Tw&mm=32,26&mn=sn-npoe7nds,sn-oguesn6s&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1EPEKyWEsU9id9wo9QnruCgZgF-ZbkU59&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=1687.904&lmt=1726382964051075&mt=1731683346&fvip=5&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAI6G454u7rUBmI_uHV7QtpJwx8WJ_j8y1pcGtXelvDV9AiAiaoupsaY9kekOmUM1a2jB7UHZuzsZ61dvdg-ijL1NBw==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAK7ideSCvbiPxe8LPRVmf-bkFCeu1BOPLbOa1t6u8mFBAiEAyP5Hua9P94Dbs32DWHY36JAwWm5wEiqSqHDz1zZb2cw=",
-        "fileSize": 58756203,
-        "duration": 32039,
-        "targetFileId": "16JiTk1LOGmq7bkRh1uIbTaXaP3nHajox",
-        "driveViewUrl": "https://drive.google.com/file/d/16JiTk1LOGmq7bkRh1uIbTaXaP3nHajox/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=16JiTk1LOGmq7bkRh1uIbTaXaP3nHajox"
+        "sourceUrl": "https://rr3---sn-npoldne7.c.drive.google.com/videoplayback?expire=1731696009&ei=WWs3Z53SAvOAp84Pu-bduQo&ip=14.180.84.75&id=11906791faa29ee0&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685209,&mh=pI&mm=32,26&mn=sn-npoldne7,sn-oguelnzl&ms=su,onr&mv=m&mvi=3&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1326UztClQDtQ_XTzWej4Xv1HZ22WwXMl&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=6335.193&lmt=1731265001245583&mt=1731684785&fvip=4&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAMpWxMsFsOEauM4sZHS6iu1gM1GvSrN4o8APjVRG3K9GAiBJPKu-W9j1eY03WE2kTtDvxDf6Hg7cyotb4OvgTZOBmQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgX15wBWMHPkudqb5qCH3axish3CtirfrjzUSCZRhdb5gCIQC2yA_qS4fabksLFT7748bPjaLgmG2vjf-55Z-3_zH-tw=="
       },
       {
-        "timestamp": "2024-11-15T15:14:36.464Z",
+        "timestamp": "2024-11-15T15:39:51.362Z",
         "type": "video_process",
-        "status": "uploaded",
-        "fileName": "10. Tâm tỉ cự_2.mp4",
-        "fileId": "1Cw8YqEX5Q_01D1Jh9a_R_QzDao4pDu9s",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
+        "status": "url_found",
+        "fileName": "02. Giá trị lớn nhất và nhỏ nhất (Buổi 02).mp4",
+        "fileId": "1izBQEIVM0_-quxR5lOvLZTGOXWMEBCtn",
+        "targetFolderId": "1h5TpypXokE4x6xccc_4n4gd0y8Fb2bkF",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-15T15:13:59.369Z"
+            "timestamp": "2024-11-15T15:39:43.979Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-15T15:14:03.643Z",
+            "timestamp": "2024-11-15T15:39:48.739Z",
             "quality": 720
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-15T15:14:05.856Z",
+            "timestamp": "2024-11-15T15:39:51.362Z",
             "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:14:18.353Z",
-            "fileSize": 74204574,
-            "duration": 18984
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:14:36.464Z",
-            "fileSize": 74204574,
-            "duration": 37095
           }
         ],
         "quality": 720,
-        "sourceUrl": "https://rr3---sn-npoeens7.c.drive.google.com/videoplayback?expire=1731694476&ei=XGU3Z5GzNI7c-LYP-MH_4AE&ip=14.180.84.75&id=2eb76c624a277ac0&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683676,&mh=Yw&mm=32,26&mn=sn-npoeens7,sn-ogueln67&ms=su,onr&mv=m&mvi=3&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1Cw8YqEX5Q_01D1Jh9a_R_QzDao4pDu9s&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=1984.516&lmt=1724688730170412&mt=1731683346&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAJ6DxRlbj-Ce8sGMjDquuU0x1Oc3EtG3c-3J7WVZWGWtAiAaFbCju_itgeyKKI1P7TvrNs-IorLDhcgP8H1qN44CuQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhANtd0bd0xDgDvShBJKcBvgEeRH_TXz6a2obYLKDC4VGVAiEAvIcM2x_movi7hFn-ZJxDRT8STBvOMIEhSfnjEi-oeN0=",
-        "fileSize": 74204574,
-        "duration": 37095,
-        "targetFileId": "1ZCkJM9-11pCSy3zpwTCetXYWjpANvwwG",
-        "driveViewUrl": "https://drive.google.com/file/d/1ZCkJM9-11pCSy3zpwTCetXYWjpANvwwG/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=1ZCkJM9-11pCSy3zpwTCetXYWjpANvwwG"
+        "sourceUrl": "https://rr5---sn-npoldn7y.c.drive.google.com/videoplayback?expire=1731696021&ei=ZWs3Z9-TNIbd-LYPyZC70A0&ip=14.180.84.75&id=85134ddb5f87e0bc&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685221,&mh=c5&mm=32,26&mn=sn-npoldn7y,sn-ogul7nez&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1izBQEIVM0_-quxR5lOvLZTGOXWMEBCtn&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=8544.966&lmt=1730717043793495&mt=1731684785&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgLbXcL74l62Ph3Zvz4WMGR3yYvVLUCFLSH7KiYRqNsnoCIEQhR3SOuB5FZfakw5KWZL5scrdiKQRdksITjQNpXOme&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgBstypj6FLLvYWQWsJ4ybxaijGjCAy3PVvh4pV8eoKkcCIGcuyEDpJjxZ_l-fhGAlt4Uc1XIg5FsSazx4qedVcvFy"
       },
       {
-        "timestamp": "2024-11-15T15:15:09.850Z",
+        "timestamp": "2024-11-15T15:39:56.719Z",
         "type": "video_process",
-        "status": "uploaded",
-        "fileName": "04. Bài 4. Biểu thức tọa độ của vecto nâng cao.mp4",
-        "fileId": "1HNyyy4JZ-3tlcl65va96IyziFMwL4xpg",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
+        "status": "url_found",
+        "fileName": "01. TOÁN THỰC TẾ CHẮC CHẮN THI 2025 SGK MỚI.mp4",
+        "fileId": "1uMEinsIBs4W9TaOSIXyEaVES1E157rUr",
+        "targetFolderId": "1h5TpypXokE4x6xccc_4n4gd0y8Fb2bkF",
         "history": [
           {
             "status": "start",
-            "timestamp": "2024-11-15T15:14:07.043Z"
+            "timestamp": "2024-11-15T15:39:52.355Z"
           },
           {
             "status": "url_found",
-            "timestamp": "2024-11-15T15:14:11.322Z",
+            "timestamp": "2024-11-15T15:39:56.719Z",
             "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:12.874Z",
-            "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:14:40.650Z",
-            "fileSize": 172468765,
-            "duration": 33607
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:15:09.850Z",
-            "fileSize": 172468765,
-            "duration": 62807
           }
         ],
         "quality": 720,
-        "sourceUrl": "https://rr2---sn-npoeenly.c.drive.google.com/videoplayback?expire=1731694484&ei=ZGU3Z4jkIIfS-LYP6bf1iQU&ip=14.180.84.75&id=4b4ec89b7a1aeb74&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683684,&mh=YH&mm=32,26&mn=sn-npoeenly,sn-oguesn6y&ms=su,onr&mv=m&mvi=2&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1HNyyy4JZ-3tlcl65va96IyziFMwL4xpg&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=4865.091&lmt=1722350274963195&mt=1731683346&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAN0vAXn9Hg4P9kApFjeIzexKKQSANIImJ0PeqUSIPc-XAiBCXSDeNY4WC10ukclPUNS99-iOiHLV4CFoxatm4YWcmg==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIhALpkbtu_Hjlf8ISNbdNHBnrwIlFps8Bkgbhzl5-ABcN5AiBU1u0eziOMp9kEl6tieVwhCdb5M1UJfDnLqoPO4xNUAw==",
-        "fileSize": 172468765,
-        "duration": 62807,
-        "targetFileId": "19sNm9X57-grk5wpbUbZJ4OPCg2KnPBU6",
-        "driveViewUrl": "https://drive.google.com/file/d/19sNm9X57-grk5wpbUbZJ4OPCg2KnPBU6/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=19sNm9X57-grk5wpbUbZJ4OPCg2KnPBU6"
-      },
-      {
-        "timestamp": "2024-11-15T15:15:16.725Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "05. Bài 5. Toán thực tế.mp4",
-        "fileId": "1aKT9TObzbpD-zN_QG0gbp0vCxT9BEJjF",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:14:14.485Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:19.115Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:27.505Z",
-            "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:14:49.582Z",
-            "fileSize": 117664151,
-            "duration": 35097
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:15:16.725Z",
-            "fileSize": 117664151,
-            "duration": 62240
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr5---sn-npoeens7.c.drive.google.com/videoplayback?expire=1731694492&ei=bGU3Z_S5E8SpmvUPupZ8&ip=14.180.84.75&id=d7d983480e7066a2&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683692,&mh=3H&mm=32,26&mn=sn-npoeens7,sn-oguelner&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1aKT9TObzbpD-zN_QG0gbp0vCxT9BEJjF&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=3134.995&lmt=1722350125187834&mt=1731683346&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAPbP4JbB7PbuJ_E8d8I78CRy27tdgKSRzL0Wj_F_PWheAiAHKb7tL-K4TTPerg9y_D0dbc3qznx1vx3IwVnlsmJlqA==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRgIhAPIyGhzLcQKMB_D5z9fse0cITThJn6ZVh2mUugitiGE5AiEAtVFc3kpOIde_hthMzbdROTYXqKWm52MsXb1P8ytCDn0=",
-        "fileSize": 117664151,
-        "duration": 62240,
-        "targetFileId": "1DjifnC6YArKQL7njZ4fZNOx42r1LRG1j",
-        "driveViewUrl": "https://drive.google.com/file/d/1DjifnC6YArKQL7njZ4fZNOx42r1LRG1j/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=1DjifnC6YArKQL7njZ4fZNOx42r1LRG1j"
-      },
-      {
-        "timestamp": "2024-11-15T15:15:58.159Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "01. Bài 1. Vecto trong không gian cơ bản.mp4",
-        "fileId": "1O3q8KIxUvT3KIogTluI_hdOXppqUNUCP",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:14:28.475Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:33.134Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:37.484Z",
-            "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:15:18.449Z",
-            "fileSize": 157511795,
-            "duration": 49974
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:15:58.159Z",
-            "fileSize": 157511795,
-            "duration": 89684
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr4---sn-npoeenlk.c.drive.google.com/videoplayback?expire=1731694506&ei=emU3Z4e0Et2VmvUP_duHqAI&ip=14.180.84.75&id=3627966411447149&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683706,&mh=sH&mm=32,26&mn=sn-npoeenlk,sn-oguelnsr&ms=su,onr&mv=m&mvi=4&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1O3q8KIxUvT3KIogTluI_hdOXppqUNUCP&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=4094.653&lmt=1721638524786007&mt=1731683346&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRgIhAKE9POfe4_7AE7gRc0GqeVqY8CMaEqcL9HHJdJxlcxU0AiEA6TyD1DgWEZrtLyRBJ0VqLMbpcZZUKhGgp0d3sqb0tFk=&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgHCMgxWdyD2LaKoGCaEfqsJMsh2vdRBcXBNTqoJ4dnYECIQDsbNQtOA3G1DGrbeeKvnE-_kgWDQnBlaEHnPXcXvWKyQ==",
-        "fileSize": 157511795,
-        "duration": 89684,
-        "targetFileId": "168g9N0LZhBn2yv_VcTanjZTJ4rQa8TL8",
-        "driveViewUrl": "https://drive.google.com/file/d/168g9N0LZhBn2yv_VcTanjZTJ4rQa8TL8/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=168g9N0LZhBn2yv_VcTanjZTJ4rQa8TL8"
-      },
-      {
-        "timestamp": "2024-11-15T15:16:09.651Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "03. Bài 3. Biểu thức toạ độ vecto cơ bản.mp4",
-        "fileId": "19H3DQ7NZ6JPvgfstpLBkd-x-ZeYXuatV",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:14:38.229Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:42.353Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:49.628Z",
-            "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:15:25.841Z",
-            "fileSize": 158017174,
-            "duration": 47612
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:16:09.651Z",
-            "fileSize": 158017174,
-            "duration": 91422
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr5---sn-npoe7nsk.c.drive.google.com/videoplayback?expire=1731694515&ei=g2U3Z768JPzc-LYPjNfXmAM&ip=14.180.84.75&id=f1cbc5ba1cbfca13&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683715,&mh=oW&mm=32,26&mn=sn-npoe7nsk,sn-oguesnd7&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=19H3DQ7NZ6JPvgfstpLBkd-x-ZeYXuatV&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=4282.247&lmt=1721638380399917&mt=1731683346&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAMRRJNwulIxuHl5oe2j-nU_Bl_Z-tp-ms4N6PYib55iYAiB_eHiqH2RmdLEMeMwTJdpiiihZ-Xk5VdHDra76PFbHBA==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgMqu5tDnEtLeewllCWdak1kOxNOoRFGwuKG6CrdVJ5J8CIQCD8hGHHmdXzDTNVBzvqW3fUSAJq627kGCrtFDo1SJ7JA==",
-        "fileSize": 158017174,
-        "duration": 91422,
-        "targetFileId": "1JlE5A6IfTId1n5DoIFQRwap3jPWE6oVZ",
-        "driveViewUrl": "https://drive.google.com/file/d/1JlE5A6IfTId1n5DoIFQRwap3jPWE6oVZ/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=1JlE5A6IfTId1n5DoIFQRwap3jPWE6oVZ"
-      },
-      {
-        "timestamp": "2024-11-15T15:16:07.718Z",
-        "type": "video_process",
-        "status": "uploaded",
-        "fileName": "02. Vecto trong không gian nâng cao.mp4",
-        "fileId": "1tVzQy9ZssPKwPM40ELF7O_f9aK02RYQA",
-        "targetFolderId": "1w9L_tyJj_5IF8fZ2rXWkW-cR6rP6zGCd",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:14:50.400Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:54.803Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:14:56.926Z",
-            "quality": 720
-          },
-          {
-            "status": "downloaded",
-            "timestamp": "2024-11-15T15:15:25.405Z",
-            "fileSize": 160423417,
-            "duration": 35005
-          },
-          {
-            "status": "uploaded",
-            "timestamp": "2024-11-15T15:16:07.718Z",
-            "fileSize": 160423417,
-            "duration": 77318
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr5---sn-npoeens7.c.drive.google.com/videoplayback?expire=1731694528&ei=j2U3Z_a8PPOAp84Pu-bduQo&ip=14.180.84.75&id=988149a90bc39aea&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731683727,&mh=HI&mm=32,26&mn=sn-npoeens7,sn-ogul7nez&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1tVzQy9ZssPKwPM40ELF7O_f9aK02RYQA&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=4302.216&lmt=1721638516229629&mt=1731683346&fvip=1&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgXjGi1M-O1M7xUA9LgKFUgLHqXhX0WKShFQoELRIgonUCIQDDi6vNoWeGUKPxfNGZdMwylIMtFcr79hOC3AENTjuYXg==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgVTx8sdY43EDkmGygYW0552NLQivoUd6Vj_vJiC2wghYCIB4dtkTqorcmBy5fgKPXX-2oKLStk69aKkSQOc8wh4sr",
-        "fileSize": 160423417,
-        "duration": 77318,
-        "targetFileId": "1r3Qat1k5cnTeOBj43v2d3R83qfSdBokg",
-        "driveViewUrl": "https://drive.google.com/file/d/1r3Qat1k5cnTeOBj43v2d3R83qfSdBokg/view",
-        "driveDownloadUrl": "https://drive.google.com/uc?export=download&id=1r3Qat1k5cnTeOBj43v2d3R83qfSdBokg"
+        "sourceUrl": "https://rr5---sn-npoldn76.c.drive.google.com/videoplayback?expire=1731696029&ei=bWs3Z9LfL6OdmvUPuL7q0Q8&ip=14.180.84.75&id=ba5cc623fb9e2c39&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685229,&mh=R2&mm=32,26&mn=sn-npoldn76,sn-oguesnd6&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1uMEinsIBs4W9TaOSIXyEaVES1E157rUr&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=7991.890&lmt=1730716609197764&mt=1731684785&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgWQ2R0g7xHzWr5bJ0s9riKUPgOoJ_0i10M4yva5WuNgYCIQDHr24vuS3zYrW-A3IgDjHYnq8cIDkAIFBJ3uHHR1NNcQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgdfwgWFayMW2HPhEdMXGvWRGUKxQNbEZV-fOxFr0vzlgCIFZ3jkG6a93gzhG_3XsSq5iTh54Q9N4-NA0XFGZXtZKn"
       }
     ]
   }
