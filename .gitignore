@@ -1,5 +1,6 @@
 # Dependencies
 /node_modules
+**/node_modules
 
 # Output directories
 /output
@@ -7,6 +8,9 @@
 /temp_files
 **/output
 **/temp
+**/temp_files
+/drive-clone-dist/temp
+/drive-clone-dist/temp_files
 
 # IDE files
 .vscode
@@ -14,6 +18,8 @@
 
 # Logs
 *.log
+/logs
+**/logs
 
 # Environment files
 .env

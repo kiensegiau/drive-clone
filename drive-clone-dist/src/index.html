@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drive Clone Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 600px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 2rem;
+            gap: 1rem;
+        }
+
+        .header img {
+            width: 40px;
+            height: 40px;
+        }
+
+        .header h1 {
+            margin: 0;
+            color: #1a73e8;
+            font-size: 24px;
+        }
+
+        .guide {
+            background: #f8f9fe;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+        }
+
+        .guide h2 {
+            color: #1a73e8;
+            margin-top: 0;
+            font-size: 18px;
+        }
+
+        .guide ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+
+        .guide li {
+            margin: 8px 0;
+            color: #444;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #444;
+        }
+
+        .input-group input {
+            width: 100%;
+            padding: 0.8rem;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+
+        .input-group input:focus {
+            border-color: #1a73e8;
+            outline: none;
+        }
+
+        .start-button {
+            background: #1a73e8;
+            color: white;
+            border: none;
+            padding: 1rem;
+            width: 100%;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .start-button:hover {
+            background: #1557b0;
+        }
+
+        .footer {
+            text-align: center;
+            margin-top: 2rem;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .footer span {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <img src="rocket-icon.png" alt="Drive Clone Tool">
+            <h1>Drive Clone Tool</h1>
+        </div>
+
+        <div class="guide">
+            <h2>📝 Hướng dẫn:</h2>
+            <ul>
+                <li>Dán URL folder Google Drive cần clone</li>
+                <li>URL có dạng: https://drive.google.com/drive/folders/YOUR_FOLDER_ID</li>
+                <li>Nhấn "Bắt đầu Clone" và đợi quá trình hoàn tất</li>
+            </ul>
+        </div>
+
+        <div class="input-group">
+            <label for="folderUrl">URL Folder Drive:</label>
+            <input 
+                type="text" 
+                id="folderUrl"
+                placeholder="https://drive.google.com/drive/folders/..."
+            >
+        </div>
+
+        <button class="start-button" onclick="startClone()">Bắt đầu Clone</button>
+
+        <div class="footer">
+            Version 1.0.0 | Made with <span>❤️</span>
+        </div>
+    </div>
+
+    <script>
+        async function startClone() {
+            const url = document.getElementById('folderUrl').value;
+            if (!url) {
+                alert('Vui lòng nhập URL folder!');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/clone', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ url })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Có lỗi xảy ra');
+                }
+                
+                alert('Bắt đầu clone folder!');
+            } catch (error) {
+                alert('Có lỗi xảy ra: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html> 

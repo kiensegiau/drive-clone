@@ -2409,93 +2409,84 @@
     {
       "id": "1731685163866",
       "startTime": "2024-11-15T15:39:23.866Z",
-      "endTime": null,
+      "endTime": "2024-11-16T16:29:53.772Z",
       "totalFiles": 0,
       "processedFiles": 0,
       "errors": [],
       "logs": []
+    },
+    {
+      "id": "1731774593772",
+      "startTime": "2024-11-16T16:29:53.772Z",
+      "endTime": null,
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": [
+        {
+          "timestamp": "2024-11-16T16:30:17.851Z",
+          "type": "pdf",
+          "fileName": "TTS - ĐỀ LUYỆN VIẾT SỐ 10 - TTS-ER 2K7.pdf",
+          "sourceId": "1xfJ6_uTpddjfkSGonwOLA5Glqo7Z6GSY",
+          "targetId": "1O-DR1YSwYyqe9MG7Wd1iOTa-mC4_56ON",
+          "sourceUrl": "https://drive.google.com/file/d/1xfJ6_uTpddjfkSGonwOLA5Glqo7Z6GSY",
+          "targetUrl": "https://drive.google.com/file/d/1O-DR1YSwYyqe9MG7Wd1iOTa-mC4_56ON",
+          "fileSize": {
+            "original": null,
+            "processed": 714067
+          },
+          "method": "api",
+          "status": "success",
+          "duration": 8357,
+          "history": [
+            {
+              "status": "success",
+              "timestamp": "2024-11-16T16:30:17.851Z",
+              "fileSize": {
+                "original": null,
+                "processed": 714067
+              },
+              "duration": 8357
+            }
+          ]
+        }
+      ]
     }
   ],
   "currentSession": {
-    "id": "1731685163866",
-    "startTime": "2024-11-15T15:39:23.866Z",
+    "id": "1731774593772",
+    "startTime": "2024-11-16T16:29:53.772Z",
     "endTime": null,
-    "totalFiles": 3,
+    "totalFiles": 0,
     "processedFiles": 0,
     "errors": [],
     "logs": [
       {
-        "timestamp": "2024-11-15T15:39:38.113Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "TOÁN THỰC TẾ CHẮC CHẮN THI 2025.mp4",
-        "fileId": "1326UztClQDtQ_XTzWej4Xv1HZ22WwXMl",
-        "targetFolderId": "1rHer25UHBbsDKzaKxmZv6FrHWdCvaUTR",
+        "timestamp": "2024-11-16T16:30:17.851Z",
+        "type": "pdf",
+        "fileName": "TTS - ĐỀ LUYỆN VIẾT SỐ 10 - TTS-ER 2K7.pdf",
+        "sourceId": "1xfJ6_uTpddjfkSGonwOLA5Glqo7Z6GSY",
+        "targetId": "1O-DR1YSwYyqe9MG7Wd1iOTa-mC4_56ON",
+        "sourceUrl": "https://drive.google.com/file/d/1xfJ6_uTpddjfkSGonwOLA5Glqo7Z6GSY",
+        "targetUrl": "https://drive.google.com/file/d/1O-DR1YSwYyqe9MG7Wd1iOTa-mC4_56ON",
+        "fileSize": {
+          "original": null,
+          "processed": 714067
+        },
+        "method": "api",
+        "status": "success",
+        "duration": 8357,
         "history": [
           {
-            "status": "start",
-            "timestamp": "2024-11-15T15:39:31.612Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:39:35.965Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:39:38.113Z",
-            "quality": 720
+            "status": "success",
+            "timestamp": "2024-11-16T16:30:17.851Z",
+            "fileSize": {
+              "original": null,
+              "processed": 714067
+            },
+            "duration": 8357
           }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr3---sn-npoldne7.c.drive.google.com/videoplayback?expire=1731696009&ei=WWs3Z53SAvOAp84Pu-bduQo&ip=14.180.84.75&id=11906791faa29ee0&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685209,&mh=pI&mm=32,26&mn=sn-npoldne7,sn-oguelnzl&ms=su,onr&mv=m&mvi=3&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1326UztClQDtQ_XTzWej4Xv1HZ22WwXMl&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=6335.193&lmt=1731265001245583&mt=1731684785&fvip=4&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIhAMpWxMsFsOEauM4sZHS6iu1gM1GvSrN4o8APjVRG3K9GAiBJPKu-W9j1eY03WE2kTtDvxDf6Hg7cyotb4OvgTZOBmQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRQIgX15wBWMHPkudqb5qCH3axish3CtirfrjzUSCZRhdb5gCIQC2yA_qS4fabksLFT7748bPjaLgmG2vjf-55Z-3_zH-tw=="
-      },
-      {
-        "timestamp": "2024-11-15T15:39:51.362Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "02. Giá trị lớn nhất và nhỏ nhất (Buổi 02).mp4",
-        "fileId": "1izBQEIVM0_-quxR5lOvLZTGOXWMEBCtn",
-        "targetFolderId": "1h5TpypXokE4x6xccc_4n4gd0y8Fb2bkF",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:39:43.979Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:39:48.739Z",
-            "quality": 720
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:39:51.362Z",
-            "quality": 720
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr5---sn-npoldn7y.c.drive.google.com/videoplayback?expire=1731696021&ei=ZWs3Z9-TNIbd-LYPyZC70A0&ip=14.180.84.75&id=85134ddb5f87e0bc&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685221,&mh=c5&mm=32,26&mn=sn-npoldn7y,sn-ogul7nez&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1izBQEIVM0_-quxR5lOvLZTGOXWMEBCtn&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=8544.966&lmt=1730717043793495&mt=1731684785&fvip=3&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRAIgLbXcL74l62Ph3Zvz4WMGR3yYvVLUCFLSH7KiYRqNsnoCIEQhR3SOuB5FZfakw5KWZL5scrdiKQRdksITjQNpXOme&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgBstypj6FLLvYWQWsJ4ybxaijGjCAy3PVvh4pV8eoKkcCIGcuyEDpJjxZ_l-fhGAlt4Uc1XIg5FsSazx4qedVcvFy"
-      },
-      {
-        "timestamp": "2024-11-15T15:39:56.719Z",
-        "type": "video_process",
-        "status": "url_found",
-        "fileName": "01. TOÁN THỰC TẾ CHẮC CHẮN THI 2025 SGK MỚI.mp4",
-        "fileId": "1uMEinsIBs4W9TaOSIXyEaVES1E157rUr",
-        "targetFolderId": "1h5TpypXokE4x6xccc_4n4gd0y8Fb2bkF",
-        "history": [
-          {
-            "status": "start",
-            "timestamp": "2024-11-15T15:39:52.355Z"
-          },
-          {
-            "status": "url_found",
-            "timestamp": "2024-11-15T15:39:56.719Z",
-            "quality": 720
-          }
-        ],
-        "quality": 720,
-        "sourceUrl": "https://rr5---sn-npoldn76.c.drive.google.com/videoplayback?expire=1731696029&ei=bWs3Z9LfL6OdmvUPuL7q0Q8&ip=14.180.84.75&id=ba5cc623fb9e2c39&itag=22&source=webdrive&requiressl=yes&xpc=EghonaK1InoBAQ==&met=1731685229,&mh=R2&mm=32,26&mn=sn-npoldn76,sn-oguesnd6&ms=su,onr&mv=m&mvi=5&pl=23&rms=su,su&sc=yes&ttl=transient&susc=dr&driveid=1uMEinsIBs4W9TaOSIXyEaVES1E157rUr&app=explorer&eaua=cm6FAtAAJNo&mime=video/mp4&vprv=1&prv=1&rqh=1&cnr=14&dur=7991.890&lmt=1730716609197764&mt=1731684785&fvip=2&subapp=DRIVE_WEB_FILE_VIEWER&txp=0006224&sparams=expire,ei,ip,id,itag,source,requiressl,xpc,ttl,susc,driveid,app,eaua,mime,vprv,prv,rqh,cnr,dur,lmt&sig=AJfQdSswRQIgWQ2R0g7xHzWr5bJ0s9riKUPgOoJ_0i10M4yva5WuNgYCIQDHr24vuS3zYrW-A3IgDjHYnq8cIDkAIFBJ3uHHR1NNcQ==&lsparams=met,mh,mm,mn,ms,mv,mvi,pl,rms,sc&lsig=AGluJ3MwRAIgdfwgWFayMW2HPhEdMXGvWRGUKxQNbEZV-fOxFr0vzlgCIFZ3jkG6a93gzhG_3XsSq5iTh54Q9N4-NA0XFGZXtZKn"
+        ]
       }
     ]
   }

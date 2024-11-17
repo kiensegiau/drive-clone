@@ -1,19 +1,18 @@
 const DriveAPI = require("./api/DriveAPI");
+const KeyManager = require("./api/KeyManager");
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 
 function cleanupTempFiles() {
   const tempDir = path.join(process.cwd(), 'temp');
   
-  // Tạo thư mục temp nếu chưa tồn tại
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
     return;
   }
 
-  // Đọc tất cả files trong thư mục temp
   const files = fs.readdirSync(tempDir);
-  
   console.log(`🧹 Đang dọn dẹp ${files.length} file tạm...`);
   
   for (const file of files) {
@@ -26,11 +25,51 @@ function cleanupTempFiles() {
   }
 }
 
+async function promptInput(question) {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
+async function checkAndActivateKey() {
+  const keyManager = new KeyManager();
+  let key = keyManager.getLocalKey();
+
+  if (!key) {
+    console.log('\n🔑 Chào mừng bạn đến với Drive Clone Tool!');
+    console.log('Vui lòng nhập key để kích hoạt phần mềm lần đầu tiên.\n');
+    
+    key = await promptInput('Nhập key của bạn: ');
+    const activated = await keyManager.activateKey(key);
+    
+    if (!activated) {
+      throw new Error('Key không hợp lệ hoặc đã được sử dụng');
+    }
+  }
+
+  const isValid = await keyManager.validateKey(key);
+  if (!isValid) {
+    throw new Error('Key không hợp lệ hoặc đã hết hạn');
+  }
+
+  return key;
+}
+
 async function main() {
   console.log("🎬 Bắt đầu chương trình drive-clone");
 
   try {
-    // Dọn dẹp files tạm trước khi bắt đầu
+    // Kiểm tra key trước khi bắt đầu
+    await checkAndActivateKey();
+    
     cleanupTempFiles();
 
     const driveAPI = new DriveAPI();
@@ -41,7 +80,6 @@ async function main() {
       throw new Error("Vui lòng cung cấp URL folder Google Drive");
     }
 
-    // Hỗ trợ nhiều định dạng URL
     let sourceFolderId;
     if (folderUrl.includes("/folders/")) {
       sourceFolderId = folderUrl.match(/folders\/([a-zA-Z0-9_-]+)/)?.[1];
@@ -61,24 +99,21 @@ async function main() {
       await driveAPI.start(sourceFolderId);
     } catch (error) {
       console.error("❌ Lỗi xử lý folder gốc:", error.message);
-      // Không throw error để chương trình không dừng đột ngột
     }
 
     console.log("✅ Hoàn thành chương trình");
   } catch (error) {
     console.error("❌ Lỗi khởi động:", error.message);
+    process.exit(1);
   }
 }
 
-// Xử lý lỗi không bắt được
 process.on("uncaughtException", (error) => {
   console.error("❌ Lỗi không xử lý được:", error.message);
-  // Không exit process để chương trình tiếp tục chạy
 });
 
 process.on("unhandledRejection", (error) => {
   console.error("❌ Promise rejection không xử lý:", error.message);
-  // Không exit process để chương trình tiếp tục chạy
 });
 
 main().catch((error) => {
