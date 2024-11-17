@@ -191,6 +191,153 @@ class VideoQualityChecker {
 
     return result;
   }
+
+  async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      // Lấy thông tin folder gốc
+      const sourceFolder = await this.drive.files.get({
+        fileId: sourceFolderId,
+        fields: 'name, parents',
+        supportsAllDrives: true
+      });
+
+      // Tạo folder mới tại đích với cùng tên
+      const newFolder = await this.drive.files.create({
+        requestBody: {
+          name: sourceFolder.data.name,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [destinationFolderId]
+        },
+        supportsAllDrives: true
+      });
+
+      console.log(`${indent}📂 Đã tạo folder "${sourceFolder.data.name}"`);
+
+      // Lấy danh sách các files và folders con
+      const response = await this.drive.files.list({
+        q: `'${sourceFolderId}' in parents and trashed = false`,
+        fields: 'files(id, name, mimeType)',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        pageSize: 1000
+      });
+
+      const items = response.data.files;
+
+      // Copy từng item theo thứ tự
+      for (const item of items) {
+        if (item.mimeType === 'application/vnd.google-apps.folder') {
+          // Đệ quy copy subfolder
+          await this.copyFolder(item.id, newFolder.data.id, depth + 1);
+        } else {
+          // Copy file
+          await this.copyFile(item.id, newFolder.data.id, depth + 1);
+        }
+      }
+
+      console.log(`${indent}✅ Đã sao chép xong folder "${sourceFolder.data.name}"`);
+      return newFolder.data;
+
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi khi sao chép folder:`, error.message);
+      throw error;
+    }
+  }
+
+  async copyFile(fileId, destinationFolderId) {
+    try {
+      // Kiểm tra thư mục đích
+      let destinationInfo;
+      try {
+        destinationInfo = await this.drive.files.get({
+          fileId: destinationFolderId,
+          fields: 'name, driveId',
+          supportsAllDrives: true
+        });
+        
+        console.log(`📍 Vị trí lưu: ${destinationInfo.data.name}`);
+        if (destinationInfo.data.driveId) {
+          console.log(`📁 Thuộc Shared Drive: ${destinationInfo.data.driveId}`);
+        } else {
+          console.log(`📁 Thuộc My Drive`);
+        }
+      } catch (error) {
+        throw new Error(`Không tìm thấy thư mục đích hoặc không có quyền truy cập`);
+      }
+
+      // Tiến hành copy
+      const sourceFile = await this.drive.files.get({
+        fileId: fileId,
+        fields: 'name',
+        supportsAllDrives: true
+      });
+
+      const copiedFile = await this.drive.files.copy({
+        fileId: fileId,
+        requestBody: {
+          name: sourceFile.data.name,
+          parents: [destinationFolderId]
+        },
+        supportsAllDrives: true
+      });
+
+      console.log(`✅ Đã sao chép "${sourceFile.data.name}" vào ${destinationInfo.data.name}`);
+      return copiedFile.data;
+    } catch (error) {
+      console.error(`❌ Lỗi:`, error.message);
+      throw error;
+    }
+  }
+
+  async copyToBackupFolder(sourceId) {
+    try {
+      // Tìm hoặc tạo folder "Bản sao" trong My Drive
+      let backupFolder;
+      const response = await this.drive.files.list({
+        q: "name='Bản sao' and mimeType='application/vnd.google-apps.folder' and 'root' in parents",
+        fields: 'files(id, name)',
+        spaces: 'drive'
+      });
+
+      if (response.data.files.length > 0) {
+        backupFolder = response.data.files[0];
+        console.log('📂 Đã tìm thấy folder "Bản sao"');
+      } else {
+        backupFolder = await this.drive.files.create({
+          requestBody: {
+            name: 'Bản sao',
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: ['root']
+          }
+        });
+        console.log('📂 Đã tạo mới folder "Bản sao"');
+      }
+
+      // Lấy thông tin folder gốc
+      const sourceInfo = await this.drive.files.get({
+        fileId: sourceId,
+        fields: 'name, mimeType',
+        supportsAllDrives: true
+      });
+
+      // Copy toàn bộ nội dung vào folder "Bản sao"
+      if (sourceInfo.data.mimeType === 'application/vnd.google-apps.folder') {
+        // Copy folder và giữ nguyên cấu trúc
+        await this.copyFolder(sourceId, backupFolder.id);
+      } else {
+        // Copy file đơn lẻ
+        await this.copyFile(sourceId, backupFolder.id);
+      }
+
+      console.log('✅ Đã sao chép xong vào folder "Bản sao"');
+      return backupFolder.id;
+
+    } catch (error) {
+      console.error('❌ Lỗi:', error.message);
+      throw error;
+    }
+  }
 }
 
 // Hàm hỗ trợ format dung lượng file
