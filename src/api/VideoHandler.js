@@ -124,7 +124,7 @@ class VideoHandler {
 
       // Tải video về temp
       console.log(`${indent}📥 Bắt đầu tải video...`);
-      await this.downloadVideoWithChunks(videoUrl, outputPath);
+      await this.downloadVideoWithChunks(videoUrl, outputPath, depth, fileId, fileName, profileId);
 
       // Log hoàn thành tải
       const stats = fs.statSync(outputPath);
@@ -294,129 +294,175 @@ class VideoHandler {
     return itagQualities[itag] || 0;
   }
 
-  async downloadVideoWithChunks(url, outputPath, depth = 0) {
+  async downloadVideoWithChunks(url, outputPath, depth = 0, fileId, fileName, profileId = null) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
     const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      let browser;
       try {
         console.log(`${indent}📥 Bắt đầu tải video...`);
-        console.log(`${indent}🔗 URL: ${url.substring(0, 100)}...`);
 
-        // Lấy thông tin file
-        const headResponse = await axios.head(url);
-        const totalSize = parseInt(headResponse.headers['content-length'], 10);
-        console.log(`${indent}📦 Kích thước file: ${(totalSize / 1024 / 1024).toFixed(2)}MB`);
-
-        // Kiểm tra response headers
-        console.log(`${indent}📋 Headers:`, {
-          'content-type': headResponse.headers['content-type'],
-          'accept-ranges': headResponse.headers['accept-ranges'],
-          'content-length': headResponse.headers['content-length']
+        // Lấy session mới từ Chrome
+        console.log(`${indent}🔄 Khởi tạo session mới...`);
+        browser = await this.chromeManager.getBrowser(profileId);
+        const page = await browser.newPage();
+        
+        // Truy cập trang video để lấy session
+        await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+          waitUntil: 'networkidle0',
+          timeout: 30000
         });
 
-        // Tạo write stream
+        // Lấy tất cả cookies và headers cần thiết
+        const cookies = await page.cookies();
+        const localStorage = await page.evaluate(() => Object.entries(window.localStorage));
+        
+        // Lấy XSRF token và session ID nếu có
+        let xsrfToken = '';
+        let sessionId = '';
+        for (const [key, value] of localStorage) {
+          if (key.includes('token')) xsrfToken = value;
+          if (key.includes('session')) sessionId = value;
+        }
+
+        // Tạo headers đầy đủ
+        const headers = {
+          'User-Agent': await page.evaluate(() => navigator.userAgent),
+          'Accept': '*/*',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Cookie': cookies.map(c => `${c.name}=${c.value}`).join('; '),
+          'Referer': `https://drive.google.com/file/d/${fileId}/view`,
+          'Origin': 'https://drive.google.com',
+          'Sec-Fetch-Dest': 'video',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-site',
+          'Authorization': `Bearer ${xsrfToken}`,
+          'X-Drive-First-Party': '1',
+          'X-Client-Data': await page.evaluate(() => {
+            const data = window.chrome?.loadTimes?.();
+            return data ? btoa(JSON.stringify(data)) : '';
+          })
+        };
+
+        if (sessionId) {
+          headers['X-Session-Id'] = sessionId;
+        }
+
+        // Thử HEAD request với headers mới
+        try {
+          const headResponse = await axios.head(url, { headers });
+          console.log(`${indent}✅ Kiểm tra URL thành công:`, {
+            status: headResponse.status,
+            contentType: headResponse.headers['content-type'],
+            contentLength: headResponse.headers['content-length']
+          });
+        } catch (headError) {
+          throw new Error(`Không thể truy cập URL: ${headError.message}`);
+        }
+
+        // Tải video với headers mới
+        console.log(`${indent}📥 Bắt đầu tải với session mới...`);
+        const response = await axios({
+          method: 'get',
+          url: url,
+          headers: headers,
+          responseType: 'stream',
+          maxRedirects: 5,
+          timeout: 60000
+        });
+
+        // Xử lý download stream
+        const totalSize = parseInt(response.headers['content-length'], 10);
         const writer = fs.createWriteStream(outputPath);
         let downloadedSize = 0;
         let lastLogTime = Date.now();
-        const startTime = Date.now();
 
-        try {
-          // Tải theo chunks
-          for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
-            const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
-            
-            console.log(`${indent}🔄 Tải chunk ${start}-${end}/${totalSize}`);
-            
-            const response = await axios({
-              method: 'get',
-              url: url,
-              responseType: 'stream',
-              headers: {
-                Range: `bytes=${start}-${end}`,
-                Cookie: this.cookies?.map(c => `${c.name}=${c.value}`).join('; ')
-              },
-              timeout: 30000, // 30s timeout
-              maxRedirects: 5
-            });
+        await new Promise((resolve, reject) => {
+          response.data.pipe(writer);
 
-            await new Promise((resolve, reject) => {
-              response.data.pipe(writer, { end: false });
-              
-              response.data.on('data', (chunk) => {
-                downloadedSize += chunk.length;
-                
-                // Log tiến độ mỗi 2 giây
-                const now = Date.now();
-                if (now - lastLogTime > 2000) {
-                  const progress = (downloadedSize / totalSize * 100).toFixed(2);
-                  const speed = (downloadedSize / 1024 / 1024 / ((now - startTime) / 1000)).toFixed(2);
-                  console.log(`${indent}⏳ Đã tải: ${progress}% (${speed}MB/s)`);
-                  lastLogTime = now;
-                }
-              });
-
-              response.data.on('end', resolve);
-              response.data.on('error', reject);
-            });
-          }
-
-          writer.end();
-          
-          // Kiểm tra kích thước file đã tải
-          const stats = fs.statSync(outputPath);
-          if (stats.size !== totalSize) {
-            throw new Error(`Kích thước file không khớp: ${stats.size}/${totalSize} bytes`);
-          }
-
-          const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-          const avgSpeed = (totalSize / 1024 / 1024 / duration).toFixed(2);
-          console.log(`${indent}✅ Tải thành công sau ${duration}s (${avgSpeed}MB/s)`);
-          
-          return;
-
-        } catch (downloadError) {
-          writer.end();
-          console.error(`${indent}❌ Lỗi khi tải chunk:`, {
-            message: downloadError.message,
-            code: downloadError.code,
-            response: downloadError.response?.status,
-            headers: downloadError.response?.headers
+          response.data.on('data', (chunk) => {
+            downloadedSize += chunk.length;
+            const now = Date.now();
+            if (now - lastLogTime > 2000) {
+              const progress = (downloadedSize / totalSize * 100).toFixed(2);
+              const speed = (downloadedSize / 1024 / 1024 / ((now - lastLogTime) / 1000)).toFixed(2);
+              console.log(`${indent}⏳ Đã tải: ${progress}% (${speed} MB/s)`);
+              lastLogTime = now;
+            }
           });
-          
-          if (downloadError.response) {
-            console.error(`${indent}📡 Response status:`, downloadError.response.status);
-            console.error(`${indent}📡 Response headers:`, downloadError.response.headers);
-          }
 
-          throw downloadError;
-        }
+          writer.on('finish', resolve);
+          writer.on('error', reject);
+          response.data.on('error', reject);
+        });
+
+        console.log(`${indent}✅ Tải thành công!`);
+        return;
 
       } catch (error) {
+        console.error(`${indent}❌ Lỗi tải video (lần ${attempt}/${MAX_RETRIES}):`, {
+          message: error.message,
+          status: error.response?.status,
+          headers: error.response?.headers
+        });
+
         // Xóa file không hoàn chỉnh
         if (fs.existsSync(outputPath)) {
           fs.unlinkSync(outputPath);
         }
 
         if (attempt < MAX_RETRIES) {
-          console.error(`${indent}⚠️ Lỗi tải video, thử lại lần ${attempt}...`, {
-            message: error.message,
-            code: error.code,
-            errno: error.errno,
-            syscall: error.syscall,
-            hostname: error.hostname,
-            type: error.type,
-            stack: error.stack
-          });
-          
-          // Đợi trước khi thử lại
+          console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
           await new Promise(r => setTimeout(r, 5000));
           continue;
         }
 
-        throw new Error(`Lỗi tải video sau ${MAX_RETRIES} lần thử: ${error.message}`);
+        throw error;
+      } finally {
+        if (browser) {
+          await browser.close();
+        }
       }
+    }
+  }
+
+  // Cập nhật phương thức refresh cookies
+  async refreshCookies(profileId = null) {
+    let browser;
+    try {
+      console.log(`🌐 Khởi động Chrome với profile: ${profileId || 'default'}`);
+      browser = await this.chromeManager.getBrowser(profileId);
+      const page = await browser.newPage();
+      
+      console.log(`📝 Truy cập Drive để lấy cookies mới...`);
+      await page.goto('https://drive.google.com', {
+        waitUntil: 'networkidle0',
+        timeout: 30000
+      });
+
+      this.cookies = await page.cookies();
+      console.log(`✅ Đã lấy ${this.cookies.length} cookies mới`);
+      return true;
+    } catch (error) {
+      console.error('❌ Lỗi refresh cookies:', error.message);
+      return false;
+    } finally {
+      if (browser) {
+        await browser.close();
+      }
+    }
+  }
+
+  // Thêm phương thức refresh URL video
+  async refreshVideoUrl(fileId, fileName, depth) {
+    try {
+      return await this.findVideoUrl(fileId, fileName, depth);
+    } catch (error) {
+      console.error('❌ Lỗi refresh URL video:', error.message);
+      return null;
     }
   }
 
@@ -630,7 +676,7 @@ class VideoHandler {
     }
   }
 
-  async downloadToLocal(fileId, fileName, targetDir, depth = 0) {
+  async downloadToLocal(fileId, fileName, targetDir, depth = 0, profileId = null) {
     const indent = "  ".repeat(depth);
     let browser;
 
@@ -652,7 +698,7 @@ class VideoHandler {
       }
 
       // Tìm URL video với phương thức findVideoUrl
-      const videoUrl = await this.findVideoUrl(fileId, fileName, depth);
+      const videoUrl = await this.findVideoUrl(fileId, fileName, depth, profileId);
       
       if (!videoUrl) {
         throw new Error('Không tìm thấy URL video');
@@ -660,7 +706,7 @@ class VideoHandler {
 
       // Tải video về
       console.log(`${indent}📥 Bắt đầu tải: ${safeFileName}`);
-      await this.downloadVideoWithChunks(videoUrl, outputPath);
+      await this.downloadVideoWithChunks(videoUrl, outputPath, depth, fileId, fileName, profileId);
       
       console.log(`${indent}✅ Đã tải xong: ${safeFileName}`);
       return { success: true, filePath: outputPath };
