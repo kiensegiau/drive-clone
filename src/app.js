@@ -65,11 +65,27 @@ async function main() {
       console.log(`📂 Tên folder: ${folderName}`);
     }
 
+    // Thêm retry logic
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000;
+
+    async function withRetry(fn) {
+      for (let i = 0; i < MAX_RETRIES; i++) {
+        try {
+          return await fn();
+        } catch (error) {
+          if (i === MAX_RETRIES - 1) throw error;
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+        }
+      }
+    }
+
     switch(choice) {
       case '1':
-        // Kiểm tra chất lượng
         console.log(`\n🚀 Bắt đầu quét folder...`);
-        const results = await checker.checkFolderVideoQuality(folderId);
+        const results = await withRetry(() => 
+          checker.checkFolderVideoQuality(folderId)
+        );
 
         // In kết quả tổng quan
         console.log('\n📊 Kết quả tổng quan:');
@@ -89,9 +105,10 @@ async function main() {
         break;
 
       case '2':
-        // Sao chép folder
         console.log('\n🚀 Bắt đầu sao chép folder...');
-        await checker.copyToBackupFolder(folderId);
+        await withRetry(() => 
+          checker.copyToBackupFolder(folderId)
+        );
         break;
 
       default:
