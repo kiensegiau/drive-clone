@@ -297,134 +297,97 @@ class VideoHandler {
   async downloadVideoWithChunks(url, outputPath, depth = 0, fileId, fileName, profileId = null) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
-    const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+    const CHUNK_SIZE = 5 * 1024 * 1024; // Giảm xuống 5MB mỗi chunk
+    const MAX_CONCURRENT_CHUNKS = 8; // Tăng số lượng chunks đồng thời
+    const PROGRESS_INTERVAL = 1000; // Update progress mỗi 1s
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       let browser;
       try {
-        console.log(`${indent}📥 Bắt đầu tải video...`);
-
-        // Lấy session mới từ Chrome
-        console.log(`${indent}🔄 Khởi tạo session mới...`);
+        // Tối ưu phần lấy headers
         browser = await this.chromeManager.getBrowser(profileId);
         const page = await browser.newPage();
+        await page.setRequestInterception(true);
+        page.on('request', r => r.continue());
         
-        // Truy cập trang video để lấy session
-        await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-          waitUntil: 'networkidle0',
-          timeout: 30000
-        });
-
-        // Lấy tất cả cookies và headers cần thiết
         const cookies = await page.cookies();
-        const localStorage = await page.evaluate(() => Object.entries(window.localStorage));
-        
-        // Lấy XSRF token và session ID nếu có
-        let xsrfToken = '';
-        let sessionId = '';
-        for (const [key, value] of localStorage) {
-          if (key.includes('token')) xsrfToken = value;
-          if (key.includes('session')) sessionId = value;
-        }
-
-        // Tạo headers đầy đủ
         const headers = {
+          'Cookie': cookies.map(c => `${c.name}=${c.value}`).join('; '),
           'User-Agent': await page.evaluate(() => navigator.userAgent),
           'Accept': '*/*',
           'Accept-Encoding': 'gzip, deflate, br',
-          'Connection': 'keep-alive',
-          'Cookie': cookies.map(c => `${c.name}=${c.value}`).join('; '),
-          'Referer': `https://drive.google.com/file/d/${fileId}/view`,
-          'Origin': 'https://drive.google.com',
-          'Sec-Fetch-Dest': 'video',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-site',
-          'Authorization': `Bearer ${xsrfToken}`,
-          'X-Drive-First-Party': '1',
-          'X-Client-Data': await page.evaluate(() => {
-            const data = window.chrome?.loadTimes?.();
-            return data ? btoa(JSON.stringify(data)) : '';
-          })
+          'Connection': 'keep-alive'
         };
 
-        if (sessionId) {
-          headers['X-Session-Id'] = sessionId;
-        }
+        // Kiểm tra URL nhanh
+        const headResponse = await axios.head(url, { headers, timeout: 5000 });
+        const totalSize = parseInt(headResponse.headers['content-length'], 10);
+        const chunks = Math.ceil(totalSize / CHUNK_SIZE);
 
-        // Thử HEAD request với headers mới
-        try {
-          const headResponse = await axios.head(url, { headers });
-          console.log(`${indent}✅ Kiểm tra URL thành công:`, {
-            status: headResponse.status,
-            contentType: headResponse.headers['content-type'],
-            contentLength: headResponse.headers['content-length']
-          });
-        } catch (headError) {
-          throw new Error(`Không thể truy cập URL: ${headError.message}`);
-        }
+        console.log(`${indent}📦 ${(totalSize / (1024 * 1024)).toFixed(2)}MB | ${chunks} chunks x ${(CHUNK_SIZE / (1024 * 1024)).toFixed(2)}MB`);
 
-        // Tải video với headers mới
-        console.log(`${indent}📥 Bắt đầu tải với session mới...`);
-        const response = await axios({
-          method: 'get',
-          url: url,
-          headers: headers,
-          responseType: 'stream',
-          maxRedirects: 5,
-          timeout: 60000
-        });
+        // Tạo file trống
+        await fs.promises.writeFile(outputPath, Buffer.alloc(totalSize));
 
-        // Xử lý download stream
-        const totalSize = parseInt(response.headers['content-length'], 10);
-        const writer = fs.createWriteStream(outputPath);
         let downloadedSize = 0;
-        let lastLogTime = Date.now();
+        const startTime = Date.now();
+        let lastLog = startTime;
 
-        await new Promise((resolve, reject) => {
-          response.data.pipe(writer);
+        // Tạo progress logger
+        const progressInterval = setInterval(() => {
+          const progress = (downloadedSize / totalSize * 100).toFixed(1);
+          const speed = (downloadedSize / 1024 / 1024 / ((Date.now() - startTime) / 1000)).toFixed(2);
+          console.log(`${indent}⏳ ${progress}% | ${speed} MB/s`);
+        }, PROGRESS_INTERVAL);
 
-          response.data.on('data', (chunk) => {
-            downloadedSize += chunk.length;
-            const now = Date.now();
-            if (now - lastLogTime > 2000) {
-              const progress = (downloadedSize / totalSize * 100).toFixed(2);
-              const speed = (downloadedSize / 1024 / 1024 / ((now - lastLogTime) / 1000)).toFixed(2);
-              console.log(`${indent}⏳ Đã tải: ${progress}% (${speed} MB/s)`);
-              lastLogTime = now;
+        try {
+          // Tải chunks với concurrency cao hơn
+          const chunkPromises = [];
+          for (let i = 0; i < chunks; i++) {
+            const start = i * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
+            
+            chunkPromises.push((async () => {
+              const response = await axios({
+                method: 'get',
+                url,
+                headers: { ...headers, Range: `bytes=${start}-${end}` },
+                responseType: 'arraybuffer',
+                timeout: 10000
+              });
+
+              await fs.promises.writeFile(outputPath, response.data, {
+                flag: 'r+',
+                encoding: null,
+                start
+              });
+
+              downloadedSize += response.data.length;
+            })());
+
+            // Xử lý theo batch để kiểm soát memory
+            if (chunkPromises.length >= MAX_CONCURRENT_CHUNKS || i === chunks - 1) {
+              await Promise.all(chunkPromises);
+              chunkPromises.length = 0;
             }
-          });
+          }
+        } finally {
+          clearInterval(progressInterval);
+        }
 
-          writer.on('finish', resolve);
-          writer.on('error', reject);
-          response.data.on('error', reject);
-        });
-
-        console.log(`${indent}✅ Tải thành công!`);
+        const totalTime = (Date.now() - startTime) / 1000;
+        console.log(`${indent}✅ Hoàn thành! ${(totalSize / 1024 / 1024 / totalTime).toFixed(2)} MB/s`);
         return;
 
       } catch (error) {
-        console.error(`${indent}❌ Lỗi tải video (lần ${attempt}/${MAX_RETRIES}):`, {
-          message: error.message,
-          status: error.response?.status,
-          headers: error.response?.headers
-        });
-
-        // Xóa file không hoàn chỉnh
-        if (fs.existsSync(outputPath)) {
-          fs.unlinkSync(outputPath);
-        }
-
         if (attempt < MAX_RETRIES) {
-          console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
-          await new Promise(r => setTimeout(r, 5000));
+          console.log(`${indent}🔄 Thử lại (${attempt}/${MAX_RETRIES})...`);
+          await new Promise(r => setTimeout(r, 2000));
           continue;
         }
-
         throw error;
       } finally {
-        if (browser) {
-          await browser.close();
-        }
+        if (browser) await browser.close();
       }
     }
   }
