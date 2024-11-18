@@ -8,23 +8,19 @@ const ProcessLogger = require('../utils/ProcessLogger');
 const { getLongPath } = require('../utils/pathUtils');
 
 class PDFDownloader {
-  constructor(driveAPI, processLogger = null) {
-    this.browser = null;
-    this.page = null;
-    this.outputDir = path.join(__dirname, "output");
-    this.tempDir = getLongPath(path.join(__dirname, "temp"));
+  constructor(driveAPI, tempDir, processLogger) {
+    this.driveAPI = driveAPI;
+    this.tempDir = tempDir;
+    this.processLogger = processLogger;
     this.pageRequests = new Map();
     this.cookies = null;
     this.userAgent = null;
-    this.driveAPI = driveAPI;
-    this.chromeManager = ChromeManager.getInstance();
-    this.processLogger = processLogger || new ProcessLogger();
+    this.browser = null;
+    this.page = null;
+    this.chromeManager = new ChromeManager();
     
-    [this.outputDir, this.tempDir].forEach((dir) => {
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-    });
+    // Đảm bảo downloadOnly được set từ driveAPI
+    console.log(`📥 PDF Downloader mode: ${driveAPI.downloadOnly ? 'download only' : 'download & upload'}`);
   }
 
   async downloadPDF(fileId, fileName, targetFolderId, profileId = null) {
@@ -152,7 +148,20 @@ class PDFDownloader {
                 console.log(`\n✅ Tải PDF hoàn tất!`);
                 const stats = await fs.promises.stat(outputPath);
                 const processedSize = stats.size;
+
+                // Kiểm tra mode download only
+                if (this.driveAPI.downloadOnly) {
+                  console.log(`✅ Đã lưu PDF vào: ${outputPath}`);
+                  resolve({
+                    success: true,
+                    filePath: outputPath,
+                    originalSize,
+                    processedSize
+                  });
+                  return;
+                }
                 
+                // Nếu là mode upload, tiếp tục upload file
                 console.log(`\n📤 Đang upload lên Drive...`);
                 let uploadAttempt = 0;
                 let uploadedFile = null;
@@ -307,11 +316,13 @@ class PDFDownloader {
       const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
       console.log(`\n📦 File PDF đã tạo: ${fileSizeMB}MB`);
 
-      // Chỉ upload nếu không phải mode download only
-      if (!this.driveAPI.downloadOnly && targetFolderId) {
+      // Sửa lại phần kiểm tra downloadOnly
+      if (this.driveAPI?.downloadOnly === false && targetFolderId) {
         console.log(`\n📤 Đang upload lên Drive...`);
         await this.driveAPI.uploadFile(outputPath, targetFolderId);
         console.log(`✨ Upload hoàn tất!`);
+      } else {
+        console.log(`✅ Đã lưu PDF vào: ${outputPath}`);
       }
 
       return {

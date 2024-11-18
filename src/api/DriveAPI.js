@@ -266,10 +266,32 @@ class DriveAPI {
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
 
-      // Tạo folder tương ứng trong thư mục đích
-      const currentFolderPath = getLongPath(path.join(targetPath, folderName));
-      if (!fs.existsSync(currentFolderPath)) {
-        fs.mkdirSync(currentFolderPath, { recursive: true });
+      // Tạo đường dẫn đầy đủ và xử lý long path
+      let currentFolderPath = path.join(targetPath, folderName);
+      if (currentFolderPath.length > 260) {
+        currentFolderPath = getLongPath(currentFolderPath);
+        console.log(`${indent}⚠️ Đường dẫn dài, sử dụng long path`);
+      }
+      
+      // Nếu là chế độ download, tạo folder local
+      if (this.downloadOnly) {
+        try {
+          if (!fs.existsSync(currentFolderPath)) {
+            fs.mkdirSync(currentFolderPath, { recursive: true });
+            console.log(`${indent}📁 Đã tạo folder: ${path.basename(currentFolderPath)}`);
+          }
+        } catch (mkdirError) {
+          if (mkdirError.code === 'ENAMETOOLONG') {
+            console.error(`${indent}❌ Tên folder quá dài: ${folderName}`);
+            // Rút gọn tên folder nếu cần
+            const shortFolderName = folderName.substring(0, 100) + '...';
+            currentFolderPath = getLongPath(path.join(targetPath, shortFolderName));
+            fs.mkdirSync(currentFolderPath, { recursive: true });
+            console.log(`${indent}📁 Đã tạo folder (rút gọn): ${shortFolderName}`);
+          } else {
+            throw mkdirError;
+          }
+        }
       }
 
       // Lấy danh sách files trong folder
@@ -285,19 +307,38 @@ class DriveAPI {
       for (const file of files) {
         try {
           if (file.mimeType === "application/vnd.google-apps.folder") {
-            // Xử lý folder con
             await this.processFolder(file.id, currentFolderPath, depth + 1);
           } else {
-            // Xử lý file
+            // Xử lý tên file dài
+            let fileName = file.name;
+            if (path.join(currentFolderPath, fileName).length > 260) {
+              const ext = path.extname(fileName);
+              const baseName = path.basename(fileName, ext);
+              fileName = baseName.substring(0, 100) + '...' + ext;
+              console.log(`${indent}⚠️ Rút gọn tên file: ${fileName}`);
+            }
+
             if (file.mimeType.includes("video")) {
               const videoHandler = new VideoHandler();
-              // Sử dụng downloadToLocal thay vì processVideo
-              await videoHandler.downloadToLocal(file.id, file.name, currentFolderPath, depth);
+              await videoHandler.downloadToLocal(
+                file.id, 
+                fileName,
+                currentFolderPath,
+                depth
+              );
             } else if (file.mimeType.includes("pdf")) {
               const pdfDownloader = new PDFDownloader(this);
-              await pdfDownloader.downloadPDF(file.id, file.name, currentFolderPath);
+              await pdfDownloader.downloadToLocal(
+                file.id, 
+                fileName,
+                currentFolderPath
+              );
             } else {
-              await this.downloadFile(file.id, file.name, currentFolderPath);
+              await this.downloadFile(
+                file.id, 
+                fileName,
+                currentFolderPath
+              );
             }
           }
         } catch (error) {

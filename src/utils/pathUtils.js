@@ -1,19 +1,13 @@
 const path = require('path');
 
-function getLongPath(filePath) {
+function getLongPath(path) {
   if (process.platform === 'win32') {
-    // Kiểm tra nếu đã có prefix
-    if (filePath.startsWith('\\\\?\\')) {
-      return filePath;
+    // Thêm prefix \\?\ cho Windows để hỗ trợ đường dẫn dài
+    if (!path.startsWith('\\\\?\\')) {
+      path = '\\\\?\\' + path;
     }
-    const absolutePath = path.resolve(filePath);
-    // Thêm kiểm tra độ dài
-    if (absolutePath.length > 260) {
-      return `\\\\?\\${absolutePath}`;
-    }
-    return absolutePath;
   }
-  return filePath;
+  return path;
 }
 
 module.exports = { getLongPath }; 
