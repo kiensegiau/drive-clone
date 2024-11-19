@@ -19,7 +19,7 @@ class VideoHandler {
       this.MAX_RETRIES = 5;
       this.RETRY_DELAY = 2000;
       this.activeDownloads = 0;
-      this.MAX_CONCURRENT_DOWNLOADS = 32;
+      this.MAX_CONCURRENT_DOWNLOADS = 3;
       this.downloadQueue = [];
       this.videoQueue = [];
       this.processingVideo = false;
@@ -27,6 +27,7 @@ class VideoHandler {
       this.cookies = null;
       this.chromeManager = ChromeManager.getInstance();
       this.processLogger = new ProcessLogger();
+      this.queue = [];
       
       // Sử dụng oAuth2Client được truyền vào
       this.oAuth2Client = oAuth2Client;
@@ -995,6 +996,59 @@ class VideoHandler {
       // Thêm các itag khác nếu cần
     };
     return qualityMap[itag] || 0;
+  }
+
+  addToQueue(videoInfo) {
+    console.log(`📝 Thêm vào queue: ${videoInfo.fileName}`);
+    this.queue.push(videoInfo);
+  }
+
+  // Thêm phương thức mới để xử lý song song
+  async processQueueConcurrently() {
+    console.log(`\n🎬 Bắt đầu xử lý ${this.queue.length} videos (${this.MAX_CONCURRENT_DOWNLOADS} videos song song)`);
+    
+    // Tạo mảng promises để theo dõi các download đang chạy
+    const downloadPromises = [];
+    
+    // Xử lý từng video trong queue
+    while (this.queue.length > 0 || downloadPromises.length > 0) {
+      // Thêm download mới nếu còn slot và còn video trong queue
+      while (this.queue.length > 0 && downloadPromises.length < this.MAX_CONCURRENT_DOWNLOADS) {
+        const videoInfo = this.queue.shift();
+        const downloadPromise = this.processVideoDownload(videoInfo)
+          .finally(() => {
+            // Xóa promise khỏi mảng khi hoàn thành
+            const index = downloadPromises.indexOf(downloadPromise);
+            if (index > -1) {
+              downloadPromises.splice(index, 1);
+            }
+          });
+        downloadPromises.push(downloadPromise);
+      }
+      
+      // Đợi ít nhất một download hoàn thành trước khi tiếp tục
+      if (downloadPromises.length > 0) {
+        await Promise.race(downloadPromises);
+      }
+    }
+    
+    console.log('✅ Đã xử lý xong tất cả videos trong queue');
+  }
+
+  async processVideoDownload(videoInfo) {
+    const { fileId, fileName, targetPath, depth } = videoInfo;
+    try {
+      console.log(`🎥 Bắt đầu tải: ${fileName}`);
+      await this.downloadToLocal(fileId, fileName, targetPath, depth);
+      console.log(`✅ Hoàn thành: ${fileName}`);
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý video ${fileName}:`, error.message);
+    }
+  }
+
+  // Thay thế phương thức processQueue cũ
+  async processQueue() {
+    return this.processQueueConcurrently();
   }
 }
 

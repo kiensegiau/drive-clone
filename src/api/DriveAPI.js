@@ -38,6 +38,8 @@ class DriveAPI {
 
       this.oauth2Client = null;
       this.drive = null;
+      this.processedFiles = 0;
+      this.totalSize = 0;
     } catch (error) {
       console.error("❌ Lỗi khởi tạo:", error);
       throw error;
@@ -256,7 +258,7 @@ class DriveAPI {
       console.log(`📄 Không tìm thy file: "${name}"`);
       return null;
     } catch (error) {
-      console.error(`❌ Lỗi khi tìm file "${name}":`, error.message);
+      console.error(` Lỗi khi tìm file "${name}":`, error.message);
       throw error;
     }
   }
@@ -264,22 +266,19 @@ class DriveAPI {
   async processFolder(sourceFolderId, targetPath, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      // Lấy tên folder và chỉ loại bỏ ký tự không hợp lệ
+      // Lấy thông tin folder hiện tại
       const folderName = await this.getFolderName(sourceFolderId);
-      const safeFolderName = sanitizePath(folderName);
-      
-      // Tạo đường dẫn đầy đủ với long path
-      const currentFolderPath = getLongPath(path.join(targetPath, safeFolderName));
-      
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
-      console.log(`${indent}📂 Đường dẫn: ${currentFolderPath}`);
 
-      // Tạo thư mục
+      // Tạo đường dẫn folder hiện tại
+      const currentFolderPath = depth === 0 ? targetPath : path.join(targetPath, sanitizePath(folderName));
+      
+      // Tạo thư mục nếu chưa tồn tại
       if (!fs.existsSync(currentFolderPath)) {
         fs.mkdirSync(currentFolderPath, { recursive: true });
       }
 
-      // Lấy danh sách files và folders
+      // Lấy danh sách files trong folder
       const response = await this.drive.files.list({
         q: `'${sourceFolderId}' in parents and trashed=false`,
         fields: "files(id, name, mimeType)",
@@ -288,54 +287,64 @@ class DriveAPI {
       });
 
       const files = response.data.files;
-      console.log(`${indent}📊 Tổng số files/folders: ${files.length}`);
-
-      // Phân loại files
-      const folders = files.filter(f => f.mimeType === 'application/vnd.google-apps.folder');
-      const videoFiles = files.filter(f => f.mimeType.includes('video'));
-      const pdfFiles = files.filter(f => f.mimeType.includes('pdf'));
-      const otherFiles = files.filter(f => 
-        !f.mimeType.includes('folder') && 
-        !f.mimeType.includes('video') && 
-        !f.mimeType.includes('pdf')
-      );
+      const { videoFiles, pdfFiles, otherFiles, folders } = this.categorizeFiles(files);
 
       // Log thống kê
-      console.log(`${indent}📊 Phân loại files:`);
-      console.log(`${indent}  - Folders: ${folders.length}`);
+      console.log(`${indent}📊 Tổng số files: ${files.length}`);
       console.log(`${indent}  - Videos: ${videoFiles.length}`);
       console.log(`${indent}  - PDFs: ${pdfFiles.length}`);
       console.log(`${indent}  - Others: ${otherFiles.length}`);
+      console.log(`${indent}  - Folders: ${folders.length}`);
 
-      // Xử lý đệ quy các folders con trước
+      // Xử lý videos
+      if (videoFiles.length > 0) {
+        console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
+        const videoHandler = new VideoHandler(this.oauth2Client);
+        
+        // Thêm tất cả videos vào queue
+        for (const file of videoFiles) {
+          const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+          videoHandler.addToQueue({
+            fileId: file.id,
+            fileName: file.name,
+            targetPath: currentFolderPath,
+            depth
+          });
+        }
+        
+        try {
+          // Xử lý queue với tải song song
+          await videoHandler.processQueue();
+        } catch (error) {
+          console.error(`${indent}❌ Lỗi xử lý queue videos:`, error.message);
+        }
+      }
+
+      // Xử lý PDFs
+      for (const file of pdfFiles) {
+        const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+        await this.downloadFile(file.id, outputPath);
+      }
+
+      // Xử lý other files
+      for (const file of otherFiles) {
+        const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+        await this.downloadFile(file.id, outputPath);
+      }
+
+      // Xử lý folders con
       for (const folder of folders) {
         await this.processFolder(folder.id, currentFolderPath, depth + 1);
       }
 
-      // Xử lý các files
-      for (const file of videoFiles) {
-        console.log(`${indent}🎥 Xử lý video: ${file.name}`);
-        const videoHandler = new VideoHandler(this.oauth2Client);
-        const outputPath = getLongPath(path.join(currentFolderPath, sanitizePath(file.name)));
-        await videoHandler.downloadToLocal(file.id, file.name, outputPath, depth);
-      }
-
-      // Tương tự cho PDF và other files
-      for (const file of pdfFiles) {
-        console.log(`${indent}📄 Xử lý PDF: ${file.name}`);
-        const pdfDownloader = new PDFDownloader(this);
-        const outputPath = getLongPath(path.join(currentFolderPath, sanitizePath(file.name)));
-        await pdfDownloader.downloadToLocal(file.id, file.name, outputPath);
-      }
-
-      for (const file of otherFiles) {
-        console.log(`${indent}📁 Xử lý file: ${file.name}`);
-        const outputPath = getLongPath(path.join(currentFolderPath, sanitizePath(file.name)));
-        await this.downloadFile(file.id, file.name, outputPath);
-      }
-
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
+      if (error.code === 'ENOENT') {
+        console.error(`${indent}❌ Không thể tạo thư mục: ${error.path}`);
+      } else if (error.code === 'EACCES') {
+        console.error(`${indent}❌ Không có quyền truy cập: ${error.path}`);
+      } else {
+        console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
+      }
       throw error;
     }
   }
@@ -354,87 +363,33 @@ class DriveAPI {
     };
   }
 
-  async downloadFile(fileId, fileName, targetDir) {
+  async downloadFile(fileId, outputPath) {
     const MAX_RETRIES = 3;
     let retryCount = 0;
 
     while (retryCount < MAX_RETRIES) {
       try {
-        console.log(`📥 Tải file: ${fileName}`);
+        console.log(`📥 Tải file: ${path.basename(outputPath)}`);
 
-        // Tạo thư mục đích nếu chưa tồn tại
-        if (!fs.existsSync(targetDir)) {
-          fs.mkdirSync(targetDir, { recursive: true });
+        // Tạo thư mục cha nếu chưa tồn tại
+        const parentDir = path.dirname(outputPath);
+        if (!fs.existsSync(parentDir)) {
+          fs.mkdirSync(parentDir, { recursive: true });
         }
 
-        // Tạo đường dẫn file an toàn
-        let safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
-        let outputPath = path.join(targetDir, safeFileName);
+        const response = await this.drive.files.get(
+          { fileId, alt: "media" },
+          { responseType: "stream" }
+        );
 
-        // Lấy thông tin file
-        const fileMetadata = await this.drive.files.get({
-          fileId: fileId,
-          fields: "mimeType",
-          supportsAllDrives: true,
-        });
-
-        const mimeType = fileMetadata.data.mimeType;
-
-        // Xử lý Google Workspace files
-        if (mimeType.includes("application/vnd.google-apps")) {
-          let exportMimeType;
-          let extension;
-
-          switch (mimeType) {
-            case "application/vnd.google-apps.document":
-              exportMimeType = "application/pdf";
-              extension = ".pdf";
-              break;
-            case "application/vnd.google-apps.spreadsheet":
-              exportMimeType =
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-              extension = ".xlsx";
-              break;
-            case "application/vnd.google-apps.presentation":
-              exportMimeType = "application/pdf";
-              extension = ".pdf";
-              break;
-            case "application/vnd.google-apps.folder":
-              // Bỏ qua folders
-              return null;
-            default:
-              exportMimeType = "application/pdf";
-              extension = ".pdf";
-          }
-
-          // Thêm extension nếu cần
-          if (!outputPath.endsWith(extension)) {
-            outputPath = `${outputPath}${extension}`;
-          }
-
-          // Export file
-          const response = await this.drive.files.export(
-            {
-              fileId: fileId,
-              mimeType: exportMimeType,
-            },
-            {
-              responseType: "stream",
-            }
-          );
-
-          await this.saveResponseToFile(response, outputPath);
-        } else {
-          // Download file thường
-          const response = await this.drive.files.get(
-            { fileId, alt: "media" },
-            { responseType: "stream" }
-          );
-
-          await this.saveResponseToFile(response, outputPath);
-        }
-
+        await this.saveResponseToFile(response, outputPath);
         console.log(`✅ Đã tải xong: ${path.basename(outputPath)}`);
+
+        // Update stats
+        this.processedFiles++;
+        const stats = fs.statSync(outputPath);
+        this.totalSize += stats.size;
+
         return outputPath;
       } catch (error) {
         retryCount++;
