@@ -19,7 +19,7 @@ class DriveAPI {
       // Tạo đường dẫn thư mục downloads
       const homeDir = require("os").homedir();
       this.BASE_DIR = getLongPath(
-        path.join(homeDir, "Downloads", "drive-clone")
+        path.join("G:", "My Drive", "drive-clone")
       );
 
       // Log để debug
@@ -270,10 +270,12 @@ class DriveAPI {
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
 
-      // Tạo đường dẫn folder hiện tại
-      const currentFolderPath = depth === 0 ? targetPath : path.join(targetPath, sanitizePath(folderName));
+      // Tạo đường dẫn folder hiện tại với xử lý đường dẫn dài
+      const currentFolderPath = depth === 0 
+        ? targetPath 
+        : getLongPath(path.join(targetPath, sanitizePath(folderName)));
       
-      // Tạo thư mục nếu chưa tồn tại
+      // Tạo thư mục với đường dẫn dài
       if (!fs.existsSync(currentFolderPath)) {
         fs.mkdirSync(currentFolderPath, { recursive: true });
       }
@@ -301,19 +303,22 @@ class DriveAPI {
         console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
         const videoHandler = new VideoHandler(this.oauth2Client);
         
-        // Thêm tất cả videos vào queue
         for (const file of videoFiles) {
-          const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
-          videoHandler.addToQueue({
-            fileId: file.id,
-            fileName: file.name,
-            targetPath: currentFolderPath,
-            depth
-          });
+          try {
+            const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+            videoHandler.addToQueue({
+              fileId: file.id,
+              fileName: file.name,
+              targetPath: currentFolderPath,
+              depth
+            });
+          } catch (error) {
+            console.error(`${indent}❌ Lỗi thêm video ${file.name} vào queue:`, error.message);
+            continue;
+          }
         }
         
         try {
-          // Xử lý queue với tải song song
           await videoHandler.processQueue();
         } catch (error) {
           console.error(`${indent}❌ Lỗi xử lý queue videos:`, error.message);
@@ -341,24 +346,27 @@ class DriveAPI {
 
       // Xử lý other files
       for (const file of otherFiles) {
-        const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
-        await this.downloadFile(file.id, outputPath);
+        try {
+          const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+          await this.downloadFile(file.id, outputPath);
+        } catch (error) {
+          console.error(`${indent}❌ Lỗi tải file ${file.name}:`, error.message);
+          continue;
+        }
       }
 
       // Xử lý folders con
       for (const folder of folders) {
-        await this.processFolder(folder.id, currentFolderPath, depth + 1);
+        try {
+          await this.processFolder(folder.id, currentFolderPath, depth + 1);
+        } catch (error) {
+          console.error(`${indent}❌ Lỗi xử lý folder ${folder.name}:`, error.message);
+          continue;
+        }
       }
 
     } catch (error) {
-      if (error.code === 'ENOENT') {
-        console.error(`${indent}❌ Không thể tạo thư mục: ${error.path}`);
-      } else if (error.code === 'EACCES') {
-        console.error(`${indent}❌ Không có quyền truy cập: ${error.path}`);
-      } else {
-        console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
-      }
-      throw error;
+      console.error(`${indent}❌ Lỗi trong quá trình xử lý folder:`, error.message);
     }
   }
 

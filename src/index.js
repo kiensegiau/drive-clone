@@ -109,8 +109,8 @@ async function main(folderUrl) {
     // Chọn mode
     const choice = await askQuestion(
       "\n📋 Chọn chế độ:\n" +
-      "1. Tải và upload lên Drive\n" +
-      "2. Tải về máy tính\n" +
+      "1. Tải và upload lên Drive qua API\n" +
+      "2. Tải và upload qua Drive Desktop\n" +
       "Lựa chọn của bạn (1/2): "
     );
     
@@ -122,7 +122,7 @@ async function main(folderUrl) {
     
     if (isDownloadMode) {
       const homeDir = require('os').homedir();
-      const defaultPath = getLongPath(path.join(homeDir, 'Documents', 'drive-clone-downloads'));
+      const defaultPath = getLongPath(path.join(homeDir, 'my-drive', 'drive-clone'));
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
       
       const confirm = await askQuestion("\nBạn có muốn tiếp tục không? (y/n): ");

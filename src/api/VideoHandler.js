@@ -230,7 +230,7 @@ class VideoHandler {
     const outputPath = getLongPath(path.join(this.TEMP_DIR, safeFileName));
 
     try {
-      console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
+      console.log(`${indent}📥 Bắt đ��u tải: ${file.name}`);
 
       // Tải video với chunks
       await this.downloadVideoWithChunks(videoUrl, outputPath);
@@ -993,7 +993,6 @@ class VideoHandler {
     
     console.log('✅ Đã xử lý xong tất cả videos trong queue');
   }
-
   async processVideoDownload(videoInfo) {
     const { fileId, fileName, targetPath, depth } = videoInfo;
     const tempFiles = [];
@@ -1011,25 +1010,60 @@ class VideoHandler {
       // Đường dẫn đích cuối cùng trong thư mục đích
       const finalPath = path.join(targetPath, safeFileName);
       
-      // Tạo thư mục đích nếu chưa tồn tại
-      if (!fs.existsSync(path.dirname(finalPath))) {
-        fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+      try {
+        // Tạo thư mục đích nếu chưa tồn tại
+        if (!fs.existsSync(path.dirname(finalPath))) {
+          fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+        }
+      } catch (mkdirError) {
+        console.error(`❌ Không thể tạo thư mục đích: ${path.dirname(finalPath)}`, mkdirError.message);
+        return;
       }
 
-      // Tải video vào thư mục tạm
-      await this.downloadVideoWithChunks(
-        null, 
-        tempPath,
-        depth,
-        fileId,
-        fileName
-      );
+      try {
+        // Tải video vào thư mục tạm
+        await this.downloadVideoWithChunks(
+          null, 
+          tempPath,
+          depth,
+          fileId,
+          fileName
+        );
+      } catch (downloadError) {
+        console.error(`❌ Lỗi tải video ${fileName}:`, downloadError.message);
+        return;
+      }
 
       // Di chuyển từ thư mục tạm sang thư mục đích
       if (fs.existsSync(tempPath)) {
-        console.log(`📦 Di chuyển video vào thư mục đích: ${finalPath}`);
-        await fs.promises.rename(tempPath, finalPath);
-        console.log(`✅ Hoàn thành: ${fileName}`);
+        console.log(`📦 Copy video vào thư mục đích: ${finalPath}`);
+        
+        try {
+          // Tạo read stream và write stream
+          const readStream = fs.createReadStream(tempPath);
+          const writeStream = fs.createWriteStream(finalPath);
+          
+          // Copy file bằng stream
+          await new Promise((resolve, reject) => {
+              readStream.pipe(writeStream)
+                  .on('finish', () => {
+                      // Xóa file tạm sau khi copy xong
+                      fs.unlink(tempPath, (err) => {
+                          if (err) console.warn(`⚠️ Không thể xóa file tạm: ${tempPath}`);
+                          resolve();
+                      });
+                  })
+                  .on('error', (err) => {
+                    console.error(`❌ Lỗi copy file: ${err.message}`);
+                    reject(err);
+                  });
+          });
+          
+          console.log(`✅ Đã copy xong video`);
+        } catch (copyError) {
+          console.error(`❌ Lỗi copy video ${fileName}:`, copyError.message);
+          return;
+        }
       }
 
     } catch (error) {

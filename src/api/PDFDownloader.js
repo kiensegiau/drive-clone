@@ -72,10 +72,11 @@ class PDFDownloader {
       const result = await this.downloadFromDriveAPI(fileId, tempPath);
       
       if (result.success) {
-        // Di chuyển từ thư mục tạm sang thư mục đích
+        // Thay thế rename bằng copy + unlink
         if (fs.existsSync(tempPath)) {
-          console.log(`📦 Di chuyển PDF vào thư mục đích: ${finalPath}`);
-          await fs.promises.rename(tempPath, finalPath);
+          console.log(`📦 Copy PDF vào thư mục đích: ${finalPath}`);
+          await fs.promises.copyFile(tempPath, finalPath);
+          await fs.promises.unlink(tempPath); // Xóa file tạm sau khi copy
           console.log(`✅ Hoàn thành: ${fileName}`);
         }
       }
