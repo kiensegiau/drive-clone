@@ -1,4 +1,3 @@
-const { google } = require("googleapis");
 
 class VideoQualityChecker {
   constructor(oauth2Client, drive, processLogger) {
