@@ -73,6 +73,29 @@ async function cleanup() {
   }
 }
 
+// Cấu hình thư mục tải về
+const downloadConfig = {
+    baseDir: path.join(process.cwd(), 'downloads'),
+    videoDir: 'videos',
+    pdfDir: 'pdfs',
+    otherDir: 'others'
+};
+
+// Tạo các thư mục cần thiết
+async function initDownloadDirs() {
+    const dirs = [
+        downloadConfig.baseDir,
+        path.join(downloadConfig.baseDir, downloadConfig.videoDir),
+        path.join(downloadConfig.baseDir, downloadConfig.pdfDir),
+        path.join(downloadConfig.baseDir, downloadConfig.otherDir)
+    ];
+
+    for (const dir of dirs) {
+        await fs.mkdir(dir, { recursive: true });
+        console.log(`📁 Đã tạo thư mục: ${dir}`);
+    }
+}
+
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
