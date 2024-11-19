@@ -6,11 +6,14 @@ const axios = require("axios");
 const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require('../utils/ProcessLogger');
 const { getLongPath } = require('../utils/pathUtils');
+const os = require('os');
+const { sanitizePath } = require('../utils/pathUtils');
+
 
 class PDFDownloader {
   constructor(driveAPI, tempDir, processLogger) {
     this.driveAPI = driveAPI;
-    this.tempDir = tempDir;
+    this.tempDir = getLongPath(path.join(os.tmpdir(), 'drive-clone-pdfs'));
     this.processLogger = processLogger;
     this.pageRequests = new Map();
     this.cookies = null;
@@ -21,92 +24,98 @@ class PDFDownloader {
     
     // Đảm bảo downloadOnly được set từ driveAPI
     console.log(`📥 PDF Downloader mode: ${driveAPI.downloadOnly ? 'download only' : 'download & upload'}`);
+
+    // Tạo thư mục temp nếu chưa tồn tại
+    if (!fs.existsSync(this.tempDir)) {
+      fs.mkdirSync(this.tempDir, { recursive: true });
+    }
+
+    try {
+      if (!fs.existsSync(this.tempDir)) {
+        fs.mkdirSync(this.tempDir, { recursive: true });
+      }
+      // Kiểm tra quyền ghi
+      fs.accessSync(this.tempDir, fs.constants.W_OK);
+    } catch (error) {
+      console.error('❌ Không thể tạo/ghi vào thư mục temp:', error.message);
+      // Thử dùng thư mục temp khác
+      this.tempDir = getLongPath(path.join(process.cwd(), 'temp', 'drive-clone-pdfs'));
+      if (!fs.existsSync(this.tempDir)) {
+        fs.mkdirSync(this.tempDir, { recursive: true });
+      }
+    }
   }
 
-  async downloadPDF(fileId, fileName, targetFolderId, profileId = null) {
+  async downloadPDF(fileId, fileName, targetPath) {
     const startTime = new Date();
-    const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
-    const outputPath = getLongPath(path.join(this.tempDir, safeFileName));
-    let originalSize = 0;
-    let processedSize = 0;
-    let uploadedFile = null;
-    const tempFiles = [];
+    const safeFileName = sanitizePath(fileName);
+    
+    // Tạo đường dẫn đích cuối cùng trong thư mục đích
+    const finalPath = getLongPath(path.join(targetPath, safeFileName));
+    
+    // Kiểm tra file đã tồn tại
+    if (fs.existsSync(finalPath)) {
+      console.log(`⏩ File đã tồn tại, bỏ qua: ${fileName}`);
+      return { success: true, skipped: true, filePath: finalPath };
+    }
+
+    // Tạo đường dẫn tạm thời với timestamp
+    const tempPath = getLongPath(path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`));
+    const tempFiles = [tempPath];
 
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
-      const result = await this.downloadFromDriveAPI(fileId, outputPath, targetFolderId);
+      console.log(`📂 Thư mục đích: ${targetPath}`);
       
-      if (result && result.uploadedFile) {
-        try {
-          uploadedFile = result.uploadedFile;
-          originalSize = result.originalSize;
-          processedSize = result.processedSize;
-          
-          await this.processLogger.logProcess({
-            type: 'pdf',
-            fileName,
-            sourceId: fileId,
-            targetId: uploadedFile.id,
-            sourceUrl: `https://drive.google.com/file/d/${fileId}`,
-            targetUrl: `https://drive.google.com/file/d/${uploadedFile.id}`,
-            fileSize: {
-              original: originalSize,
-              processed: processedSize
-            },
-            method: 'api',
-            status: 'success',
-            duration: new Date() - startTime
-          });
-        } catch (logError) {
-          console.error('⚠️ Lỗi ghi log:', logError.message);
+      // Tạo thư mục đích nếu chưa tồn tại
+      const finalDir = path.dirname(finalPath);
+      if (!fs.existsSync(finalDir)) {
+        fs.mkdirSync(finalDir, { recursive: true });
+      }
+
+      // Tải PDF vào thư mục tạm
+      const result = await this.downloadFromDriveAPI(fileId, tempPath);
+      
+      if (result.success) {
+        // Thay thế rename bằng copy + unlink
+        if (fs.existsSync(tempPath)) {
+          console.log(`📦 Copy PDF vào thư mục đích: ${finalPath}`);
+          await fs.promises.copyFile(tempPath, finalPath);
+          await fs.promises.unlink(tempPath); // Xóa file tạm sau khi copy
+          console.log(`✅ Hoàn thành: ${fileName}`);
         }
       }
+
+      return { success: true, filePath: finalPath };
     } catch (error) {
-      if (error?.error?.code === 403 || error.message.includes("cannotDownloadFile")) {
-        try {
-          console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
-          return await this.captureAndCreatePDF(fileId, outputPath, targetFolderId);
-        } catch (captureError) {
-          console.error('❌ Lỗi capture PDF:', captureError.message);
-          throw captureError;
-        }
-      }
-      throw error;
+      console.error(`❌ Lỗi xử lý PDF:`, error.message);
+      return { success: false, error: error.message };
     } finally {
-      try {
-        if (this.browser) {
-          await this.browser.close();
-          this.browser = null;
-          console.log('🔒 Đã đóng Chrome');
+      // Cleanup temp files
+      for (const file of tempFiles) {
+        try {
+          if (fs.existsSync(file)) {
+            await fs.promises.unlink(file);
+            console.log(`🧹 Đã xóa file tạm: ${file}`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Không thể xóa file tạm: ${file}`);
         }
-      } catch (closeError) {
-        console.error('⚠️ Lỗi đóng Chrome:', closeError.message);
       }
     }
-
-    // Cleanup temp files
-    for (const file of tempFiles) {
-      try {
-        if (fs.existsSync(file)) {
-          await fs.promises.unlink(file);
-        }
-      } catch (error) {
-        console.warn(`⚠️ Không thể xóa file tạm: ${file}`);
-      }
-    }
-
-    return {
-      success: true,
-      filePath: outputPath,
-      method: "api",
-    };
   }
 
-  async downloadFromDriveAPI(fileId, outputPath, targetFolderId) {
+  async downloadFromDriveAPI(fileId, outputPath) {
     const MAX_UPLOAD_RETRIES = 5;
     const RETRY_DELAY = 5000;
 
     try {
+      // Đảm bảo thư mục chứa file đích tồn tại
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
+
       console.log(`\n📥 Bắt đầu tải PDF từ Drive API...`);
 
       const response = await this.driveAPI.drive.files.get(
@@ -168,7 +177,7 @@ class PDFDownloader {
 
                 while (uploadAttempt < MAX_UPLOAD_RETRIES) {
                   try {
-                    uploadedFile = await this.driveAPI.uploadFile(outputPath, targetFolderId);
+                    uploadedFile = await this.driveAPI.uploadFile(outputPath);
                     console.log(`✨ Upload hoàn tất!`);
                     
                     // Permission handling with retry
@@ -413,7 +422,14 @@ class PDFDownloader {
   async downloadImage(url, pageNum, cookies, userAgent, profileId) {
     const imagePath = getLongPath(path.join(this.tempDir, 
       `page_${profileId || 'default'}_${Date.now()}_${pageNum}.png`));
+    
     try {
+      // Đảm bảo thư mục tồn tại
+      const imageDir = path.dirname(imagePath);
+      if (!fs.existsSync(imageDir)) {
+        fs.mkdirSync(imageDir, { recursive: true });
+      }
+
       const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
       
       const response = await axios({
@@ -518,7 +534,7 @@ class PDFDownloader {
     try {
       console.log(`📑 Tải PDF: ${fileName}`);
       
-      const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
+      const safeFileName = sanitizePath(fileName);
       const outputPath = getLongPath(path.join(targetDir, safeFileName));
 
       // Thử tải qua API trước

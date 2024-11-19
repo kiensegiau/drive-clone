@@ -3,14 +3,41 @@ const VideoQualityChecker = require('./api/VideoQualityChecker');
 const readline = require('readline');
 
 function extractFolderId(input) {
-  if (input.includes('drive.google.com')) {
-    const match = input.match(/folders\/([a-zA-Z0-9\-_]+)/);
-    if (match && match[1]) {
-      return match[1];
-    }
-    throw new Error('Không thể trích xuất Folder ID từ URL');
+  // Nếu input đã là ID thuần túy (không chứa URL)
+  if (!input.includes('drive.google.com')) {
+    return input;
   }
-  return input;
+
+  // Xử lý các định dạng URL khác nhau
+  try {
+    const url = new URL(input);
+    
+    // Định dạng 1: folders/ID trong path
+    const foldersMatch = input.match(/folders\/([a-zA-Z0-9\-_]+)/);
+    if (foldersMatch && foldersMatch[1]) {
+      return foldersMatch[1];
+    }
+
+    // Định dạng 2: id=ID trong query params
+    const searchParams = url.searchParams;
+    if (searchParams.has('id')) {
+      return searchParams.get('id');
+    }
+
+    // Định dạng 3: /d/ID/
+    const dMatch = input.match(/\/d\/([a-zA-Z0-9\-_]+)/);
+    if (dMatch && dMatch[1]) {
+      return dMatch[1];
+    }
+
+    throw new Error('Không thể trích xuất Folder ID từ URL');
+  } catch (error) {
+    if (error instanceof TypeError) {
+      // URL không hợp lệ
+      throw new Error('URL Google Drive không hợp lệ');
+    }
+    throw error;
+  }
 }
 
 async function showMenu() {
@@ -35,19 +62,30 @@ async function main() {
   if (process.argv.length < 3) {
     console.log('❌ Vui lòng cung cấp Folder ID hoặc URL');
     console.log('Sử dụng: node src/app.js <folder_id_hoặc_url>');
+    console.log('\nVí dụ:');
+    console.log('- URL folder: https://drive.google.com/drive/folders/YOUR_FOLDER_ID');
+    console.log('- URL chia sẻ: https://drive.google.com/drive/u/0/folders/YOUR_FOLDER_ID');
+    console.log('- Folder ID: YOUR_FOLDER_ID');
     process.exit(1);
   }
 
   const inputPath = process.argv[2];
   
   try {
+    // Trích xuất folder ID từ input với thông báo chi tiết
+    let folderId;
+    try {
+      folderId = extractFolderId(inputPath);
+      console.log('\n📂 Folder ID:', folderId);
+    } catch (error) {
+      console.error('❌ Lỗi:', error.message);
+      console.log('\nVui lòng kiểm tra lại URL hoặc ID folder');
+      process.exit(1);
+    }
+
     // Hiển thị menu và nhận lựa chọn
     const choice = await showMenu();
     
-    // Trích xuất folder ID từ input
-    const folderId = extractFolderId(inputPath);
-    console.log('\n📂 Folder ID:', folderId);
-
     // Khởi tạo và xác thực DriveAPI
     const driveAPI = new DriveAPI();
     await driveAPI.authenticate();
@@ -59,10 +97,16 @@ async function main() {
       driveAPI.processLogger
     );
 
-    // Lấy tên folder
-    const folderName = await driveAPI.getFolderName(folderId);
-    if (folderName) {
-      console.log(`📂 Tên folder: ${folderName}`);
+    // Lấy tên folder với xử lý lỗi tốt hơn
+    let folderName;
+    try {
+      folderName = await driveAPI.getFolderName(folderId);
+      if (folderName) {
+        console.log(`📂 Tên folder: ${folderName}`);
+      }
+    } catch (error) {
+      console.log('⚠️ Không thể lấy tên folder:', error.message);
+      folderName = 'Unnamed_Folder';
     }
 
     // Thêm retry logic

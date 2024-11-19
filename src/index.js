@@ -73,6 +73,29 @@ async function cleanup() {
   }
 }
 
+// Cấu hình thư mục tải về
+const downloadConfig = {
+    baseDir: path.join(process.cwd(), 'downloads'),
+    videoDir: 'videos',
+    pdfDir: 'pdfs',
+    otherDir: 'others'
+};
+
+// Tạo các thư mục cần thiết
+async function initDownloadDirs() {
+    const dirs = [
+        downloadConfig.baseDir,
+        path.join(downloadConfig.baseDir, downloadConfig.videoDir),
+        path.join(downloadConfig.baseDir, downloadConfig.pdfDir),
+        path.join(downloadConfig.baseDir, downloadConfig.otherDir)
+    ];
+
+    for (const dir of dirs) {
+        await fs.mkdir(dir, { recursive: true });
+        console.log(`📁 Đã tạo thư mục: ${dir}`);
+    }
+}
+
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
@@ -86,8 +109,8 @@ async function main(folderUrl) {
     // Chọn mode
     const choice = await askQuestion(
       "\n📋 Chọn chế độ:\n" +
-      "1. Tải và upload lên Drive\n" +
-      "2. Tải về máy tính\n" +
+      "1. Tải và upload lên Drive qua API\n" +
+      "2. Tải và upload qua Drive Desktop\n" +
       "Lựa chọn của bạn (1/2): "
     );
     
@@ -99,7 +122,7 @@ async function main(folderUrl) {
     
     if (isDownloadMode) {
       const homeDir = require('os').homedir();
-      const defaultPath = getLongPath(path.join(homeDir, 'Documents', 'drive-clone-downloads'));
+      const defaultPath = getLongPath(path.join(homeDir, 'my-drive', 'drive-clone'));
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
       
       const confirm = await askQuestion("\nBạn có muốn tiếp tục không? (y/n): ");
