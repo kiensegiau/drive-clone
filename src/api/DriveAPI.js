@@ -126,7 +126,7 @@ class DriveAPI {
       console.log(`\n🎯 Bắt đầu tải folder: ${folderName}`);
 
       if (this.downloadOnly) {
-        // Tạo thư mục đích với tên folder gốc
+        // Tạo thư mục đích với tn folder gốc
         const targetDir = path.join(this.BASE_DIR, folderName);
         if (!fs.existsSync(targetDir)) {
           fs.mkdirSync(targetDir, { recursive: true });
@@ -164,7 +164,7 @@ class DriveAPI {
 
       if (response.data.files.length > 0) {
         const folder = response.data.files[0];
-        console.log(`📂 Tìm thấy folder: "${name}" (${folder.id})`);
+        console.log(` Tìm thấy folder: "${name}" (${folder.id})`);
         return folder.id;
       }
 
@@ -320,10 +320,23 @@ class DriveAPI {
         }
       }
 
-      // Xử lý PDFs
-      for (const file of pdfFiles) {
-        const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
-        await this.downloadFile(file.id, outputPath);
+      // Xử lý PDFs song song
+      if (pdfFiles.length > 0) {
+        console.log(`${indent}📑 Xử lý ${pdfFiles.length} PDF files...`);
+        const pdfDownloader = new PDFDownloader(this);
+        
+        const pdfPromises = pdfFiles.map(file => {
+          return pdfDownloader.downloadPDF(
+            file.id, 
+            file.name,
+            currentFolderPath
+          ).catch(error => {
+            console.error(`${indent}❌ Lỗi xử lý PDF ${file.name}:`, error.message);
+            return null;
+          });
+        });
+        
+        await Promise.all(pdfPromises);
       }
 
       // Xử lý other files
@@ -370,6 +383,19 @@ class DriveAPI {
     while (retryCount < MAX_RETRIES) {
       try {
         console.log(`📥 Tải file: ${path.basename(outputPath)}`);
+
+        // Kiểm tra loại file trước khi tải
+        const fileMetadata = await this.drive.files.get({
+          fileId: fileId,
+          fields: 'mimeType,name',
+          supportsAllDrives: true
+        });
+
+        // Kiểm tra nếu là Google Docs/Sheets/etc
+        if (fileMetadata.data.mimeType.includes('google-apps')) {
+          console.log(`⚠️ Bỏ qua file Google Docs: ${fileMetadata.data.name}`);
+          return null;
+        }
 
         // Tạo thư mục cha nếu chưa tồn tại
         const parentDir = path.dirname(outputPath);

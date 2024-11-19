@@ -75,13 +75,7 @@ class VideoHandler {
     throw new Error("Cần xác thực Google Drive trước khi upload");
   }
 
-  async processVideo(
-    fileId,
-    fileName,
-    targetFolderId,
-    depth = 0,
-    profileId = null
-  ) {
+  async processVideo(fileId, fileName, targetFolderId, depth = 0, profileId = null) {
     const indent = "  ".repeat(depth);
     const startTime = Date.now();
     let tempFiles = [];
@@ -90,9 +84,20 @@ class VideoHandler {
       console.log(`${indent}=== Xử lý video: ${fileName} ===`);
 
       // Tạo tên file an toàn
-      const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
-      const outputPath = path.join(this.TEMP_DIR, safeFileName);
-      tempFiles.push(outputPath);
+      const safeFileName = sanitizePath(fileName);
+      
+      // Tạo đường dẫn tạm với timestamp
+      const tempPath = getLongPath(path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`));
+      tempFiles.push(tempPath);
+
+      // Tạo đường dẫn đích cuối cùng
+      const finalPath = getLongPath(path.join(targetFolderId, safeFileName));
+
+      // Tạo thư mục đích nếu chưa tồn tại
+      const finalDir = path.dirname(finalPath);
+      if (!fs.existsSync(finalDir)) {
+        fs.mkdirSync(finalDir, { recursive: true });
+      }
 
       // Log bắt đầu xử lý
       this.processLogger.logProcess({
@@ -105,30 +110,31 @@ class VideoHandler {
       });
 
       // Tìm URL video
-      const videoUrl = await this.findVideoUrl(
-        fileId,
-        fileName,
-        depth,
-        profileId
-      );
-
+      const videoUrl = await this.findVideoUrl(fileId, fileName, depth, profileId);
       if (!videoUrl) {
         throw new Error("Không tìm thấy URL video");
       }
 
-      // Tải video về temp
-      console.log(`${indent}📥 Bắt đầu tải video...`);
+      // Tải video vào thư mục tạm
+      console.log(`${indent}📥 Bắt đầu tải video vào thư mục tạm...`);
       await this.downloadVideoWithChunks(
         videoUrl,
-        outputPath,
+        tempPath,
         depth,
         fileId,
         fileName,
         profileId
       );
 
+      // Di chuyển từ thư mục tạm sang thư mục đích
+      if (fs.existsSync(tempPath)) {
+        console.log(`${indent}📦 Di chuyển video vào thư mục đích: ${finalPath}`);
+        await fs.promises.rename(tempPath, finalPath);
+        console.log(`${indent}✅ Đã di chuyển video thành công`);
+      }
+
       // Log hoàn thành tải
-      const stats = fs.statSync(outputPath);
+      const stats = fs.statSync(finalPath);
       try {
         this.processLogger.logProcess({
           type: "video_process",
@@ -143,38 +149,43 @@ class VideoHandler {
         console.error(`${indent}⚠️ Lỗi ghi log download:`, logError.message);
       }
 
-      // Upload video với try-catch
-      try {
-        console.log(`${indent}📤 Đang upload video lên Drive...`);
-        const uploadedFile = await this.uploadFile(
-          outputPath,
-          fileName,
-          targetFolderId,
-          "video/mp4"
-        );
-
-        // Log hoàn thành upload
+      // Upload video với try-catch nếu cần
+      if (!this.downloadOnly) {
         try {
-          this.processLogger.logProcess({
-            type: "video_process",
-            status: "uploaded",
+          console.log(`${indent}📤 Đang upload video lên Drive...`);
+          const uploadedFile = await this.uploadFile(
+            finalPath,
             fileName,
-            fileId,
-            targetFileId: uploadedFile.id,
-            fileSize: stats.size,
-            duration: Date.now() - startTime,
-            driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
-            driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
-            timestamp: new Date().toISOString(),
-          });
-        } catch (logError) {
-          console.error(`${indent}⚠️ Lỗi ghi log upload:`, logError.message);
-        }
+            targetFolderId,
+            "video/mp4"
+          );
 
-        return { success: true, fileId: uploadedFile.id };
-      } catch (uploadError) {
-        throw new Error(`Lỗi upload: ${uploadError.message}`);
+          // Log hoàn thành upload
+          try {
+            this.processLogger.logProcess({
+              type: "video_process",
+              status: "uploaded",
+              fileName,
+              fileId,
+              targetFileId: uploadedFile.id,
+              fileSize: stats.size,
+              duration: Date.now() - startTime,
+              driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
+              driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
+              timestamp: new Date().toISOString(),
+            });
+          } catch (logError) {
+            console.error(`${indent}⚠️ Lỗi ghi log upload:`, logError.message);
+          }
+
+          return { success: true, fileId: uploadedFile.id };
+        } catch (uploadError) {
+          throw new Error(`Lỗi upload: ${uploadError.message}`);
+        }
       }
+
+      return { success: true, filePath: finalPath };
+
     } catch (error) {
       // Log lỗi tổng thể
       try {
@@ -194,13 +205,14 @@ class VideoHandler {
       return { success: false, error: error.message };
     } finally {
       // Cleanup temp files
-      for (const file of tempFiles) {
+      for (const tempFile of tempFiles) {
         try {
-          if (fs.existsSync(file)) {
-            fs.unlinkSync(file);
+          if (fs.existsSync(tempFile)) {
+            await fs.promises.unlink(tempFile);
+            console.log(`${indent}🧹 Đã xóa file tạm: ${tempFile}`);
           }
         } catch (error) {
-          console.warn(`${indent}⚠️ Không thể xóa file tạm: ${file}`);
+          console.warn(`${indent}⚠️ Không thể xóa file tạm: ${tempFile}`);
         }
       }
     }
@@ -476,7 +488,7 @@ class VideoHandler {
                 try {
                     request.continue();
                 } catch (error) {
-                    console.log(`${indent}⚠�� Không thể continue request:`, error.message);
+                    console.log(`${indent}⚠ Không thể continue request:`, error.message);
                 }
             });
 
@@ -984,12 +996,55 @@ class VideoHandler {
 
   async processVideoDownload(videoInfo) {
     const { fileId, fileName, targetPath, depth } = videoInfo;
+    const tempFiles = [];
+    
     try {
       console.log(`🎥 Bắt đầu tải: ${fileName}`);
-      await this.downloadToLocal(fileId, fileName, targetPath, depth);
-      console.log(`✅ Hoàn thành: ${fileName}`);
+      
+      // Tạo tên file an toàn
+      const safeFileName = sanitizePath(fileName);
+      
+      // Đường dẫn tạm trong TEMP_DIR
+      const tempPath = path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`);
+      tempFiles.push(tempPath);
+
+      // Đường dẫn đích cuối cùng trong thư mục đích
+      const finalPath = path.join(targetPath, safeFileName);
+      
+      // Tạo thư mục đích nếu chưa tồn tại
+      if (!fs.existsSync(path.dirname(finalPath))) {
+        fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+      }
+
+      // Tải video vào thư mục tạm
+      await this.downloadVideoWithChunks(
+        null, 
+        tempPath,
+        depth,
+        fileId,
+        fileName
+      );
+
+      // Di chuyển từ thư mục tạm sang thư mục đích
+      if (fs.existsSync(tempPath)) {
+        console.log(`📦 Di chuyển video vào thư mục đích: ${finalPath}`);
+        await fs.promises.rename(tempPath, finalPath);
+        console.log(`✅ Hoàn thành: ${fileName}`);
+      }
+
     } catch (error) {
       console.error(`❌ Lỗi xử lý video ${fileName}:`, error.message);
+    } finally {
+      // Dọn dẹp files tạm
+      for (const tempFile of tempFiles) {
+        try {
+          if (fs.existsSync(tempFile)) {
+            await fs.promises.unlink(tempFile);
+          }
+        } catch (cleanupError) {
+          console.warn(`⚠️ Không thể xóa file tạm: ${tempFile}`);
+        }
+      }
     }
   }
 
