@@ -7,16 +7,15 @@ class VideoQualityChecker {
     this.processLogger = processLogger;
     this.userEmail = null;
     this.cache = new Map();
-    
-    this.REQUEST_DELAY = 100;
-    this.QUOTA_DELAY = 5000;
+
+    this.REQUEST_DELAY = 10;
+    this.QUOTA_DELAY = 1000;
     this.MAX_RETRIES = 5;
-    this.CONCURRENT_COPIES = 4;
-    this.COPY_BATCH_SIZE = 5;
-    this.BATCH_SIZE = 10;
-    this.INITIAL_DELAY = 500;
-    this.MAX_DELAY = 32000;
-    this.QUOTA_RESET_TIME = 30000;
+    this.CONCURRENT_COPIES = 5;
+    this.COPY_BATCH_SIZE = 10;
+    this.INITIAL_DELAY = 200;
+    this.MAX_DELAY = 16000;
+    this.QUOTA_RESET_TIME = 15000;
   }
 
   async delay(ms) {
@@ -312,78 +311,137 @@ class VideoQualityChecker {
   async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      const userEmail = await this.getUserEmail();
-
-      const sourceFolder = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: sourceFolderId,
-          fields: 'name, owners',
-          supportsAllDrives: true
+      // Lấy thông tin folder nguồn
+      let sourceFolder;
+      try {
+        sourceFolder = await this.withRetry(async () => {
+          return this.drive.files.get({
+            fileId: sourceFolderId,
+            fields: "name",
+            supportsAllDrives: true,
+          });
         });
-      });
-
-      console.log(`${indent}🔍 Folder gốc thuộc sở hữu của: ${sourceFolder.data.owners[0].emailAddress}`);
-
-      const newFolder = await this.withRetry(async () => {
-        return this.drive.files.create({
-          requestBody: {
-            name: sourceFolder.data.name,
-            mimeType: 'application/vnd.google-apps.folder',
-            parents: [destinationFolderId]
-          },
-          supportsAllDrives: true
-        });
-      });
-
-      const newFolderInfo = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: newFolder.data.id,
-          fields: 'owners',
-          supportsAllDrives: true
-        });
-      });
-
-      const newOwner = newFolderInfo.data.owners[0].emailAddress;
-      if (newOwner === userEmail) {
-        console.log(`${indent}📂 Đã tạo folder "${sourceFolder.data.name}" - Xác nhận quyền sở hữu của bạn`);
-      } else {
-        console.log(`${indent}⚠️ Cảnh báo: Folder thuộc sở hữu của ${newOwner}, không phi ${userEmail}`);
+      } catch (error) {
+        console.error(
+          `${indent}⚠️ Không thể lấy thông tin folder nguồn:`,
+          error.message
+        );
+        return null;
       }
 
-      const response = await this.withRetry(async () => {
-        return this.drive.files.list({
-          q: `'${sourceFolderId}' in parents and trashed = false`,
-          fields: 'files(id, name, mimeType)',
-          pageSize: 100,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
+      // Kiểm tra folder đã tồn tại
+      let existingFolder;
+      try {
+        existingFolder = await this.checkFileExists(
+          sourceFolder.data.name,
+          destinationFolderId,
+          "application/vnd.google-apps.folder"
+        );
+      } catch (error) {
+        console.error(
+          `${indent}⚠️ Lỗi kiểm tra folder tồn tại:`,
+          error.message
+        );
+      }
+
+      let newFolder;
+      if (existingFolder) {
+        console.log(
+          `${indent}📂 Folder "${sourceFolder.data.name}" đã tồn tại, sử dụng folder hiện có`
+        );
+        newFolder = { data: existingFolder };
+      } else {
+        try {
+          newFolder = await this.withRetry(async () => {
+            return this.drive.files.create({
+              requestBody: {
+                name: sourceFolder.data.name,
+                mimeType: "application/vnd.google-apps.folder",
+                parents: [destinationFolderId],
+              },
+              supportsAllDrives: true,
+            });
+          });
+          console.log(
+            `${indent}📂 Đã tạo folder mới "${sourceFolder.data.name}"`
+          );
+        } catch (error) {
+          console.error(`${indent}⚠️ Không thể tạo folder mới:`, error.message);
+          return null;
+        }
+      }
+
+      // Lấy danh sách files và folders
+      let response;
+      try {
+        response = await this.withRetry(async () => {
+          return this.drive.files.list({
+            q: `'${sourceFolderId}' in parents and trashed = false`,
+            fields: "files(id, name, mimeType)",
+            pageSize: 100,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+          });
         });
-      }, depth);
+      } catch (error) {
+        console.error(
+          `${indent}⚠️ Không thể lấy danh sách files:`,
+          error.message
+        );
+        return null;
+      }
 
       const items = response.data.files;
-      
-      const files = items.filter(item => item.mimeType !== 'application/vnd.google-apps.folder');
-      const folders = items.filter(item => item.mimeType === 'application/vnd.google-apps.folder');
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
 
       for (let i = 0; i < files.length; i += this.COPY_BATCH_SIZE) {
         const batch = files.slice(i, i + this.COPY_BATCH_SIZE);
-        for (const file of batch) {
-          try {
-            await this.copyFile(file.id, newFolder.data.id, depth + 1);
-            await this.delay(this.REQUEST_DELAY);
-          } catch (error) {
-            console.error(`${indent}  ❌ Lỗi copy file ${file.name}:`, error.message);
+        const copyPromises = batch.map(async (file) => {
+          const result = await this.copyFile(
+            file.id,
+            newFolder.data.id,
+            depth + 1
+          ).catch((error) => {
+            console.error(
+              `${indent}  ⚠️ Lỗi copy file ${file.name}:`,
+              error.message
+            );
+            return null;
+          });
+          if (result) {
+            console.log(`${indent}✅ Đã sao chép "${file.name}"`);
           }
-        }
-        await this.delay(this.QUOTA_DELAY);
+          return result;
+        });
+
+        // Xử lý đồng thời nhiều file hơn
+        await Promise.allSettled(copyPromises);
+        await this.delay(500); // Giảm delay giữa các batch xuống 500ms
       }
 
+      // Copy folders với delay ngắn hơn
       for (const folder of folders) {
         try {
-          await this.copyFolder(folder.id, newFolder.data.id, depth + 1);
-          await this.delay(this.REQUEST_DELAY);
+          const result = await this.copyFolder(
+            folder.id,
+            newFolder.data.id,
+            depth + 1
+          );
+          if (result) {
+            console.log(`${indent}✅ Đã sao chép folder "${folder.name}"`);
+          }
+          await this.delay(10); // Giảm delay giữa các folder xuống 10ms
         } catch (error) {
-          console.error(`${indent}  ❌ Lỗi copy folder ${folder.name}:`, error.message);
+          console.error(
+            `${indent}  ⚠️ Lỗi copy folder ${folder.name}:`,
+            error.message
+          );
+          continue;
         }
       }
 
@@ -391,7 +449,6 @@ class VideoQualityChecker {
         `${indent}✅ Đã sao chép xong folder "${sourceFolder.data.name}"`
       );
       return newFolder.data;
-
     } catch (error) {
       console.error(`${indent}⚠️ Lỗi:`, error.message);
       return null; // Trả về null thay vì throw error
@@ -403,24 +460,26 @@ class VideoQualityChecker {
     let fileName = "";
 
     try {
-      const [sourceFile, me] = await Promise.all([
-        this.withRetry(async () => {
-          return this.drive.files.get({
-            fileId: fileId,
-            fields: 'name, size, mimeType, owners',
-            supportsAllDrives: true
-          });
-        }),
-        this.withRetry(async () => {
-          return this.drive.about.get({
-            fields: 'user'
-          });
-        })
-      ]);
+      const sourceFile = await this.withRetry(async () => {
+        return this.drive.files.get({
+          fileId: fileId,
+          fields: "name, size, mimeType",
+          supportsAllDrives: true,
+        });
+      });
 
       fileName = sourceFile.data.name;
-      const myEmail = me.data.user.emailAddress;
-      console.log(`${indent}🔍 File gốc thuộc sở hữu của: ${sourceFile.data.owners[0].emailAddress}`);
+
+      const existingFile = await this.checkFileExists(
+        fileName,
+        destinationFolderId,
+        sourceFile.data.mimeType
+      );
+
+      if (existingFile) {
+        console.log(`${indent}⏩ File "${fileName}" đã tồn tại, bỏ qua`);
+        return existingFile;
+      }
 
       const copiedFile = await this.withRetry(async () => {
         return this.drive.files.copy({
@@ -434,34 +493,7 @@ class VideoQualityChecker {
         });
       });
 
-      const newFileInfo = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: copiedFile.data.id,
-          fields: 'owners, permissions',
-          supportsAllDrives: true
-        });
-      });
-
-      const newOwner = newFileInfo.data.owners[0].emailAddress;
-      if (newOwner === myEmail) {
-        console.log(`${indent}✅ Đã sao chép "${fileName}" - Xác nhận quyền sở hữu của bạn (${myEmail})`);
-      } else {
-        console.log(`${indent}⚠️ Cảnh báo: File "${fileName}" thuộc sở hữu của ${newOwner}, không phải ${myEmail}`);
-        await this.withRetry(async () => {
-          return this.drive.permissions.create({
-            fileId: copiedFile.data.id,
-            requestBody: {
-              role: 'owner',
-              type: 'user',
-              emailAddress: myEmail,
-              transferOwnership: true
-            },
-            supportsAllDrives: true
-          });
-        });
-        console.log(`${indent}✅ Đã chuyển quyền sở hữu về ${myEmail}`);
-      }
-
+      console.log(`${indent}✅ Đã sao chép "${fileName}"`);
       return copiedFile.data;
     } catch (error) {
       console.error(`${indent}⚠️ Lỗi copy file ${fileName}:`, error.message);
@@ -471,21 +503,32 @@ class VideoQualityChecker {
 
   async copyToBackupFolder(sourceId) {
     try {
+      const existingBackup = await this.checkFileExists(
+        "Bản sao",
+        "root",
+        "application/vnd.google-apps.folder"
+      );
+
       let backupFolder;
       if (existingBackup) {
         backupFolder = existingBackup;
         console.log('📂 Đã tìm thấy folder "Bản sao"');
       } else {
-        backupFolder = await this.withRetry(async () => {
-          return this.drive.files.create({
-            requestBody: {
-              name: 'Bản sao',
-              mimeType: 'application/vnd.google-apps.folder',
-              parents: ['root']
-            }
+        try {
+          backupFolder = await this.withRetry(async () => {
+            return this.drive.files.create({
+              requestBody: {
+                name: "Bản sao",
+                mimeType: "application/vnd.google-apps.folder",
+                parents: ["root"],
+              },
+            });
           });
-        });
-        console.log('📂 Đã tạo mới folder "Bản sao"');
+          console.log('📂 Đã tạo mới folder "Bản sao"');
+        } catch (error) {
+          console.error("⚠️ Không thể tạo folder Bản sao:", error.message);
+          return null;
+        }
       }
 
       const sourceInfo = await this.withRetry(async () => {
@@ -525,8 +568,8 @@ class VideoQualityChecker {
       });
       return response.data.files[0] || null;
     } catch (error) {
-      console.error('❌ Lỗi:', error.message);
-      throw error;
+      console.error("❌ Lỗi kiểm tra file:", error.message);
+      return null;
     }
   }
 }
