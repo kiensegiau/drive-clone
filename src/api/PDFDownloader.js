@@ -6,11 +6,14 @@ const axios = require("axios");
 const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require('../utils/ProcessLogger');
 const { getLongPath } = require('../utils/pathUtils');
+const os = require('os');
+const { sanitizePath } = require('../utils/pathUtils');
+
 
 class PDFDownloader {
   constructor(driveAPI, tempDir, processLogger) {
     this.driveAPI = driveAPI;
-    this.tempDir = tempDir;
+    this.tempDir = getLongPath(path.join(os.tmpdir(), 'drive-clone-pdfs'));
     this.processLogger = processLogger;
     this.pageRequests = new Map();
     this.cookies = null;
@@ -25,7 +28,7 @@ class PDFDownloader {
 
   async downloadPDF(fileId, fileName, targetFolderId, profileId = null) {
     const startTime = new Date();
-    const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
+    const safeFileName = sanitizePath(fileName);
     const outputPath = getLongPath(path.join(this.tempDir, safeFileName));
     let originalSize = 0;
     let processedSize = 0;
@@ -518,7 +521,7 @@ class PDFDownloader {
     try {
       console.log(`📑 Tải PDF: ${fileName}`);
       
-      const safeFileName = fileName.replace(/[/\\?%*:|"<>]/g, "-");
+      const safeFileName = sanitizePath(fileName);
       const outputPath = getLongPath(path.join(targetDir, safeFileName));
 
       // Thử tải qua API trước

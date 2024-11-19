@@ -10,6 +10,8 @@ const { getLongPath } = require("../utils/pathUtils");
 const https = require("https");
 const got = require('got'); // Thêm dependency got vào package.json
 const { pipeline } = require('stream');
+const os = require('os');
+const { sanitizePath } = require("../utils/pathUtils");
 
 class VideoHandler {
   constructor(oAuth2Client = null) {
@@ -21,7 +23,7 @@ class VideoHandler {
       this.downloadQueue = [];
       this.videoQueue = [];
       this.processingVideo = false;
-      this.TEMP_DIR = getLongPath(path.join(__dirname, "temp"));
+      this.TEMP_DIR = getLongPath(path.join(os.tmpdir(), 'drive-clone-videos'));
       this.cookies = null;
       this.chromeManager = ChromeManager.getInstance();
       this.processLogger = new ProcessLogger();
@@ -211,8 +213,8 @@ class VideoHandler {
 
   async startDownload(videoUrl, file, targetFolderId, depth) {
     const indent = "  ".repeat(depth);
-    const safeFileName = file.name.replace(/[/\\?%*:|"<>]/g, "-");
-    const outputPath = path.join(this.TEMP_DIR, safeFileName);
+    const safeFileName = sanitizePath(file.name);
+    const outputPath = getLongPath(path.join(this.TEMP_DIR, safeFileName));
 
     try {
       console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
