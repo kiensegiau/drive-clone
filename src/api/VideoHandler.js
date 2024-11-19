@@ -81,17 +81,23 @@ class VideoHandler {
     let tempFiles = [];
 
     try {
-      console.log(`${indent}=== Xử lý video: ${fileName} ===`);
-
       // Tạo tên file an toàn
       const safeFileName = sanitizePath(fileName);
+      
+      // Tạo đường dẫn đích cuối cùng
+      const finalPath = getLongPath(path.join(targetFolderId, safeFileName));
+
+      // Kiểm tra file đã tồn tại
+      if (fs.existsSync(finalPath)) {
+        console.log(`${indent}⏩ File đã tồn tại, bỏ qua: ${fileName}`);
+        return { success: true, skipped: true, filePath: finalPath };
+      }
+
+      console.log(`${indent}=== Xử lý video: ${fileName} ===`);
       
       // Tạo đường dẫn tạm với timestamp
       const tempPath = getLongPath(path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`));
       tempFiles.push(tempPath);
-
-      // Tạo đường dẫn đích cuối cùng
-      const finalPath = getLongPath(path.join(targetFolderId, safeFileName));
 
       // Tạo thư mục đích nếu chưa tồn tại
       const finalDir = path.dirname(finalPath);
@@ -230,7 +236,7 @@ class VideoHandler {
     const outputPath = getLongPath(path.join(this.TEMP_DIR, safeFileName));
 
     try {
-      console.log(`${indent}📥 Bắt đ��u tải: ${file.name}`);
+      console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
 
       // Tải video với chunks
       await this.downloadVideoWithChunks(videoUrl, outputPath);

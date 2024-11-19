@@ -50,12 +50,17 @@ class PDFDownloader {
     const startTime = new Date();
     const safeFileName = sanitizePath(fileName);
     
-    // Tạo đường dẫn tạm thời với timestamp
-    const tempPath = getLongPath(path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`));
-    
     // Tạo đường dẫn đích cuối cùng trong thư mục đích
     const finalPath = getLongPath(path.join(targetPath, safeFileName));
     
+    // Kiểm tra file đã tồn tại
+    if (fs.existsSync(finalPath)) {
+      console.log(`⏩ File đã tồn tại, bỏ qua: ${fileName}`);
+      return { success: true, skipped: true, filePath: finalPath };
+    }
+
+    // Tạo đường dẫn tạm thời với timestamp
+    const tempPath = getLongPath(path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`));
     const tempFiles = [tempPath];
 
     try {

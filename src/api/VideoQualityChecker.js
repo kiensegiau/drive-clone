@@ -5,16 +5,18 @@ class VideoQualityChecker {
     this.oauth2Client = oauth2Client;
     this.drive = drive;
     this.processLogger = processLogger;
+    this.userEmail = null;
     this.cache = new Map();
     
-    this.REQUEST_DELAY = 200;
-    this.QUOTA_DELAY = 10000;
+    this.REQUEST_DELAY = 100;
+    this.QUOTA_DELAY = 5000;
     this.MAX_RETRIES = 5;
-    this.CONCURRENT_COPIES = 2;
-    this.COPY_BATCH_SIZE = 3;
-    this.INITIAL_DELAY = 1000;  // 1s
-    this.MAX_DELAY = 64000;     // 64s
-    this.QUOTA_RESET_TIME = 60000; // 60s - thời gian reset quota
+    this.CONCURRENT_COPIES = 4;
+    this.COPY_BATCH_SIZE = 5;
+    this.BATCH_SIZE = 10;
+    this.INITIAL_DELAY = 500;
+    this.MAX_DELAY = 32000;
+    this.QUOTA_RESET_TIME = 30000;
   }
 
   async delay(ms) {
@@ -29,17 +31,36 @@ class VideoQualityChecker {
         const result = await operation();
         return result;
       } catch (error) {
+        console.log(`🔍 Lỗi API (attempt ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
+        
         if (error.code === 429) { // Quota exceeded
           console.log(`⚠️ Đạt giới hạn API, đợi ${delay/1000}s...`);
           await this.delay(delay);
-          
-          // Tăng delay theo cấp số nhân, tối đa 64s
           delay = Math.min(delay * 2, this.MAX_DELAY);
           continue;
         }
+        
+        if (error.code === 403) {
+          console.log('⚠️ Lỗi quyền truy cập, đang thử lại...');
+          await this.delay(1000);
+          continue;
+        }
+        
         throw error;
       }
     }
+    
+    throw new Error(`Đã thử ${this.MAX_RETRIES} lần nhưng không thành công`);
+  }
+
+  async getUserEmail() {
+    if (!this.userEmail) {
+      const response = await this.drive.about.get({
+        fields: 'user(emailAddress)'
+      });
+      this.userEmail = response.data.user.emailAddress;
+    }
+    return this.userEmail;
   }
 
   async checkFolderVideoQuality(folderId, depth = 0) {
@@ -62,6 +83,53 @@ class VideoQualityChecker {
     };
 
     try {
+      const userEmail = await this.getUserEmail();
+
+      let folderInfo;
+      try {
+        folderInfo = await this.withRetry(async () => {
+          return await this.drive.files.get({
+            fileId: folderId,
+            fields: "id, name, capabilities, shared, owners, permissions",
+            supportsAllDrives: true,
+            supportsTeamDrives: true
+          });
+        }, depth);
+
+        const folder = folderInfo.data;
+        
+        const isOwner = folder.owners && folder.owners.some(owner => owner.emailAddress === userEmail);
+        const canAccess = folder.capabilities?.canReadDrive || 
+                         folder.capabilities?.canRead ||
+                         folder.capabilities?.canEdit ||
+                         isOwner;
+        
+        if (!canAccess) {
+          console.log(`⚠️ Đang kiểm tra quyền truy cập cho folder "${folder.name}"...`);
+          console.log(`🔍 Email người dùng: ${userEmail}`);
+          console.log(`🔍 Trạng thái chia sẻ: ${folder.shared ? 'Đã chia sẻ' : 'Chưa chia sẻ'}`);
+          
+          throw new Error(`Không có quyền truy cập folder "${folder.name}". Vui lòng kiểm tra:
+1. Folder đã được chia sẻ với email ${userEmail}
+2. Bạn có quyền xem folder này
+3. Folder không bị xóa hoặc nằm trong thùng rác`);
+        }
+
+        if (!folder.shared) {
+          console.log('⚠️ Lưu ý: Folder này chưa được chia sẻ');
+        }
+
+      } catch (error) {
+        if (error.code === 404 || error.message.includes('File not found')) {
+          throw new Error(`Không tìm thấy folder. Vui lòng kiểm tra:
+1. ID folder chính xác
+2. URL chia sẻ còn hiệu lực
+3. Folder không bị xóa
+4. Bạn đã đăng nhập với tài khoản ${userEmail}`);
+        }
+        throw error;
+      }
+
       await this.withRetry(async () => {
         await this.drive.files.get({
           fileId: folderId,
@@ -77,59 +145,54 @@ class VideoQualityChecker {
           pageSize: 100,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
+          supportsTeamDrives: true
         });
       }, depth);
 
       const files = response.data.files;
       const videoFiles = files.filter(f => f.mimeType.includes('video'));
 
-      results.totalVideos = videoFiles.length;
-
       console.log(`${indent}🎥 Tìm thấy ${videoFiles.length} video trong folder`);
 
       for (let i = 0; i < videoFiles.length; i += this.BATCH_SIZE) {
         const batch = videoFiles.slice(i, i + this.BATCH_SIZE);
-        const batchPromises = batch.map(video => 
-          this.checkVideoQuality(video, " ".repeat(depth * 2))
+        const promises = batch.map(video => 
+          this.checkVideoQuality(video, indent)
         );
 
-        for (const promise of batchPromises) {
-          try {
-            const videoDetails = await promise;
-            results.details.push(videoDetails);
-            if (!videoDetails.height) {
-              results.resolution['unknown']++;
-            } else if (videoDetails.height >= 1080) {
-              results.resolution['1080p']++;
-            } else if (videoDetails.height >= 720) {
-              results.resolution['720p']++;
-            } else if (videoDetails.height >= 480) {
-              results.resolution['480p']++;
-            } else if (videoDetails.height >= 360) {
-              results.resolution['360p']++;
-            } else {
-              results.resolution['lower']++;
-            }
-          } catch (error) {
-            console.error(`${" ".repeat(depth * 2)}❌ Lỗi:`, error.message);
+        const batchResults = await Promise.all(promises);
+        
+        for (const videoDetails of batchResults) {
+          results.details.push(videoDetails);
+          if (!videoDetails.height) {
+            results.resolution['unknown']++;
+          } else if (videoDetails.height >= 1080) {
+            results.resolution['1080p']++;
+          } else if (videoDetails.height >= 720) {
+            results.resolution['720p']++;
+          } else if (videoDetails.height >= 480) {
+            results.resolution['480p']++;
+          } else if (videoDetails.height >= 360) {
+            results.resolution['360p']++;
+          } else {
+            results.resolution['lower']++;
           }
-          await this.delay(this.REQUEST_DELAY);
         }
       }
 
       const subFolders = files.filter(f => f.mimeType === "application/vnd.google-apps.folder");
-      for (const folder of subFolders) {
-        try {
-          const subResults = await this.checkFolderVideoQuality(folder.id, depth + 1);
-          results.totalVideos += subResults.totalVideos;
-          Object.keys(results.resolution).forEach(key => {
-            results.resolution[key] += (subResults.resolution[key] || 0);
-          });
-          results.details = results.details.concat(subResults.details);
-        } catch (error) {
-          console.error(`${" ".repeat(depth * 2)}❌ Lỗi subfolder:`, error.message);
-        }
-        await this.delay(this.REQUEST_DELAY);
+      const subFolderPromises = subFolders.map(folder => 
+        this.checkFolderVideoQuality(folder.id, depth + 1)
+      );
+
+      const subResults = await Promise.all(subFolderPromises);
+      
+      for (const subResult of subResults) {
+        results.totalVideos += subResult.totalVideos;
+        Object.keys(results.resolution).forEach(key => {
+          results.resolution[key] += (subResult.resolution[key] || 0);
+        });
+        results.details = results.details.concat(subResult.details);
       }
 
       console.log(`${indent}📊 Kết quả kiểm tra folder:`);
@@ -218,15 +281,8 @@ class VideoQualityChecker {
   async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      // Lấy thông tin user hiện tại
-      const me = await this.withRetry(async () => {
-        return this.drive.about.get({
-          fields: 'user'
-        });
-      });
-      const myEmail = me.data.user.emailAddress;
+      const userEmail = await this.getUserEmail();
 
-      // Tạo folder mới và kiểm tra owner
       const sourceFolder = await this.withRetry(async () => {
         return this.drive.files.get({
           fileId: sourceFolderId,
@@ -248,7 +304,6 @@ class VideoQualityChecker {
         });
       });
 
-      // Kiểm tra owner của folder mới
       const newFolderInfo = await this.withRetry(async () => {
         return this.drive.files.get({
           fileId: newFolder.data.id,
@@ -258,10 +313,10 @@ class VideoQualityChecker {
       });
 
       const newOwner = newFolderInfo.data.owners[0].emailAddress;
-      if (newOwner === myEmail) {
+      if (newOwner === userEmail) {
         console.log(`${indent}📂 Đã tạo folder "${sourceFolder.data.name}" - Xác nhận quyền sở hữu của bạn`);
       } else {
-        console.log(`${indent}⚠️ Cảnh báo: Folder thuộc sở hữu của ${newOwner}, không phải ${myEmail}`);
+        console.log(`${indent}⚠️ Cảnh báo: Folder thuộc sở hữu của ${newOwner}, không phi ${userEmail}`);
       }
 
       const response = await this.withRetry(async () => {
@@ -279,7 +334,6 @@ class VideoQualityChecker {
       const files = items.filter(item => item.mimeType !== 'application/vnd.google-apps.folder');
       const folders = items.filter(item => item.mimeType === 'application/vnd.google-apps.folder');
 
-      // Copy files
       for (let i = 0; i < files.length; i += this.COPY_BATCH_SIZE) {
         const batch = files.slice(i, i + this.COPY_BATCH_SIZE);
         for (const file of batch) {
@@ -293,7 +347,6 @@ class VideoQualityChecker {
         await this.delay(this.QUOTA_DELAY);
       }
 
-      // Copy folders
       for (const folder of folders) {
         try {
           await this.copyFolder(folder.id, newFolder.data.id, depth + 1);
@@ -316,7 +369,6 @@ class VideoQualityChecker {
     let fileName = '';
     
     try {
-      // 1. Lấy thông tin file nguồn và owner hiện tại của bạn
       const [sourceFile, me] = await Promise.all([
         this.withRetry(async () => {
           return this.drive.files.get({
@@ -336,7 +388,6 @@ class VideoQualityChecker {
       const myEmail = me.data.user.emailAddress;
       console.log(`${indent}🔍 File gốc thuộc sở hữu của: ${sourceFile.data.owners[0].emailAddress}`);
 
-      // 2. Copy file
       const copiedFile = await this.withRetry(async () => {
         return this.drive.files.copy({
           fileId: fileId,
@@ -349,7 +400,6 @@ class VideoQualityChecker {
         });
       });
 
-      // 3. Kiểm tra owner của file mới
       const newFileInfo = await this.withRetry(async () => {
         return this.drive.files.get({
           fileId: copiedFile.data.id,
@@ -363,7 +413,6 @@ class VideoQualityChecker {
         console.log(`${indent}✅ Đã sao chép "${fileName}" - Xác nhận quyền sở hữu của bạn (${myEmail})`);
       } else {
         console.log(`${indent}⚠️ Cảnh báo: File "${fileName}" thuộc sở hữu của ${newOwner}, không phải ${myEmail}`);
-        // Thử chuyển quyền sở hữu về bạn nếu cần
         await this.withRetry(async () => {
           return this.drive.permissions.create({
             fileId: copiedFile.data.id,

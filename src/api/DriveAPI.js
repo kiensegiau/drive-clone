@@ -306,6 +306,13 @@ class DriveAPI {
         for (const file of videoFiles) {
           try {
             const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+            
+            // Kiểm tra file đã tồn tại
+            if (fs.existsSync(outputPath)) {
+              console.log(`${indent}⏩ Đã tồn tại, bỏ qua: ${file.name}`);
+              continue;
+            }
+
             videoHandler.addToQueue({
               fileId: file.id,
               fileName: file.name,
@@ -331,6 +338,14 @@ class DriveAPI {
         const pdfDownloader = new PDFDownloader(this);
         
         const pdfPromises = pdfFiles.map(file => {
+          const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+          
+          // Kiểm tra file đã tồn tại
+          if (fs.existsSync(outputPath)) {
+            console.log(`${indent}⏩ Đã tồn tại, bỏ qua: ${file.name}`);
+            return Promise.resolve(null);
+          }
+
           return pdfDownloader.downloadPDF(
             file.id, 
             file.name,
@@ -348,6 +363,13 @@ class DriveAPI {
       for (const file of otherFiles) {
         try {
           const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
+          
+          // Kiểm tra file đã tồn tại
+          if (fs.existsSync(outputPath)) {
+            console.log(`${indent}⏩ Đã tồn tại, bỏ qua: ${file.name}`);
+            continue;
+          }
+
           await this.downloadFile(file.id, outputPath);
         } catch (error) {
           console.error(`${indent}❌ Lỗi tải file ${file.name}:`, error.message);
