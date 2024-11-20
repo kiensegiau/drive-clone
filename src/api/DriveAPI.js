@@ -280,13 +280,6 @@ class DriveAPI {
         fs.mkdirSync(currentFolderPath, { recursive: true });
       }
 
-      // Kiểm tra file trước khi tạo mới
-      const filePath = path.join(currentFolderPath, sanitizePath(fileName));
-      if (fs.existsSync(filePath)) {
-        console.log(`File đã tồn tại, bỏ qua: ${filePath}`);
-        return;
-      }
-
       // Lấy danh sách files trong folder
       const response = await this.drive.files.list({
         q: `'${sourceFolderId}' in parents and trashed=false`,
