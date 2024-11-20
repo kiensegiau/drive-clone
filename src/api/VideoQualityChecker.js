@@ -10,7 +10,7 @@ class VideoQualityChecker {
 
     this.REQUEST_DELAY = 10;
     this.QUOTA_DELAY = 1000;
-    this.MAX_RETRIES = 5;
+    this.MAX_RETRIES = 10;
     this.CONCURRENT_COPIES = 5;
     this.COPY_BATCH_SIZE = 10;
     this.INITIAL_DELAY = 1000;
@@ -24,37 +24,48 @@ class VideoQualityChecker {
 
   async withRetry(operation, depth = 0) {
     let delay = this.INITIAL_DELAY;
+    let quotaWaitTime = this.QUOTA_RESET_TIME;
+    let isQuotaError = false;
+    let permissionDelay = 1000;
 
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
+        // Xử lý quota error
+        if (isQuotaError) {
+          console.log(`⏳ Đang đợi ${quotaWaitTime/1000}s để reset quota...`);
+          await this.delay(quotaWaitTime);
+          isQuotaError = false;
+        }
+
         const result = await operation();
         return result;
+
       } catch (error) {
-        console.log(
-          `🔍 Lỗi API (attempt ${attempt + 1}/${this.MAX_RETRIES}):`,
-          error.message
-        );
-
+        // Xử lý lỗi quota
         if (error.code === 429 || error.message.includes('quota')) {
-          // Xử lý quota exceeded tốt hơn
-          const waitTime = this.QUOTA_RESET_TIME;
-          console.log(`⚠️ Đạt giới hạn API, đợi ${waitTime/1000}s để reset quota...`);
-          await this.delay(waitTime);
+          if (!isQuotaError) {
+            console.log(`⚠️ Đạt giới hạn API - Sẽ thử lại sau ${quotaWaitTime/1000}s`);
+          }
+          isQuotaError = true;
+          quotaWaitTime *= 2;
           continue;
         }
 
+        // Xử lý lỗi permission
         if (error.code === 403) {
-          console.log("⚠️ Lỗi quyền truy cập, đợi 1s và thử lại...");
-          await this.delay(this.QUOTA_DELAY); 
+          console.log(`⚠️ Lỗi quyền truy cập (lần ${attempt + 1}/${this.MAX_RETRIES}) - Đợi ${permissionDelay/1000}s...`);
+          await this.delay(permissionDelay);
+          permissionDelay *= 2;
           continue;
         }
 
-        // Các lỗi khác thì tăng delay theo cấp số nhân
+        // Các lỗi khác
+        console.log(`🔍 Lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
         await this.delay(delay);
         delay = Math.min(delay * 2, this.MAX_DELAY);
         
         if (attempt === this.MAX_RETRIES - 1) {
-          throw error; // Ném lỗi ở lần thử cuối cùng
+          throw error;
         }
       }
     }
@@ -466,44 +477,48 @@ class VideoQualityChecker {
     let fileName = "";
 
     try {
-      const sourceFile = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: fileId,
-          fields: "name, size, mimeType",
-          supportsAllDrives: true,
+        // Lấy thông tin file nguồn
+        const sourceFile = await this.withRetry(async () => {
+            return this.drive.files.get({
+                fileId: fileId,
+                fields: "name, size, mimeType",
+                supportsAllDrives: true,
+            });
         });
-      });
 
-      fileName = sourceFile.data.name;
+        fileName = sourceFile.data.name;
 
-      const existingFile = await this.checkFileExists(
-        fileName,
-        destinationFolderId,
-        sourceFile.data.mimeType
-      );
+        // Kiểm tra file đã tồn tại trong thư mục đích chưa
+        const existingFile = await this.checkFileExists(
+            fileName,
+            destinationFolderId,
+            sourceFile.data.mimeType
+        );
 
-      if (existingFile) {
-        console.log(`${indent}⏩ File "${fileName}" đã tồn tại, bỏ qua`);
-        return existingFile;
-      }
+        if (existingFile) {
+            console.log(`${indent}⏩ File "${fileName}" đã tồn tại, bỏ qua`);
+            return existingFile;
+        }
 
-      const copiedFile = await this.withRetry(async () => {
-        return this.drive.files.copy({
-          fileId: fileId,
-          requestBody: {
-            name: fileName,
-            parents: [destinationFolderId],
-            copyRequiresWriterPermission: false,
-          },
-          supportsAllDrives: true,
+        // Nếu chưa tồn tại thì mới copy
+        const copiedFile = await this.withRetry(async () => {
+            return this.drive.files.copy({
+                fileId: fileId,
+                requestBody: {
+                    name: fileName,
+                    parents: [destinationFolderId],
+                    copyRequiresWriterPermission: false,
+                },
+                supportsAllDrives: true,
+            });
         });
-      });
 
-      console.log(`${indent}✅ Đã sao chép "${fileName}"`);
-      return copiedFile.data;
+        console.log(`${indent}✅ Đã sao chép "${fileName}"`);
+        return copiedFile.data;
+
     } catch (error) {
-      console.error(`${indent}⚠️ Lỗi copy file ${fileName}:`, error.message);
-      return null; // Trả về null thay vì throw error
+        console.error(`${indent}⚠️ Lỗi copy file ${fileName}:`, error.message);
+        return null;
     }
   }
 
