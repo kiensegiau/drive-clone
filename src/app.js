@@ -129,9 +129,12 @@ async function showMenu() {
   console.log("\n=== GOOGLE DRIVE TOOL ===");
   console.log("1. Kiểm tra chất lượng video");
   console.log("2. Sao chép folder");
+  console.log("3. Tạo bản sao để xử lý lại video chất lượng thấp");
+  console.log("4. Chọn và khôi phục tên cho bản chất lượng cao nhất");
+  console.log("5. Thoát");
 
   return new Promise((resolve) => {
-    rl.question("\nVui lòng chọn chức năng (1-2): ", (choice) => {
+    rl.question("\nVui lòng chọn chức năng (1-5): ", (choice) => {
       rl.close();
       resolve(choice.trim());
     });
@@ -184,7 +187,7 @@ async function main() {
 
         // Lưu kết quả chi tiết vào file
         const fs = require("fs");
-        const resultFile = `video-quality-${folderName || folderId}.json`;
+        const resultFile = `video-quality-${folderId}.json`;
         fs.writeFileSync(resultFile, JSON.stringify(results, null, 2));
         console.log(`\n💾 Đã lưu kết quả chi tiết vào file ${resultFile}`);
         break;
@@ -192,6 +195,21 @@ async function main() {
       case "2":
         console.log("\n🚀 Bắt đầu sao chép folder...");
         await checker.copyToBackupFolder(folderId);
+        break;
+
+      case "3":
+        console.log("\n🔄 Bắt đầu tạo bản sao để xử lý...");
+        await checker.createCopiesForProcessing(folderId);
+        break;
+
+      case "4":
+        console.log("\n🔍 Bắt đầu chọn lọc bản chất lượng cao...");
+        await checker.selectBestQualityCopies(folderId);
+        break;
+
+      case "5":
+        console.log("👋 Đã thoát chương trình.");
+        process.exit(0);
         break;
 
       default:

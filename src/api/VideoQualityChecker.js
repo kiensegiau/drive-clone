@@ -1,3 +1,5 @@
+const readline = require('readline');
+
 class VideoQualityChecker {
   constructor(oauth2Client, drive, processLogger) {
     this.oauth2Client = oauth2Client;
@@ -167,12 +169,12 @@ class VideoQualityChecker {
       const files = response.data.files;
       const videoFiles = files.filter((f) => f.mimeType.includes("video"));
 
-      console.log(
-        `${indent}🎥 Tìm thấy ${videoFiles.length} video trong folder`
-      );
+      console.log(`${indent}🎥 Tìm thấy ${videoFiles.length} video trong folder`);
+      
+      results.totalVideos = videoFiles.length;
 
-      for (let i = 0; i < videoFiles.length; i += this.BATCH_SIZE) {
-        const batch = videoFiles.slice(i, i + this.BATCH_SIZE);
+      for (let i = 0; i < videoFiles.length; i += this.COPY_BATCH_SIZE) {
+        const batch = videoFiles.slice(i, i + this.COPY_BATCH_SIZE);
         const promises = batch.map((video) =>
           this.checkVideoQuality(video, indent)
         );
@@ -574,6 +576,254 @@ class VideoQualityChecker {
     } catch (error) {
       console.error("❌ Lỗi kiểm tra file:", error.message);
       return null;
+    }
+  }
+
+  // Phương thức 3: Tạo bản sao để xử lý sau
+  async createCopiesForProcessing(folderId) {
+    try {
+      console.log('🔄 Bắt đầu tạo bản sao cho các video chất lượng thấp...');
+      
+      const results = await this.checkFolderVideoQuality(folderId);
+      
+      // Sửa điều kiện lọc
+      const videosToReprocess = results.details.filter(video => {
+        // Video chất lượng thấp
+        const isLowQuality = video.height && video.height <= 360;
+        
+        // Video không xác định
+        const isUnknown = 
+          video.resolution === 'unknown' || 
+          !video.height || 
+          video.status === 'no_metadata';
+
+        return isLowQuality || isUnknown;
+      });
+
+      console.log(`\n📝 Tìm thấy ${videosToReprocess.length} video cần xử lý lại`);
+      console.log('   Bao gồm:');
+      console.log(`   - ${videosToReprocess.filter(v => !v.height || v.resolution === 'unknown' || v.status === 'no_metadata').length} video không xác định chất lượng`);
+      console.log(`   - ${videosToReprocess.filter(v => v.height && v.height <= 360).length} video chất lượng thấp (360p trở xuống)`);
+
+      // Xác nhận từ người dùng
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+
+      const proceed = await new Promise(resolve => {
+        rl.question('\nBạn có muốn tiếp tục xử lý các video này? (y/n): ', answer => {
+          rl.close();
+          resolve(answer.toLowerCase() === 'y');
+        });
+      });
+
+      if (!proceed) {
+        console.log('❌ Đã hủy thao tác');
+        return;
+      }
+
+      // Tiếp tục xử lý các video
+      for (const video of videosToReprocess) {
+        try {
+          console.log(`\n🎬 Đang xử lý: ${video.name}`);
+          
+          // Tạo timestamp duy nhất
+          const timestamp = new Date().getTime();
+          const originalQuality = video.height ? `${video.height}p` : 'unknown';
+          
+          // Tạo mã hash ngắn từ tên gốc
+          const fileHash = require('crypto')
+            .createHash('md5')
+            .update(video.name)
+            .digest('hex')
+            .substring(0, 6);
+          
+          // Tạo 2 bản sao với tên an toàn hơn
+          for (let i = 1; i <= 2; i++) {
+            // Tên file mới format: REPROCESS_[timestamp]_[hash]_[copy number]
+            const copyName = `REPROCESS_${timestamp}_${fileHash}_${i}`;
+            console.log(`📑 Tạo bản sao ${i}...`);
+            
+            await this.withRetry(async () => {
+              return this.drive.files.copy({
+                fileId: video.id,
+                requestBody: {
+                  name: copyName,
+                  // Giảm kích thước metadata
+                  properties: {
+                    h: fileHash,           // hash của tên gốc
+                    t: `${timestamp}`,     // timestamp
+                    n: `${i}`,             // số thứ tự bản sao
+                    q: originalQuality     // chất lượng gốc
+                  },
+                  parents: [folderId],
+                },
+                supportsAllDrives: true,
+              });
+            });
+            
+            // Lưu mapping tên file vào một file JSON riêng
+            await this.saveFileMapping(fileHash, {
+              originalName: video.name,
+              timestamp: timestamp,
+              quality: originalQuality
+            });
+            
+            console.log(`✅ Đã tạo: ${copyName}`);
+            await this.delay(5000);
+          }
+
+        } catch (error) {
+          console.error(`❌ Lỗi xử lý video ${video.name}:`, error.message);
+          continue;
+        }
+      }
+
+      console.log('\n✅ Đã tạo xong các bản sao. Vui lòng đợi vài giờ để Drive xử lý xong.');
+      console.log('💡 Sau đó sử dụng chức năng 4 để chọn và đổi tên bản chất lượng tốt nhất.');
+      
+    } catch (error) {
+      console.error('❌ Lỗi:', error.message);
+      throw error;
+    }
+  }
+
+  // Thêm phương thức mới để lưu mapping tên file
+  async saveFileMapping(fileHash, data) {
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const mappingFile = path.join(__dirname, 'file_mapping.json');
+      
+      // Đọc file mapping hiện có hoặc tạo mới
+      let mapping = {};
+      if (fs.existsSync(mappingFile)) {
+        mapping = JSON.parse(fs.readFileSync(mappingFile, 'utf8'));
+      }
+      
+      // Thêm mapping mới
+      mapping[fileHash] = data;
+      
+      // Lưu lại file
+      fs.writeFileSync(mappingFile, JSON.stringify(mapping, null, 2));
+    } catch (error) {
+      console.error('⚠️ Lỗi lưu file mapping:', error.message);
+    }
+  }
+
+  // Phương thức 4: Lọc và khôi phục tên cho bản chất lượng cao nhất
+  async selectBestQualityCopies(folderId) {
+    try {
+      console.log('🔍 Bắt đầu kiểm tra các bản sao...');
+
+      // Đọc file mapping
+      const fs = require('fs');
+      const path = require('path');
+      const mappingFile = path.join(__dirname, 'file_mapping.json');
+      let fileMapping = {};
+      
+      if (fs.existsSync(mappingFile)) {
+        fileMapping = JSON.parse(fs.readFileSync(mappingFile, 'utf8'));
+      }
+
+      // Tìm các file cần xử lý
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and name contains 'REPROCESS_' and trashed = false`,
+          fields: "files(id, name, properties, videoMediaMetadata)",
+          supportsAllDrives: true,
+        });
+      });
+
+      // Nhóm các bản sao theo timestamp
+      const copyGroups = new Map();
+      for (const file of response.data.files) {
+        const timestamp = file.properties?.t;
+        const fileHash = file.properties?.h;
+        
+        if (timestamp && fileHash) {
+          if (!copyGroups.has(timestamp)) {
+            copyGroups.set(timestamp, []);
+          }
+          // Thêm thông tin mapping vào file
+          file.originalInfo = fileMapping[fileHash];
+          copyGroups.get(timestamp).push(file);
+        }
+      }
+
+      console.log(`📝 Tìm thấy ${copyGroups.size} nhóm bản sao cần xử lý`);
+
+      for (const [timestamp, copies] of copyGroups) {
+        try {
+          console.log(`\n🎬 Đang xử lý nhóm ${timestamp}...`);
+
+          // Kiểm tra chất lượng của tất cả bản sao trong nhóm
+          const copyQualities = await Promise.all(
+            copies.map(async (copy) => {
+              const quality = await this.checkVideoQuality(copy);
+              return {
+                file: copy,
+                quality: quality
+              };
+            })
+          );
+
+          // Hiển thị thông tin chất lượng
+          console.log('\n📊 Kết quả chất lượng:');
+          copyQualities.forEach((copy, index) => {
+            console.log(`Bản ${index + 1}: ${copy.quality.width}x${copy.quality.height}`);
+          });
+
+          // Tìm bản có chất lượng tốt nhất
+          const bestCopy = copyQualities.reduce((best, current) => {
+            if (!best || (current.quality.height > best.quality.height)) {
+              return current;
+            }
+            return best;
+          }, null);
+
+          if (bestCopy && bestCopy.quality.height > 0) {
+            // Khôi phục tên gốc cho bản tốt nhất
+            const originalName = bestCopy.file.originalInfo.originalName;
+            console.log(`✨ Đổi tên bản chất lượng tốt nhất (${bestCopy.quality.height}p) về "${originalName}"`);
+            
+            await this.withRetry(async () => {
+              return this.drive.files.update({
+                fileId: bestCopy.file.id,
+                requestBody: {
+                  name: originalName
+                },
+                supportsAllDrives: true,
+              });
+            });
+
+            // Xóa các bản còn lại
+            for (const copy of copies) {
+              if (copy.id !== bestCopy.file.id) {
+                await this.withRetry(async () => {
+                  return this.drive.files.delete({
+                    fileId: copy.id,
+                    supportsAllDrives: true,
+                  });
+                });
+              }
+            }
+          } else {
+            console.log('❌ Không tìm thấy bản nào có chất lượng tốt, giữ nguyên tất cả bản sao');
+          }
+
+        } catch (error) {
+          console.error(`❌ Lỗi xử lý nhóm ${timestamp}:`, error.message);
+          continue;
+        }
+      }
+
+      console.log('\n✅ Hoàn thành việc chọn lọc và đổi tên');
+      
+    } catch (error) {
+      console.error('❌ Lỗi:', error.message);
+      throw error;
     }
   }
 }

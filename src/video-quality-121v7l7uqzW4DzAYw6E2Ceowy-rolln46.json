@@ -1,0 +1,178 @@
+{
+  "totalVideos": 18,
+  "resolution": {
+    "1080p": 0,
+    "720p": 16,
+    "480p": 1,
+    "360p": 0,
+    "lower": 0,
+    "unknown": 1
+  },
+  "details": [
+    {
+      "name": "03. Bài 3. Cực trị hàm số-(720p60).mp4",
+      "id": "13eRVuJbDAE4p1sjKfqV8nF0SrxjYc2uT",
+      "width": 1280,
+      "height": 720,
+      "duration": "6014633",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "04. GTLN-GTNN của hàm số.mp4",
+      "id": "13dq9JFpa0QMOq_G2z1GlItxYun_sTfRy",
+      "width": 1280,
+      "height": 720,
+      "duration": "4102533",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "06. Bài 6. Tương giao đồ thị hàm số.mp4",
+      "id": "13UHAj2ueMm039pEVgatD4HUEc33nzNdr",
+      "width": 1280,
+      "height": 720,
+      "duration": "2737366",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "01. Tính đơn điệu hàm số buổi 1.mp4",
+      "id": "13IBXPAOBK24i3sZvq5_NNiSbhhnOwnTq",
+      "width": 1280,
+      "height": 720,
+      "duration": "3985766",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "07. Bài 7. Bài toán thực tế.mp4",
+      "id": "138kZXDMsD3jB5rMOrQzJuKpY2nyIk0Ur",
+      "width": 1280,
+      "height": 720,
+      "duration": "3414533",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "05. Bài 5. Đường tiệm cận.mp4",
+      "id": "137HmPrSfhvcvDk0mAR2Kv7pC2FwTKD4J",
+      "width": 1280,
+      "height": 720,
+      "duration": "3992366",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "16. Bài 9. Đơn điệu và cực trị nâng cao.mp4",
+      "id": "12wWDAmNq_CZfId1ziF2eggqjFdcscgHV",
+      "width": 1280,
+      "height": 720,
+      "duration": "7987640",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "02. Tính đơn điệu hàm số buổi 2.mp4",
+      "id": "12uwGdvFfgeCQ-JoiOvJMq_z8UMMK0eYZ",
+      "width": 1280,
+      "height": 720,
+      "duration": "4957933",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "14. Bài 8. Skill xấp xỉ nghiệm, ốc sên.mp4",
+      "id": "12tCldyT3cvNG7zRJlySNIngh60lvVypY",
+      "width": 1280,
+      "height": 720,
+      "duration": "6363760",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "18. Bài 10. Mimax nâng cao bài giảng.mp4",
+      "id": "12nsHY5giVrAjI8Bo-obxGqGKLCGEMDf5",
+      "width": 1280,
+      "height": 720,
+      "duration": "6860520",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "20. Tham số m nền tảng vận dụng.mp4",
+      "id": "12ept5f4Kh4Ujp6Cyb6FTKc_ezJI3TZQf",
+      "width": 1280,
+      "height": 676,
+      "duration": "7157533",
+      "resolution": "480p",
+      "status": "success"
+    },
+    {
+      "name": "22. Tư duy toán thực tế.mp4",
+      "id": "12eONtKVl9DaU0VhS2qKzOQuA2fkUYSis",
+      "width": 1280,
+      "height": 720,
+      "duration": "6603439",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "31. Bài 15. Skill ghép BBT và đánh giá đồng thời.mp4",
+      "id": "12cbY0iIk46-g8nXU7IsI5kgd4SJ69VwZ",
+      "width": 1280,
+      "height": 720,
+      "duration": "6964159",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "27. Skill Ghép trục.mp4",
+      "id": "12YxjWyVvwnif_MBbFphtGjyWkqFtE2QE",
+      "width": 1280,
+      "height": 720,
+      "duration": "6894119",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "29. Bài 14. Skill đồ thị kép.mp4",
+      "id": "12VbK1UJ4Ot35eOozmEG0nQi6rJGjmYC0",
+      "width": 1280,
+      "height": 720,
+      "duration": "5807880",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "37. Bài 18. Toán thực tế nâng cao bài giảng.mp4",
+      "id": "12VKlnTLkciqbKXvVTEZnf84oZBu_3zKr",
+      "width": 1280,
+      "height": 720,
+      "duration": "7667119",
+      "resolution": "720p",
+      "status": "success"
+    },
+    {
+      "name": "33. Bài 16. Skill Máng lợn.mp4",
+      "id": "12V8gY65q3OT--vE_h45rjY21OJ65wepm",
+      "width": 0,
+      "height": 0,
+      "duration": 0,
+      "resolution": "unknown",
+      "status": "no_metadata",
+      "fileSize": "258682589",
+      "createdTime": "2024-11-19T06:36:05.068Z",
+      "modifiedTime": "2024-11-19T06:36:05.068Z"
+    },
+    {
+      "name": "35. Bài 17. Skill hàm đặc trưng.mp4",
+      "id": "12T7JFlW9ZsRGSMnHkqH9MFm-b8bWOozp",
+      "width": 1280,
+      "height": 720,
+      "duration": "6215079",
+      "resolution": "720p",
+      "status": "success"
+    }
+  ]
+}

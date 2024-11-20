@@ -418,7 +418,7 @@ class PDFDownloader {
     const finalCheck = this.pageRequests.size;
     if (finalCheck > lastSize) {
       console.log(
-        `📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cuối`
+        `📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cu��i`
       );
     }
 

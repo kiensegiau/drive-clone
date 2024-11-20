@@ -15,17 +15,21 @@ class DriveAPI {
   constructor(downloadOnly = false) {
     try {
       this.downloadOnly = downloadOnly;
+      this.targetFolderId = null;
 
-      // Tạo đường dẫn thư mục downloads
-      const homeDir = require("os").homedir();
-      this.BASE_DIR = getLongPath(
-        path.join("G:", "My Drive", "drive-clone")
-      );
+      // Xác định BASE_DIR dựa vào mode
+      if (downloadOnly) {
+        // Phương án 2: Tải về Drive Desktop
+        this.BASE_DIR = getLongPath(
+          path.join("G:", "My Drive", "drive-clone")
+        );
+      } else {
+        // Phương án 1: Tải về local rồi upload API
+        this.BASE_DIR = getLongPath(path.join(process.cwd(), 'downloads'));
+      }
 
-      // Log để debug
       console.log(`\n🔍 Thư mục gốc: ${this.BASE_DIR}`);
 
-      // Tạo thư mục gốc nếu chưa tồn tại
       if (!fs.existsSync(this.BASE_DIR)) {
         try {
           fs.mkdirSync(this.BASE_DIR, { recursive: true });
@@ -121,6 +125,17 @@ class DriveAPI {
 
   async start(sourceFolderId) {
     try {
+      if (!this.downloadOnly) {
+        // Tìm hoặc tạo folder đích cho phương án 1
+        console.log('🔍 Đang tìm folder: "video-drive-clone"');
+        this.targetFolderId = await this.findOrCreateFolder("video-drive-clone");
+        console.log(` Tìm thấy folder: "video-drive-clone" (${this.targetFolderId})`);
+      }
+
+      // Truyền targetFolderId xuống các handler
+      this.videoHandler = new VideoHandler(this.oauth2Client, this.downloadOnly, this.targetFolderId);
+      this.pdfDownloader = new PDFDownloader(this, this.tempDir, this.processLogger, this.downloadOnly, this.targetFolderId);
+
       // Lấy tên folder gốc từ Drive
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`\n🎯 Bắt đầu tải folder: ${folderName}`);
@@ -263,18 +278,23 @@ class DriveAPI {
     }
   }
 
-  async processFolder(sourceFolderId, targetPath, depth = 0) {
+  async processFolder(sourceFolderId, targetPath = null, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
       // Lấy thông tin folder hiện tại
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
 
-      // Tạo đường dẫn folder hiện tại với xử lý đường dẫn dài
+      // Nếu targetPath chưa được set, sử dụng BASE_DIR
+      if (!targetPath) {
+        targetPath = this.BASE_DIR;
+      }
+
+      // Tạo đường dẫn folder hiện tại với xử lý đường dẫn dài 
       const currentFolderPath = depth === 0 
-        ? targetPath 
+        ? targetPath
         : getLongPath(path.join(targetPath, sanitizePath(folderName)));
-      
+
       // Tạo thư mục với đường dẫn dài nếu chưa tồn tại
       if (!fs.existsSync(currentFolderPath)) {
         fs.mkdirSync(currentFolderPath, { recursive: true });
