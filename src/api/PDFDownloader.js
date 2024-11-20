@@ -46,53 +46,105 @@ class PDFDownloader {
     }
   }
 
-  async downloadPDF(fileId, fileName, targetPath) {
+  async downloadPDF(fileId, fileName, targetPath, targetFolderId) {
     const startTime = new Date();
     const safeFileName = sanitizePath(fileName);
     
-    // Tạo đường dẫn đích cuối cùng trong thư mục đích
-    const finalPath = getLongPath(path.join(targetPath, safeFileName));
-    
-    // Kiểm tra file đã tồn tại
-    if (fs.existsSync(finalPath)) {
-      console.log(`⏩ File đã tồn tại, bỏ qua: ${fileName}`);
-      return { success: true, skipped: true, filePath: finalPath };
-    }
-
-    // Tạo đường dẫn tạm thời với timestamp
-    const tempPath = getLongPath(path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`));
-    const tempFiles = [tempPath];
-
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
-      console.log(`📂 Thư mục đích: ${targetPath}`);
-      
-      // Tạo thư mục đích nếu chưa tồn tại
-      const finalDir = path.dirname(finalPath);
-      if (!fs.existsSync(finalDir)) {
-        fs.mkdirSync(finalDir, { recursive: true });
-      }
 
-      // Kiểm tra file đích cuối cùng không tồn tại trước khi tải
-      if (fs.existsSync(finalPath)) {
-        console.log(`File đã tồn tại, bỏ qua: ${finalPath}`);
-        return { success: true, skipped: true, filePath: finalPath };
-      }
+      // Kiểm tra và tạo folder trên Drive nếu chưa tồn tại
+      if (!this.driveAPI.downloadOnly && targetFolderId) {
+        const folderPath = path.dirname(fileName);
+        if (folderPath !== '.') {
+          const folders = folderPath.split(path.sep);
+          let currentFolderId = targetFolderId;
+          
+          // Tạo từng cấp folder
+          for (const folderName of folders) {
+            const query = `name='${folderName}' and '${currentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+            const folderResult = await this.driveAPI.drive.files.list({
+              q: query,
+              fields: 'files(id, name)',
+              supportsAllDrives: true
+            });
 
-      // Tải PDF vào thư mục tạm
-      const result = await this.downloadFromDriveAPI(fileId, tempPath);
-      
-      if (result.success) {
-        // Thay thế rename bằng copy + unlink
-        if (fs.existsSync(tempPath)) {
-          console.log(`📦 Copy PDF vào thư mục đích: ${finalPath}`);
-          await fs.promises.copyFile(tempPath, finalPath);
-          await fs.promises.unlink(tempPath); // Xóa file tạm sau khi copy
-          console.log(`✅ Hoàn thành: ${fileName}`);
+            if (folderResult.data.files.length > 0) {
+              currentFolderId = folderResult.data.files[0].id;
+            } else {
+              // Tạo folder mới nếu chưa tồn tại
+              const newFolder = await this.driveAPI.drive.files.create({
+                requestBody: {
+                  name: folderName,
+                  mimeType: 'application/vnd.google-apps.folder',
+                  parents: [currentFolderId]
+                },
+                fields: 'id',
+                supportsAllDrives: true
+              });
+              currentFolderId = newFolder.data.id;
+            }
+          }
+          // Cập nhật lại targetFolderId thành folder cuối cùng
+          targetFolderId = currentFolderId;
         }
       }
 
-      return { success: true, filePath: finalPath };
+      // Nếu không phải download only thì kiểm tra tồn tại trên Drive
+      if (!this.driveAPI.downloadOnly && targetFolderId) {
+        // Kiểm tra file đã tồn tại trên Drive
+        const query = `name='${safeFileName}' and '${targetFolderId}' in parents and trashed=false`;
+        const existingFile = await this.driveAPI.drive.files.list({
+          q: query,
+          fields: "files(id, name, size)",
+          spaces: "drive",
+          supportsAllDrives: true
+        });
+
+        if (existingFile.data.files.length > 0) {
+          console.log(`⏩ File đã tồn tại trên Drive: ${fileName}`);
+          return {
+            success: true,
+            skipped: true,
+            fileId: existingFile.data.files[0].id
+          };
+        }
+      } else {
+        // Nếu là download only thì kiểm tra local
+        const finalPath = getLongPath(path.join(targetPath, safeFileName));
+        if (fs.existsSync(finalPath)) {
+          console.log(`⏩ File đã tồn tại locally: ${fileName}`);
+          return { 
+            success: true, 
+            skipped: true, 
+            filePath: finalPath 
+          };
+        }
+      }
+
+      // Tạo đường dẫn tạm thời với timestamp
+      const tempPath = getLongPath(path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`));
+      const tempFiles = [tempPath];
+
+      // Tải PDF vào thư mục tạm
+      const result = await this.downloadFromDriveAPI(fileId, tempPath, targetFolderId);
+      
+      if (result.success) {
+        if (this.driveAPI.downloadOnly) {
+          // Copy vào thư mục đích nếu là download only
+          const finalPath = getLongPath(path.join(targetPath, safeFileName));
+          console.log(`📦 Copy PDF vào thư mục đích: ${finalPath}`);
+          await fs.promises.copyFile(tempPath, finalPath);
+          console.log(`✅ Hoàn thành: ${fileName}`);
+          return { success: true, filePath: finalPath };
+        } else {
+          // Trả về kết quả upload nếu không phải download only
+          return result;
+        }
+      }
+
+      return result;
+
     } catch (error) {
       console.error(`❌ Lỗi xử lý PDF:`, error.message);
       return { success: false, error: error.message };
@@ -111,126 +163,115 @@ class PDFDownloader {
     }
   }
 
-  async downloadFromDriveAPI(fileId, outputPath) {
-    const MAX_UPLOAD_RETRIES = 5;
-    const RETRY_DELAY = 5000;
-
+  async downloadFromDriveAPI(fileId, outputPath, targetFolderId) {
     try {
-      // Đảm bảo thư mục chứa file đích tồn tại
-      const outputDir = path.dirname(outputPath);
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
-
-      console.log(`\n📥 Bắt đầu tải PDF từ Drive API...`);
-
       const response = await this.driveAPI.drive.files.get(
         { fileId, alt: "media" },
         { responseType: "stream" }
       );
 
-      const originalSize = parseInt(response.headers["content-length"], 10);
-      const fileSizeMB = (originalSize / (1024 * 1024)).toFixed(2);
-      console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
+      // Tạo thư mục nếu chưa tồn tại
+      const outputDir = path.dirname(outputPath);
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true });
+      }
 
       return new Promise((resolve, reject) => {
-        let downloadedSize = 0;
-        let lastLogTime = Date.now();
-        const logInterval = 1000;
+        const dest = fs.createWriteStream(outputPath);
+        let progress = 0;
 
-        try {
-          const dest = fs.createWriteStream(outputPath);
+        response.data
+          .on("data", chunk => {
+            progress += chunk.length;
+            process.stdout.write(`\r⏳ Đã tải: ${(progress / 1024 * 1024).toFixed(2)}MB`);
+          })
+          .on("end", async () => {
+            try {
+              process.stdout.write("\n");
+              console.log("✅ Tải PDF hoàn tất!");
 
-          response.data
-            .on("data", (chunk) => {
-              try {
-                downloadedSize += chunk.length;
-                const now = Date.now();
-                if (now - lastLogTime >= logInterval) {
-                  const progress = (downloadedSize / originalSize) * 100;
-                  const downloadedMB = (downloadedSize / (1024 * 1024)).toFixed(2);
-                  console.log(
-                    `⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(1)}%)`
-                  );
-                  lastLogTime = now;
-                }
-              } catch (chunkError) {
-                console.error('⚠️ Lỗi xử lý chunk:', chunkError.message);
+              // Nếu là chế độ download only thì return luôn
+              if (this.driveAPI.downloadOnly) {
+                resolve({ success: true, filePath: outputPath });
+                return;
               }
-            })
-            .on("end", async () => {
-              try {
-                console.log(`\n✅ Tải PDF hoàn tất!`);
-                const stats = await fs.promises.stat(outputPath);
-                const processedSize = stats.size;
 
-                // Kiểm tra mode download only
-                if (this.driveAPI.downloadOnly) {
-                  console.log(`✅ Đã lưu PDF vào: ${outputPath}`);
+              // Lấy kích thước file để kiểm tra
+              const stats = fs.statSync(outputPath);
+              const fileSize = stats.size;
+              console.log(`\n📤 Đang upload lên Drive...`);
+
+              // Lấy tên file gốc và đường dẫn
+              const originalFileName = path.basename(outputPath).replace(/^temp_\d+_/, '');
+              console.log(`📤 Đang upload ${originalFileName}...`);
+              console.log(`📦 Kích thước file: ${(fileSize / (1024 * 1024)).toFixed(2)}MB`);
+
+              // Upload với retry logic
+              const MAX_RETRIES = 3;
+              const RETRY_DELAY = 5000;
+
+              for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                  // Tạo stream mới cho mỗi lần retry
+                  const fileStream = fs.createReadStream(outputPath);
+
+                  const uploadResponse = await this.driveAPI.drive.files.create({
+                    requestBody: {
+                      name: originalFileName,
+                      parents: [targetFolderId], // Sử dụng targetFolderId để duy trì cấu trúc
+                    },
+                    media: {
+                      mimeType: 'application/pdf',
+                      body: fileStream
+                    },
+                    fields: 'id,name,size',
+                    supportsAllDrives: true,
+                    uploadType: fileSize > 5 * 1024 * 1024 ? 'resumable' : 'multipart'
+                  });
+
+                  console.log(`✅ Upload thành công: ${uploadResponse.data.name}`);
+                  console.log(`📎 File ID: ${uploadResponse.data.id}`);
+
+                  // Set permissions
+                  await this.driveAPI.drive.permissions.create({
+                    fileId: uploadResponse.data.id,
+                    requestBody: {
+                      role: 'reader',
+                      type: 'anyone',
+                      allowFileDiscovery: false
+                    },
+                    supportsAllDrives: true
+                  });
+
                   resolve({
                     success: true,
                     filePath: outputPath,
-                    originalSize,
-                    processedSize
+                    uploadedFile: uploadResponse.data
                   });
                   return;
-                }
-                
-                // Nếu là mode upload, tiếp tục upload file
-                console.log(`\n📤 Đang upload lên Drive...`);
-                let uploadAttempt = 0;
-                let uploadedFile = null;
 
-                while (uploadAttempt < MAX_UPLOAD_RETRIES) {
-                  try {
-                    uploadedFile = await this.driveAPI.uploadFile(outputPath);
-                    console.log(`✨ Upload hoàn tất!`);
-                    
-                    // Permission handling with retry
-                    let permissionAttempt = 0;
-                    while (permissionAttempt < MAX_UPLOAD_RETRIES) {
-                      try {
-                        await this.driveAPI.drive.permissions.create({
-                          fileId: uploadedFile.id,
-                          requestBody: {
-                            role: 'reader',
-                            type: 'anyone'
-                          }
-                        });
-                        break;
-                      } catch (permError) {
-                        permissionAttempt++;
-                        if (permissionAttempt === MAX_UPLOAD_RETRIES) throw permError;
-                        console.log(`⚠️ Retry permission (${permissionAttempt}/${MAX_UPLOAD_RETRIES})`);
-                        await new Promise(r => setTimeout(r, RETRY_DELAY));
-                      }
-                    }
-
-                    resolve({
-                      uploadedFile,
-                      originalSize,
-                      processedSize,
-                      newUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`
-                    });
-                    break;
-                  } catch (uploadError) {
-                    uploadAttempt++;
-                    if (uploadAttempt === MAX_UPLOAD_RETRIES) throw uploadError;
-                    console.log(`⚠️ Retry upload (${uploadAttempt}/${MAX_UPLOAD_RETRIES})`);
-                    await new Promise(r => setTimeout(r, RETRY_DELAY));
+                } catch (uploadError) {
+                  console.error(`❌ Lỗi upload (lần ${attempt}/${MAX_RETRIES}):`, uploadError.message);
+                  
+                  if (attempt === MAX_RETRIES) {
+                    reject(uploadError);
+                    return;
                   }
+
+                  const delay = RETRY_DELAY * attempt;
+                  console.log(`⏳ Thử lại sau ${delay/1000}s...`);
+                  await new Promise(r => setTimeout(r, delay));
+                  
+                  // Đóng stream cũ trước khi tạo stream mới ở lần retry tiếp theo
+                  fileStream?.destroy();
                 }
-              } catch (error) {
-                reject(error);
               }
-            })
-            .on("error", (error) => {
+            } catch (error) {
               reject(error);
-            })
-            .pipe(dest);
-        } catch (streamError) {
-          reject(streamError);
-        }
+            }
+          })
+          .on("error", err => reject(err))
+          .pipe(dest);
       });
     } catch (error) {
       console.error(`❌ Lỗi tải file:`, error.message);
@@ -418,7 +459,7 @@ class PDFDownloader {
     const finalCheck = this.pageRequests.size;
     if (finalCheck > lastSize) {
       console.log(
-        `📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cu��i`
+        `📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cuối`
       );
     }
 

@@ -13,7 +13,7 @@ const os = require("os");
 const { sanitizePath } = require("../utils/pathUtils");
 
 class VideoHandler {
-  constructor(oAuth2Client = null) {
+  constructor(oAuth2Client = null, downloadOnly = false) {
     try {
       this.MAX_RETRIES = 5;
       this.RETRY_DELAY = 2000;
@@ -27,6 +27,7 @@ class VideoHandler {
       this.chromeManager = ChromeManager.getInstance();
       this.processLogger = new ProcessLogger();
       this.queue = [];
+      this.downloadOnly = downloadOnly;
 
       // Sử dụng oAuth2Client được truyền vào
       this.oAuth2Client = oAuth2Client;
@@ -84,12 +85,47 @@ class VideoHandler {
     const indent = "  ".repeat(depth);
     const startTime = Date.now();
     let tempFiles = [];
+    let currentFolderId = targetFolderId;
 
     try {
       console.log(`${indent}=== Xử lý video: ${fileName} ===`);
-
-      // Tạo tên file an toàn
       const safeFileName = sanitizePath(fileName);
+
+      // Kiểm tra và tạo folder trên Drive nếu chưa tồn tại
+      if (!this.downloadOnly) {
+        const folderPath = path.dirname(fileName);
+        if (folderPath !== '.') {
+          const folders = folderPath.split(path.sep);
+          
+          // Tạo từng cấp folder
+          for (const folderName of folders) {
+            const query = `name='${folderName}' and '${currentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+            const folderResult = await this.drive.files.list({
+              q: query,
+              fields: 'files(id, name)',
+              supportsAllDrives: true
+            });
+
+            if (folderResult.data.files.length > 0) {
+              currentFolderId = folderResult.data.files[0].id;
+              console.log(`${indent}📂 Sử dụng folder: "${folderName}" (${currentFolderId})`);
+            } else {
+              // Tạo folder mới nếu chưa tồn tại
+              const newFolder = await this.drive.files.create({
+                requestBody: {
+                  name: folderName,
+                  mimeType: 'application/vnd.google-apps.folder',
+                  parents: [currentFolderId]
+                },
+                fields: 'id, name',
+                supportsAllDrives: true
+              });
+              currentFolderId = newFolder.data.id;
+              console.log(`${indent}📁 Tạo folder mới: "${folderName}" (${currentFolderId})`);
+            }
+          }
+        }
+      }
 
       // Tạo đường dẫn tạm với timestamp
       const tempPath = getLongPath(
@@ -172,32 +208,14 @@ class VideoHandler {
       // Upload video với try-catch nếu cần
       if (!this.downloadOnly) {
         try {
-          console.log(`${indent}📤 Đang upload video lên Drive...`);
+          console.log(`${indent}📤 Đang upload video lên Drive vào folder: ${currentFolderId}...`);
           const uploadedFile = await this.uploadFile(
             finalPath,
-            fileName,
-            targetFolderId,
+            safeFileName,
+            currentFolderId,
             "video/mp4"
           );
-
-          // Log hoàn thành upload
-          try {
-            this.processLogger.logProcess({
-              type: "video_process",
-              status: "uploaded",
-              fileName,
-              fileId,
-              targetFileId: uploadedFile.id,
-              fileSize: stats.size,
-              duration: Date.now() - startTime,
-              driveViewUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`,
-              driveDownloadUrl: `https://drive.google.com/uc?export=download&id=${uploadedFile.id}`,
-              timestamp: new Date().toISOString(),
-            });
-          } catch (logError) {
-            console.error(`${indent}⚠️ Lỗi ghi log upload:`, logError.message);
-          }
-
+          console.log(`${indent}✅ Đã upload video: ${uploadedFile.id} vào folder: ${currentFolderId}`);
           return { success: true, fileId: uploadedFile.id };
         } catch (uploadError) {
           throw new Error(`Lỗi upload: ${uploadError.message}`);
@@ -338,7 +356,7 @@ class VideoHandler {
   ) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
-    const CONCURRENT_DOWNLOADS = 10;
+    const CONCURRENT_DOWNLOADS = 5;
     let browser;
     let foundVideoUrls = [];
     let bestQuality = null;
@@ -615,42 +633,54 @@ class VideoHandler {
           const chunkGroup = chunks.slice(i, i + CONCURRENT_DOWNLOADS);
           const downloadPromises = chunkGroup.map((chunk) => {
             return new Promise(async (resolve, reject) => {
-              try {
-                const response = await axios({
-                  method: "get",
-                  url: videoUrl,
-                  headers: {
-                    ...headers,
-                    Range: `bytes=${chunk.start}-${chunk.end}`,
-                  },
-                  responseType: "arraybuffer",
-                  timeout: 30000,
-                });
+              for (let retry = 0; retry < MAX_RETRIES; retry++) {
+                try {
+                  const response = await axios({
+                    method: "get",
+                    url: videoUrl,
+                    headers: {
+                      ...headers,
+                      Range: `bytes=${chunk.start}-${chunk.end}`,
+                    },
+                    responseType: "arraybuffer",
+                    timeout: 30000,
+                  });
 
-                const buffer = Buffer.from(response.data);
+                  const buffer = Buffer.from(response.data);
 
-                // Ghi chunk vào file
-                await fileHandle.write(buffer, 0, buffer.length, chunk.start);
+                  // Ghi chunk vào file
+                  await fileHandle.write(buffer, 0, buffer.length, chunk.start);
 
-                totalDownloaded += buffer.length;
-                const progress = ((totalDownloaded / totalSize) * 100).toFixed(
-                  1
-                );
-                const speed = (
-                  totalDownloaded /
-                  ((Date.now() - downloadStartTime) / 1000) /
-                  1024 /
-                  1024
-                ).toFixed(2);
+                  totalDownloaded += buffer.length;
+                  const progress = ((totalDownloaded / totalSize) * 100).toFixed(
+                    1
+                  );
+                  const speed = (
+                    totalDownloaded /
+                    ((Date.now() - downloadStartTime) / 1000) /
+                    1024 /
+                    1024
+                  ).toFixed(2);
 
-                console.log(
-                  `${indent}✓ Chunk ${chunk.index}/${chunks.length}: ${progress}% (${speed} MB/s)`
-                );
-                resolve();
-              } catch (error) {
-                reject(
-                  new Error(`Lỗi tải chunk ${chunk.index}: ${error.message}`)
-                );
+                  console.log(
+                    `${indent}✓ Chunk ${chunk.index}/${chunks.length}: ${progress}% (${speed} MB/s)`
+                  );
+                  resolve();
+                  break; // Thoát khỏi vòng lặp retry nếu thành công
+                } catch (error) {
+                  console.error(
+                    `${indent}❌ Lỗi tải chunk ${chunk.index} (lần ${retry + 1}/${MAX_RETRIES}):`,
+                    error.message
+                  );
+                  if (retry === MAX_RETRIES - 1) {
+                    reject(
+                      new Error(`Lỗi tải chunk ${chunk.index}: ${error.message}`)
+                    );
+                  } else {
+                    console.log(`${indent}⏳ Đợi 2s trước khi thử lại...`);
+                    await new Promise((r) => setTimeout(r, 2000));
+                  }
+                }
               }
             });
           });
@@ -738,38 +768,77 @@ class VideoHandler {
     }
   }
 
-  async uploadFile(filePath, fileName, parentId, mimeType = "video/mp4") {
-    const MAX_RETRIES = 3;
+  async uploadFile(filePath, fileName, targetFolderId, mimeType) {
+    const MAX_RETRIES = 5;
     const RETRY_DELAY = 5000;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
-        if (!fs.existsSync(filePath)) {
-          throw new Error(`File không tồn tại: ${filePath}`);
-        }
-
         const fileSize = fs.statSync(filePath).size;
-        console.log(`📦 Kích thước file: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
+        const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
+        console.log(`📤 Đang upload ${fileName}...`);
+        console.log(`📦 Kích thước file: ${fileSizeMB}MB`);
+
+        // Thiết lập metadata giống hệt trình duyệt web
         const fileMetadata = {
           name: fileName,
-          parents: [parentId]
+          parents: [targetFolderId],
+          description: "",
+          // Thêm các thuộc tính để xử lý video giống web UI
+          properties: {
+            source: "web_client",
+            upload_source: "web_client",
+            upload_time: Date.now().toString(),
+            upload_agent: "Mozilla/5.0 Chrome/120.0.0.0",
+            processed: "false",
+            processing_status: "PENDING",
+          },
+          appProperties: {
+            force_high_quality: "true",
+            processing_priority: "HIGH",
+          },
         };
 
+        // Tạo readable stream với chunk size giống web
         const media = {
           mimeType: mimeType,
-          body: fs.createReadStream(filePath)
+          body: fs.createReadStream(filePath, {
+            highWaterMark: 256 * 1024, // 256KB chunks như web
+          }),
         };
 
+        // Upload với cấu hình giống web UI
         const response = await this.drive.files.create({
-          resource: fileMetadata,
+          requestBody: fileMetadata,
           media: media,
-          fields: "id",
-          supportsAllDrives: true
+          fields: "id, name, size, mimeType, webViewLink, webContentLink",
+          supportsAllDrives: true,
+          enforceSingleParent: true,
+          ignoreDefaultVisibility: true,
+          keepRevisionForever: true,
+          uploadType: fileSize > 5 * 1024 * 1024 ? "resumable" : "multipart",
         });
 
         console.log(`✨ Upload thành công: ${fileName}`);
         console.log(`📎 File ID: ${response.data.id}`);
+
+        // Thêm try-catch cho phần set permissions
+        try {
+          await this.drive.permissions.create({
+            fileId: response.data.id,
+            requestBody: {
+              role: "reader",
+              type: "anyone",
+              allowFileDiscovery: false,
+              viewersCanCopyContent: true,
+            },
+            supportsAllDrives: true,
+            sendNotificationEmail: false,
+          });
+        } catch (permError) {
+          console.error(`⚠️ Lỗi set permissions:`, permError.message);
+        }
 
         // Thêm try-catch cho video processing
         try {
@@ -789,14 +858,14 @@ class VideoHandler {
           throw error;
         }
 
-        console.log(`⏳ Thử lại sau ${RETRY_DELAY/1000}s...`);
+        console.log(` Thử lại sau 5s...`);
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
       }
     }
   }
 
   // Thêm hàm để theo dõi tiến độ xử lý video
-  async checkVideoProcessing(fileId, maxAttempts = 10) {
+  async checkVideoProcessing(fileId, maxAttempts = 5) {
     console.log(`⏳ Đang đợi video được xử lý...`);
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -821,7 +890,7 @@ class VideoHandler {
         console.log(
           `🔄 Lần kiểm tra ${
             attempt + 1
-          }/${maxAttempts}: Video đang được xử lý...`
+          }/${maxAttempts}: Video đang đư��c xử lý...`
         );
         await new Promise((r) => setTimeout(r, 30000));
       } catch (error) {
@@ -1019,13 +1088,12 @@ class VideoHandler {
     console.log("✅ Đã xử lý xong tất cả videos trong queue");
   }
   async processVideoDownload(videoInfo) {
-    const { fileId, fileName, targetPath, depth } = videoInfo;
+    const { fileId, fileName, targetPath, depth, targetFolderId } = videoInfo;
     const tempFiles = [];
+    const startTime = Date.now();
 
     try {
       console.log(`🎥 Bắt đầu tải: ${fileName}`);
-
-      // Tạo tên file an toàn
       const safeFileName = sanitizePath(fileName);
 
       // Đường dẫn tạm trong TEMP_DIR
@@ -1035,73 +1103,47 @@ class VideoHandler {
       );
       tempFiles.push(tempPath);
 
+      // Tải video vào thư mục tạm
+      await this.downloadVideoWithChunks(null, tempPath, depth, fileId, fileName);
+      console.log(`✅ Đã tải xong video vào: ${tempPath}`);
+
+      // Upload lên Drive API
       try {
-        // Tải video vào thư mục tạm
-        await this.downloadVideoWithChunks(
-          null,
+        console.log(`📤 Đang upload ${fileName} lên Drive...`);
+        const uploadedFile = await this.uploadFile(
           tempPath,
-          depth,
-          fileId,
-          fileName
+          fileName,
+          targetFolderId,
+          "video/mp4"
         );
-      } catch (downloadError) {
-        console.error(`❌ Lỗi tải video ${fileName}:`, downloadError.message);
-        return;
-      }
+        console.log(`✅ Đã upload thành công: ${uploadedFile.id}`);
 
-      // Kiểm tra file tạm đã tải xong
-      if (fs.existsSync(tempPath)) {
-        if (!this.downloadOnly) {
-          // Phương án 1: Upload trực tiếp từ file tạm
-          try {
-            const relativePath = path.relative(this.BASE_DIR, targetPath);
-            const folders = relativePath.split(path.sep);
-
-            console.log(`📂 Tạo cấu trúc thư mục trên Drive: ${folders.join('/')}`);
-            
-            let parentId = this.targetFolderId;
-            for (const folder of folders) {
-              if (folder) {
-                console.log(`  ↳ Đang xử lý folder: ${folder}`);
-                parentId = await this.findOrCreateFolder(folder, parentId);
-              }
-            }
-
-            console.log(`📤 Đang upload video lên Drive...`);
-            await this.uploadFile(tempPath, fileName, parentId);
-            console.log(`✅ Đã upload xong video vào folder: ${folders[folders.length-1] || 'Root'}`);
-          } catch (uploadError) {
-            console.error(`❌ Lỗi upload video ${fileName}:`, uploadError.message);
-          }
-        } else {
-          // Phương án 2: Copy vào thư mục Drive Desktop
-          try {
-            // Tạo thư mục đích nếu chưa tồn tại
-            const finalPath = path.join(targetPath, safeFileName);
-            if (!fs.existsSync(path.dirname(finalPath))) {
-              fs.mkdirSync(path.dirname(finalPath), { recursive: true });
-            }
-
-            console.log(`📦 Copy video vào thư mục Drive: ${finalPath}`);
-            const readStream = fs.createReadStream(tempPath);
-            const writeStream = fs.createWriteStream(finalPath);
-
-            await new Promise((resolve, reject) => {
-              readStream
-                .pipe(writeStream)
-                .on("finish", resolve)
-                .on("error", reject);
-            });
-
-            console.log(`✅ Đã copy xong video vào Drive Desktop`);
-          } catch (copyError) {
-            console.error(`❌ Lỗi copy video ${fileName}:`, copyError.message);
-          }
-        }
+        // Log hoàn thành upload
+        this.processLogger.logProcess({
+          type: "video_process", 
+          status: "uploaded",
+          fileName,
+          fileId: uploadedFile.id,
+          duration: Date.now() - startTime,
+          timestamp: new Date().toISOString()
+        });
+      } catch (uploadError) {
+        console.error(`❌ Lỗi upload video: ${uploadError.message}`);
+        throw uploadError;
       }
 
     } catch (error) {
       console.error(`❌ Lỗi xử lý video ${fileName}:`, error.message);
+      // Log lỗi
+      this.processLogger.logProcess({
+        type: "video_process",
+        status: "error",
+        fileName,
+        fileId,
+        error: error.message,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
     } finally {
       // Dọn dẹp files tạm
       for (const tempFile of tempFiles) {
@@ -1116,42 +1158,68 @@ class VideoHandler {
     }
   }
 
-  // Thêm hàm helper
-  async findOrCreateFolder(folderName, parentId) {
-    try {
-      // Tìm folder đã tồn tại
-      const response = await this.drive.files.list({
-        q: `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`,
-        fields: 'files(id, name)',
-        spaces: 'drive'
-      });
-
-      if (response.data.files.length > 0) {
-        return response.data.files[0].id;
-      }
-
-      // Tạo folder mới nếu chưa tồn tại
-      const fileMetadata = {
-        name: folderName,
-        mimeType: 'application/vnd.google-apps.folder',
-        parents: [parentId]
-      };
-
-      const folder = await this.drive.files.create({
-        resource: fileMetadata,
-        fields: 'id'
-      });
-
-      return folder.data.id;
-    } catch (error) {
-      console.error(`❌ Lỗi tạo/tìm folder ${folderName}:`, error.message);
-      throw error;
-    }
-  }
-
   // Thay thế phương thức processQueue cũ
   async processQueue() {
     return this.processQueueConcurrently();
+  }
+
+  async processVideoDownloadToDesktop(videoInfo) {
+    const { fileId, fileName, targetPath, depth } = videoInfo;
+    const tempFiles = [];
+    const startTime = Date.now();
+
+    try {
+      console.log(`🎥 Bắt đầu tải: ${fileName}`);
+      const safeFileName = sanitizePath(fileName);
+
+      // Đường dẫn tạm trong TEMP_DIR
+      const tempPath = path.join(
+        this.TEMP_DIR,
+        `temp_${Date.now()}_${safeFileName}`
+      );
+      tempFiles.push(tempPath);
+
+      // Đường dẫn đích trong Google Drive Desktop
+      const finalPath = path.join(targetPath, safeFileName);
+
+      // Tạo thư mục đích nếu chưa tồn tại
+      if (!fs.existsSync(path.dirname(finalPath))) {
+        fs.mkdirSync(path.dirname(finalPath), { recursive: true });
+      }
+
+      // Tải video vào thư mục tạm
+      await this.downloadVideoWithChunks(null, tempPath, depth, fileId, fileName);
+      console.log(`✅ Đã tải xong video vào: ${tempPath}`);
+
+      // Copy vào Google Drive Desktop
+      console.log(`📦 Copy video vào Google Drive Desktop: ${finalPath}`);
+      await fs.promises.copyFile(tempPath, finalPath);
+      console.log(`✅ Đã copy xong video vào Google Drive Desktop`);
+
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý video ${fileName}:`, error.message);
+      // Log lỗi
+      this.processLogger.logProcess({
+        type: "video_process",
+        status: "error",
+        fileName,
+        fileId,
+        error: error.message,
+        duration: Date.now() - startTime,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      // Dọn dẹp files tạm
+      for (const tempFile of tempFiles) {
+        try {
+          if (fs.existsSync(tempFile)) {
+            await fs.promises.unlink(tempFile);
+          }
+        } catch (cleanupError) {
+          console.warn(`⚠️ Không thể xóa file tạm: ${tempFile}`);
+        }
+      }
+    }
   }
 }
 
