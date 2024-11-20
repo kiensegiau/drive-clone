@@ -275,9 +275,16 @@ class DriveAPI {
         ? targetPath 
         : getLongPath(path.join(targetPath, sanitizePath(folderName)));
       
-      // Tạo thư mục với đường dẫn dài
+      // Tạo thư mục với đường dẫn dài nếu chưa tồn tại
       if (!fs.existsSync(currentFolderPath)) {
         fs.mkdirSync(currentFolderPath, { recursive: true });
+      }
+
+      // Kiểm tra file trước khi tạo mới
+      const filePath = path.join(currentFolderPath, sanitizePath(fileName));
+      if (fs.existsSync(filePath)) {
+        console.log(`File đã tồn tại, bỏ qua: ${filePath}`);
+        return;
       }
 
       // Lấy danh sách files trong folder

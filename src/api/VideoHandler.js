@@ -106,6 +106,12 @@ class VideoHandler {
         fs.mkdirSync(finalDir, { recursive: true });
       }
 
+      // Kiểm tra file đích cuối cùng không tồn tại trước khi xử lý
+      if (fs.existsSync(finalPath)) {
+        console.log(`File đã tồn tại, bỏ qua: ${finalPath}`);
+        return;
+      }
+
       // Log bắt đầu xử lý
       this.processLogger.logProcess({
         type: "video_process",
@@ -243,7 +249,7 @@ class VideoHandler {
     const outputPath = getLongPath(path.join(this.TEMP_DIR, safeFileName));
 
     try {
-      console.log(`${indent}📥 Bắt đ��u tải: ${file.name}`);
+      console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
 
       // Tải video với chunks
       await this.downloadVideoWithChunks(videoUrl, outputPath);
@@ -332,7 +338,7 @@ class VideoHandler {
   ) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
-    const CONCURRENT_DOWNLOADS = 4;
+    const CONCURRENT_DOWNLOADS = 10;
     let browser;
     let foundVideoUrls = [];
     let bestQuality = null;
@@ -592,7 +598,7 @@ class VideoHandler {
         const downloadStartTime = Date.now();
 
         // Tải từng chunk nhỏ
-        const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB mỗi chunk
+        const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB mỗi chunk
         const chunks = [];
 
         for (let start = 0; start < totalSize; start += CHUNK_SIZE) {

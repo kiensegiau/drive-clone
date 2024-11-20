@@ -73,6 +73,12 @@ class PDFDownloader {
         fs.mkdirSync(finalDir, { recursive: true });
       }
 
+      // Kiểm tra file đích cuối cùng không tồn tại trước khi tải
+      if (fs.existsSync(finalPath)) {
+        console.log(`File đã tồn tại, bỏ qua: ${finalPath}`);
+        return { success: true, skipped: true, filePath: finalPath };
+      }
+
       // Tải PDF vào thư mục tạm
       const result = await this.downloadFromDriveAPI(fileId, tempPath);
       
