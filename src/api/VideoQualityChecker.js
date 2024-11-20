@@ -1,4 +1,3 @@
-
 class VideoQualityChecker {
   constructor(oauth2Client, drive, processLogger) {
     this.oauth2Client = oauth2Client;
@@ -12,9 +11,9 @@ class VideoQualityChecker {
     this.MAX_RETRIES = 5;
     this.CONCURRENT_COPIES = 5;
     this.COPY_BATCH_SIZE = 10;
-    this.INITIAL_DELAY = 200;
-    this.MAX_DELAY = 16000;
-    this.QUOTA_RESET_TIME = 15000;
+    this.INITIAL_DELAY = 1000;
+    this.MAX_DELAY = 64000;
+    this.QUOTA_RESET_TIME = 60000;
   }
 
   async delay(ms) {
@@ -34,21 +33,27 @@ class VideoQualityChecker {
           error.message
         );
 
-        if (error.code === 429) {
-          // Quota exceeded
-          console.log(`⚠️ Đạt giới hạn API, đợi ${delay / 1000}s...`);
-          await this.delay(delay);
-          delay = Math.min(delay * 2, this.MAX_DELAY);
+        if (error.code === 429 || error.message.includes('quota')) {
+          // Xử lý quota exceeded tốt hơn
+          const waitTime = this.QUOTA_RESET_TIME;
+          console.log(`⚠️ Đạt giới hạn API, đợi ${waitTime/1000}s để reset quota...`);
+          await this.delay(waitTime);
           continue;
         }
 
         if (error.code === 403) {
-          console.log("⚠️ Lỗi quyền truy cập, đang thử lại...");
-          await this.delay(1000);
+          console.log("⚠️ Lỗi quyền truy cập, đợi 1s và thử lại...");
+          await this.delay(this.QUOTA_DELAY); 
           continue;
         }
 
-        throw error;
+        // Các lỗi khác thì tăng delay theo cấp số nhân
+        await this.delay(delay);
+        delay = Math.min(delay * 2, this.MAX_DELAY);
+        
+        if (attempt === this.MAX_RETRIES - 1) {
+          throw error; // Ném lỗi ở lần thử cuối cùng
+        }
       }
     }
 
@@ -299,7 +304,7 @@ class VideoQualityChecker {
       result.status = "error";
       result.error = error.message;
       console.error(
-        `${indent}❌ Lỗi lấy thông tin video ${video.name}:`,
+        `${indent}❌ Li lấy thông tin video ${video.name}:`,
         error.message
       );
     }
