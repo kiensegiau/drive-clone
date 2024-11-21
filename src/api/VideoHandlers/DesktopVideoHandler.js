@@ -3,13 +3,13 @@ const fs = require("fs");
 const { exec } = require("child_process");
 const axios = require("axios");
 const { google } = require("googleapis");
-const ChromeManager = require("./ChromeManager");
-const ProcessLogger = require("../utils/ProcessLogger");
-const { getLongPath } = require("../utils/pathUtils");
+const ChromeManager = require("../ChromeManager");
+const ProcessLogger = require("../../utils/ProcessLogger");
+const { getLongPath } = require("../../utils/pathUtils");
 const https = require("https");
 const { pipeline } = require("stream");
 const os = require("os");
-const { sanitizePath } = require("../utils/pathUtils");
+const { sanitizePath } = require("../../utils/pathUtils");
 
 class DesktopVideoHandler {
   constructor(oAuth2Client = null, downloadOnly = false) {

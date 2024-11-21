@@ -3,8 +3,8 @@ const { OAuth2Client } = require("google-auth-library");
 const path = require("path");
 const fs = require("fs");
 
-const DriveAPIVideoHandler = require("./DriveAPIVideoHandler");
-const DesktopVideoHandler = require("./DesktopVideoHandler");
+const DriveAPIVideoHandler = require("./VideoHandlers/DriveAPIVideoHandler");
+const DesktopVideoHandler = require("./VideoHandlers/DesktopVideoHandler");
 const { credentials, SCOPES } = require("../config/auth");
 const readline = require("readline");
 const ProcessLogger = require("../utils/ProcessLogger");

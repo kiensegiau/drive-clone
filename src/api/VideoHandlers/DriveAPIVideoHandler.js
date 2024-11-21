@@ -1,9 +1,9 @@
 const path = require("path");
 const fs = require("fs");
-const { sanitizePath } = require("../utils/pathUtils");
+const { getLongPath, sanitizePath } = require('../../utils/pathUtils');
 const BaseVideoHandler = require("./BaseVideoHandler");
-const ChromeManager = require("./ChromeManager");
-const ProcessLogger = require("../utils/ProcessLogger");
+const ChromeManager = require("../ChromeManager");
+const ProcessLogger = require("../../utils/ProcessLogger");
 const os = require("os");
 const axios = require("axios");
 const http = require('http');
@@ -139,37 +139,41 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
   async processQueue() {
     console.log(`\n📝 Kiểm tra ${this.queue.length} files...`);
-    
-    // Lọc các file đã tồn tại
-    const filteredQueue = [];
-    for (const fileInfo of this.queue) {
+
+    // Kiểm tra song song các file tồn tại
+    const checkExistingPromises = this.queue.map(async (fileInfo) => {
       const { fileName, targetFolderId } = fileInfo;
-      
+
       if (!this.downloadOnly && targetFolderId) {
         try {
           const query = `name='${sanitizePath(fileName)}' and '${targetFolderId}' in parents and trashed=false`;
           const existingFile = await this.drive.files.list({
             q: query,
-            fields: 'files(id, name)',
+            fields: "files(id, name)", 
             supportsAllDrives: true
           });
 
           if (existingFile.data.files.length > 0) {
             console.log(`⚠️ Đã tồn tại: ${fileName}`);
-            continue;
+            return null; // Đánh dấu file cần bỏ qua
           }
         } catch (error) {
           console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error.message);
         }
       }
       
-      filteredQueue.push(fileInfo);
-    }
+      return fileInfo; // Giữ lại file cần xử lý
+    });
+
+    // Đợi tất cả các promise kiểm tra hoàn thành
+    const checkedFiles = await Promise.all(checkExistingPromises);
+    
+    // Lọc bỏ các file null (đã tồn tại)
+    const filteredQueue = checkedFiles.filter(file => file !== null);
 
     console.log(`\n🎬 Bắt đầu xử lý ${filteredQueue.length} files mới (${this.MAX_CONCURRENT_DOWNLOADS} files song song)`);
     this.queue = filteredQueue;
 
-    // Tiếp tục xử lý queue như bình thường
     return this.processQueueConcurrently();
   }
 
@@ -429,7 +433,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                       process.stdout.clearLine(0);
                       process.stdout.moveCursor(0, chunk.index);
                       process.stdout.write(
-                        `${indent}��� ${fileName}: Chunk ${chunk.index + 1}/${chunks.length} (${chunkProgress}%) - Tổng: ${totalProgress}% - ${speed} MB/s`
+                        `${indent} ${fileName}: Chunk ${chunk.index + 1}/${chunks.length} (${chunkProgress}%) - Tổng: ${totalProgress}% - ${speed} MB/s`
                       );
                       process.stdout.moveCursor(0, -chunk.index);
                       

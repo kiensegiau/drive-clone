@@ -3,14 +3,14 @@ const fs = require("fs");
 const { exec } = require("child_process");
 const axios = require("axios");
 const { google } = require("googleapis");
-const { credentials, SCOPES } = require("../config/auth.js");
-const ChromeManager = require("./ChromeManager");
-const ProcessLogger = require("../utils/ProcessLogger");
-const { getLongPath } = require("../utils/pathUtils");
+const { credentials, SCOPES } = require("../../config/auth");
+const ChromeManager = require("../ChromeManager");
+const ProcessLogger = require("../../utils/ProcessLogger");
+const { getLongPath } = require("../../utils/pathUtils");
 const https = require("https");
 const { pipeline } = require("stream");
 const os = require("os");
-const { sanitizePath } = require("../utils/pathUtils");
+const { sanitizePath } = require("../../utils/pathUtils");
 
 class BaseVideoHandler {
   constructor(oAuth2Client = null, downloadOnly = false) {
