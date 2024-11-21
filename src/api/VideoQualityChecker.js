@@ -26,11 +26,9 @@ class VideoQualityChecker {
     let delay = this.INITIAL_DELAY;
     let quotaWaitTime = this.QUOTA_RESET_TIME;
     let isQuotaError = false;
-    let permissionDelay = 1000;
 
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
-        // Xử lý quota error
         if (isQuotaError) {
           console.log(`⏳ Đang đợi ${quotaWaitTime/1000}s để reset quota...`);
           await this.delay(quotaWaitTime);
@@ -41,7 +39,11 @@ class VideoQualityChecker {
         return result;
 
       } catch (error) {
-        // Xử lý lỗi quota
+        if (error.code === 403) {
+          console.log(`⏩ Bỏ qua do không có quyền truy cập`);
+          return null;
+        }
+
         if (error.code === 429 || error.message.includes('quota')) {
           if (!isQuotaError) {
             console.log(`⚠️ Đạt giới hạn API - Sẽ thử lại sau ${quotaWaitTime/1000}s`);
@@ -51,15 +53,6 @@ class VideoQualityChecker {
           continue;
         }
 
-        // Xử lý lỗi permission
-        if (error.code === 403) {
-          console.log(`⚠️ Lỗi quyền truy cập (lần ${attempt + 1}/${this.MAX_RETRIES}) - Đợi ${permissionDelay/1000}s...`);
-          await this.delay(permissionDelay);
-          permissionDelay *= 2;
-          continue;
-        }
-
-        // Các lỗi khác
         console.log(`🔍 Lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
         await this.delay(delay);
         delay = Math.min(delay * 2, this.MAX_DELAY);
@@ -488,7 +481,7 @@ class VideoQualityChecker {
 
         fileName = sourceFile.data.name;
 
-        // Kiểm tra file đã tồn tại trong thư mục đích chưa
+        // Ki��m tra file đã tồn tại trong thư mục đích chưa
         const existingFile = await this.checkFileExists(
             fileName,
             destinationFolderId,
