@@ -178,13 +178,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async downloadVideoWithChunks(url, outputPath, depth = 0, fileId, fileName, profileId = null) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 3;
-    const CONCURRENT_DOWNLOADS = 10;
+    const CONCURRENT_DOWNLOADS = 3;
     const CHUNK_SIZE = 20 * 1024 * 1024;
     
     let browser;
     let fileHandle;
-    let foundVideoUrls = [];
-    let bestQuality = null;
+    let totalDownloaded = 0;
+    const downloadStartTime = Date.now();
 
     try {
       console.log(`${indent}🚀 Khởi động Chrome...`);
@@ -196,7 +196,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         resolveVideoUrl = resolve;
       });
 
-     
+      // Thêm khai báo biến foundVideoUrls và bestQuality
+      const foundVideoUrls = [];
+      let bestQuality = null;
+
       page.on("response", async (response) => {
         const url = response.url();
         
@@ -356,80 +359,67 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         });
       }
 
+      // Thêm log để kiểm tra chunks được tạo
+      console.log(`${indent}📊 Số chunks cần tải: ${chunks.length}`);
+
+      // Thêm log trước khi bắt đầu vòng lặp tải chunks
+      console.log(`${indent}🚀 Bắt đầu tải từng nhóm chunks...`);
+
       // Tạo file handle
       fileHandle = await fs.promises.open(outputPath, "w");
-      let totalDownloaded = 0;
-      const downloadStartTime = Date.now();
 
-      // Thêm log bắt đầu tải chunks
-      console.log(`${indent}⏳ Bắt đầu tải chunks cho ${fileName}...`);
-
-      // Download từng nhóm chunks
+      // Tải chunks theo nhóm
       for (let i = 0; i < chunks.length; i += CONCURRENT_DOWNLOADS) {
         const chunkGroup = chunks.slice(i, Math.min(i + CONCURRENT_DOWNLOADS, chunks.length));
+        console.log(`${indent}⏬ Đang tải nhóm ${Math.floor(i/CONCURRENT_DOWNLOADS) + 1}/${Math.ceil(chunks.length/CONCURRENT_DOWNLOADS)}`);
+        
         const downloadPromises = chunkGroup.map(chunk => {
           return new Promise(async (resolve, reject) => {
-            for (let retry = 0; retry < MAX_RETRIES; retry++) {
-              try {
-                const response = await axios({
-                  method: "get",
-                  url: videoUrl,
-                  headers: {
-                    ...headers,
-                    Range: `bytes=${chunk.start}-${chunk.end}`
-                  },
-                  responseType: "arraybuffer",
-                  timeout: 60000,
-                  maxContentLength: Infinity,
-                  maxBodyLength: Infinity
-                });
+            try {
+              const response = await axios({
+                method: "get",
+                url: videoUrl,
+                headers: {
+                  ...headers,
+                  Range: `bytes=${chunk.start}-${chunk.end}`
+                },
+                responseType: "arraybuffer",
+                timeout: 60000
+              });
 
-                const buffer = Buffer.from(response.data);
-                await fileHandle.write(buffer, 0, buffer.length, chunk.start);
-                
-                totalDownloaded += buffer.length;
-                // Log tiến độ mỗi 10% thay vì 20%
-                const progress = Math.floor((totalDownloaded / totalSize) * 100);
-                if (progress % 10 === 0) {
-                  const speed = (totalDownloaded / ((Date.now() - downloadStartTime) / 1000) / 1024 / 1024).toFixed(2);
-                  console.log(`${indent}📥 ${fileName}: ${progress}% (${speed} MB/s)`);
-                }
-                
-                resolve();
-                break;
-              } catch (error) {
-                console.error(`${indent}⚠️ Lỗi tải chunk ${chunk.index} của ${fileName}:`, error.message);
-                if (retry === MAX_RETRIES - 1) {
-                  reject(error);
-                }
-                await new Promise(r => setTimeout(r, 1000));
-              }
+              const buffer = Buffer.from(response.data);
+              await fileHandle.write(buffer, 0, buffer.length, chunk.start);
+              
+              totalDownloaded += buffer.length;
+              const progress = Math.floor((totalDownloaded / totalSize) * 100);
+              const speed = (totalDownloaded / ((Date.now() - downloadStartTime) / 1000) / 1024 / 1024).toFixed(2);
+              console.log(`${indent}📥 ${fileName}: ${progress}% - ${speed} MB/s`);
+              
+              resolve();
+            } catch (error) {
+              reject(error);
             }
           });
         });
 
-        await Promise.all(downloadPromises);
+        await Promise.all(downloadPromises).catch(error => {
+          console.error(`${indent}❌ Lỗi tải nhóm chunks:`, error.message);
+          throw error;
+        });
       }
 
-      // Kiểm tra file sau khi tải xong
-      await fileHandle.close();
-      const finalSize = fs.statSync(outputPath).size;
-      if (finalSize !== totalSize) {
-        throw new Error(`Lỗi kích thước file: ${finalSize} != ${totalSize}`);
-      }
-
-      console.log(`${indent}✅ Tải thành công!`);
+      const totalTime = ((Date.now() - downloadStartTime) / 1000).toFixed(2);
+      const avgSpeed = (totalSize / 1024 / 1024 / totalTime).toFixed(2);
+      console.log(`${indent}✅ Hoàn thành ${fileName} (${totalTime}s, TB: ${avgSpeed} MB/s)`);
+      
       return true;
 
     } catch (error) {
-      console.error(`${indent}❌ Lỗi trong quá trình xử lý:`, error.message);
-      if (fileHandle) await fileHandle.close();
+      console.error(`${indent}❌ Lỗi tải ${fileName}:`, error.message);
       throw error;
     } finally {
-      if (browser) {
-        console.log(`${indent}🧹 Đóng browser...`);
-        await browser.close();
-      }
+      if (fileHandle) await fileHandle.close();
+      if (browser) await browser.close();
     }
   }
 
@@ -491,4 +481,5 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   }
 }
 
+module.exports = DriveAPIVideoHandler; 
 module.exports = DriveAPIVideoHandler; 
