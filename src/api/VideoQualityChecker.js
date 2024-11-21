@@ -53,17 +53,13 @@ class VideoQualityChecker {
           continue;
         }
 
-        console.log(`🔍 Lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
-        await this.delay(delay);
-        delay = Math.min(delay * 2, this.MAX_DELAY);
-        
-        if (attempt === this.MAX_RETRIES - 1) {
-          throw error;
-        }
+        console.log(`⏩ Bỏ qua lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
+        return null;
       }
     }
 
-    throw new Error(`Đã thử ${this.MAX_RETRIES} lần nhưng không thành công`);
+    console.log(`⏩ Đã thử ${this.MAX_RETRIES} lần không thành công, bỏ qua`);
+    return null;
   }
 
   async getUserEmail() {
@@ -481,7 +477,7 @@ class VideoQualityChecker {
 
         fileName = sourceFile.data.name;
 
-        // Ki��m tra file đã tồn tại trong thư mục đích chưa
+        // Kiểm tra file đã tồn tại trong thư mục đích chưa
         const existingFile = await this.checkFileExists(
             fileName,
             destinationFolderId,

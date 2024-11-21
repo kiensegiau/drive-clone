@@ -6,6 +6,8 @@ const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require("../utils/ProcessLogger");
 const os = require("os");
 const axios = require("axios");
+const http = require('http');
+const https = require('https');
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
   constructor(oAuth2Client = null, downloadOnly = false) {
@@ -178,7 +180,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async downloadVideoWithChunks(url, outputPath, depth = 0, fileId, fileName, profileId = null) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 3;
-    const CONCURRENT_DOWNLOADS = 3;
+    const CONCURRENT_CHUNK_DOWNLOADS = 25;
     const CHUNK_SIZE = 20 * 1024 * 1024;
     
     let browser;
@@ -369,43 +371,103 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       fileHandle = await fs.promises.open(outputPath, "w");
 
       // Tải chunks theo nhóm
-      for (let i = 0; i < chunks.length; i += CONCURRENT_DOWNLOADS) {
-        const chunkGroup = chunks.slice(i, Math.min(i + CONCURRENT_DOWNLOADS, chunks.length));
-        console.log(`${indent}⏬ Đang tải nhóm ${Math.floor(i/CONCURRENT_DOWNLOADS) + 1}/${Math.ceil(chunks.length/CONCURRENT_DOWNLOADS)}`);
+      for (let i = 0; i < chunks.length; i += CONCURRENT_CHUNK_DOWNLOADS) {
+        const chunkGroup = chunks.slice(i, Math.min(i + CONCURRENT_CHUNK_DOWNLOADS, chunks.length));
+        console.log(`${indent}⏬ Đang tải nhóm ${Math.floor(i/CONCURRENT_CHUNK_DOWNLOADS) + 1}/${Math.ceil(chunks.length/CONCURRENT_CHUNK_DOWNLOADS)}`);
         
         const downloadPromises = chunkGroup.map(chunk => {
           return new Promise(async (resolve, reject) => {
-            try {
-              const response = await axios({
-                method: "get",
-                url: videoUrl,
-                headers: {
-                  ...headers,
-                  Range: `bytes=${chunk.start}-${chunk.end}`
-                },
-                responseType: "arraybuffer",
-                timeout: 60000
-              });
+            let retries = 0;
+            let lastUpdate = Date.now();
+            const UPDATE_INTERVAL = 1000; // 1 giây
 
-              const buffer = Buffer.from(response.data);
-              await fileHandle.write(buffer, 0, buffer.length, chunk.start);
-              
-              totalDownloaded += buffer.length;
-              const progress = Math.floor((totalDownloaded / totalSize) * 100);
-              const speed = (totalDownloaded / ((Date.now() - downloadStartTime) / 1000) / 1024 / 1024).toFixed(2);
-              console.log(`${indent}📥 ${fileName}: ${progress}% - ${speed} MB/s`);
-              
-              resolve();
-            } catch (error) {
-              reject(error);
+            const axiosInstance = axios.create({
+              timeout: 30000,
+              maxRedirects: 5,
+              maxContentLength: Infinity,
+              maxBodyLength: Infinity,
+              decompress: true,
+              httpAgent: new http.Agent({ 
+                keepAlive: true,
+                maxSockets: 25,
+                maxFreeSockets: 25,
+                timeout: 30000,
+                scheduling: 'lifo'
+              }),
+              httpsAgent: new https.Agent({
+                keepAlive: true,
+                maxSockets: 25,
+                maxFreeSockets: 25,
+                timeout: 30000,
+                scheduling: 'lifo'
+              })
+            });
+
+            while (retries < MAX_RETRIES) {
+              try {
+                const response = await axiosInstance({
+                  method: "get",
+                  url: videoUrl,
+                  headers: {
+                    ...headers,
+                    Range: `bytes=${chunk.start}-${chunk.end}`,
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
+                    'Accept': '*/*'
+                  },
+                  responseType: "arraybuffer",
+                  onDownloadProgress: (progressEvent) => {
+                    const now = Date.now();
+                    if (now - lastUpdate >= UPDATE_INTERVAL) {
+                      const chunkProgress = Math.floor((progressEvent.loaded / (chunk.end - chunk.start + 1)) * 100);
+                      const totalProgress = Math.floor((totalDownloaded + progressEvent.loaded) / totalSize * 100);
+                      const speed = (progressEvent.loaded / ((now - lastUpdate) / 1000) / 1024 / 1024).toFixed(2);
+                      
+                      process.stdout.cursorTo(0);
+                      process.stdout.clearLine(0);
+                      process.stdout.moveCursor(0, chunk.index);
+                      process.stdout.write(
+                        `${indent}��� ${fileName}: Chunk ${chunk.index + 1}/${chunks.length} (${chunkProgress}%) - Tổng: ${totalProgress}% - ${speed} MB/s`
+                      );
+                      process.stdout.moveCursor(0, -chunk.index);
+                      
+                      lastUpdate = now;
+                    }
+                  }
+                });
+
+                const buffer = Buffer.from(response.data);
+                await fileHandle.write(buffer, 0, buffer.length, chunk.start);
+                totalDownloaded += buffer.length;
+                resolve();
+                break;
+
+              } catch (error) {
+                retries++;
+                console.log(`${indent}⚠️ Lần thử ${retries}/${MAX_RETRIES} cho chunk ${chunk.index + 1} bị lỗi: ${error.message}`);
+                
+                if (retries === MAX_RETRIES) {
+                  reject(error);
+                  return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
             }
           });
         });
 
-        await Promise.all(downloadPromises).catch(error => {
-          console.error(`${indent}❌ Lỗi tải nhóm chunks:`, error.message);
-          throw error;
-        });
+        // Xử lý chunks theo nhóm nhỏ hơn để tránh quá tải
+        const processChunkGroup = async (chunks) => {
+          const batchSize = 5;
+          for (let i = 0; i < chunks.length; i += batchSize) {
+            const batch = chunks.slice(i, i + batchSize);
+            await Promise.all(batch.map(chunk => downloadPromises[chunk.index]));
+          }
+        };
+
+        await processChunkGroup(chunks);
       }
 
       const totalTime = ((Date.now() - downloadStartTime) / 1000).toFixed(2);

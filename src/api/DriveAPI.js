@@ -2,88 +2,181 @@ const { google } = require("googleapis");
 const { OAuth2Client } = require("google-auth-library");
 const path = require("path");
 const fs = require("fs");
-const { NETWORK_CONFIG } = require("../config/constants");
-const PDFDownloader = require("./PDFDownloader");
+
 const DriveAPIVideoHandler = require("./DriveAPIVideoHandler");
 const DesktopVideoHandler = require("./DesktopVideoHandler");
 const { credentials, SCOPES } = require("../config/auth");
 const readline = require("readline");
-const ChromeManager = require("./ChromeManager");
 const ProcessLogger = require("../utils/ProcessLogger");
 const { getLongPath, sanitizePath } = require("../utils/pathUtils");
 const os = require("os");
+const DriveAPIPDFDownloader = require('./PDFDownloaders/DriveAPIPDFDownloader');
+const DesktopPDFDownloader = require('./PDFDownloaders/DesktopPDFDownloader');
 
 class DriveAPI {
   constructor(downloadOnly = false) {
     try {
       this.downloadOnly = downloadOnly;
       this.targetFolderId = null;
-      
-      // Thêm tempDir
       this.tempDir = getLongPath(path.join(os.tmpdir(), 'drive-clone-temp'));
+      this.processLogger = new ProcessLogger();
+      
+      // Khởi tạo thư mục temp
       if (!fs.existsSync(this.tempDir)) {
         fs.mkdirSync(this.tempDir, { recursive: true });
       }
 
-      // Xác định BASE_DIR dựa vào mode
-      if (downloadOnly) {
-        // Phương án 2: Tải về Drive Desktop
-        this.BASE_DIR = getLongPath(
-          path.join("G:", "My Drive", "drive-clone")
-        );
-      } else {
-        // Phương án 1: Tải về local rồi upload API
-        this.BASE_DIR = getLongPath(path.join(process.cwd(), 'downloads'));
-      }
+      // Xác định BASE_DIR
+      this.BASE_DIR = this.downloadOnly
+        ? getLongPath(path.join("G:", "My Drive", "drive-clone"))
+        : getLongPath(path.join(process.cwd(), 'downloads'));
 
       console.log(`\n🔍 Thư mục gốc: ${this.BASE_DIR}`);
-
+      
       if (!fs.existsSync(this.BASE_DIR)) {
-        try {
-          fs.mkdirSync(this.BASE_DIR, { recursive: true });
-          console.log("✅ Đã tạo thư mục gốc");
-        } catch (mkdirError) {
-          console.error("❌ Lỗi tạo thư mục gốc:", mkdirError);
-          throw mkdirError;
-        }
+        fs.mkdirSync(this.BASE_DIR, { recursive: true });
       }
 
       this.oauth2Client = null;
       this.drive = null;
+      this.pdfDownloader = null;
       this.processedFiles = 0;
       this.totalSize = 0;
+      this.userEmail = null;
+
+      // Thêm blacklist patterns
+      this.blacklistPatterns = [
+        /thông tin liên hệ.*hỗ trợ/i,
+        /lợi ích tham gia nhóm/i,
+        /giới thiệu về nhóm/i,
+        /zalo.*hỗ trợ/i,
+        /tài liệu ôn thi official/i
+      ];
     } catch (error) {
       console.error("❌ Lỗi khởi tạo:", error);
       throw error;
     }
   }
 
-  async authenticate() {
-    console.log("🔑 Đang xác thực với Drive API...");
+  async processPDF(file, targetPath, depth) {
+    const indent = "  ".repeat(depth);
+    console.log(`\n${indent}📑 [DriveAPI] Bắt đầu xử lý PDF: ${file.name}`);
+    console.log(`${indent}🔍 [DriveAPI] File ID: ${file.id}`);
+    console.log(`${indent}📁 [DriveAPI] Target Path: ${targetPath}`);
+    console.log(`${indent}🔍 [DriveAPI] PDFDownloader:`, this.pdfDownloader?.constructor.name);
+    console.log(`${indent}🔍 [DriveAPI] Drive instance trong PDFDownloader:`, 
+      this.pdfDownloader?.drive ? 'Đã khởi tạo' : 'Chưa khởi tạo');
 
     try {
+      if (!this.pdfDownloader) {
+        throw new Error('PDFDownloader chưa được khởi tạo');
+      }
+
+      if (this.isBlacklisted(file.name)) {
+        console.log(`${indent}⏭️ [DriveAPI] Bỏ qua file trong blacklist: ${file.name}`);
+        return;
+      }
+
+      let result;
+      if (this.downloadOnly) {
+        console.log(`${indent}📥 [DriveAPI] Gọi downloadToLocal cho file ${file.name}`);
+        result = await this.pdfDownloader.downloadToLocal(
+          file.id,
+          file.name,
+          targetPath
+        );
+      } else {
+        console.log(`${indent}📤 [DriveAPI] Gọi downloadAndUpload cho file ${file.name}`);
+        result = await this.pdfDownloader.downloadAndUpload(
+          file.id,
+          file.name,
+          this.targetFolderId
+        );
+      }
+
+      console.log(`${indent}📊 [DriveAPI] Kết quả xử lý:`, result);
+
+      if (result.success && !result.skipped) {
+        this.processedFiles++;
+        if (result.fileSize) {
+          this.totalSize += parseFloat(result.fileSize);
+        }
+      }
+
+    } catch (error) {
+      console.error(`${indent}❌ [DriveAPI] Lỗi xử lý PDF ${file.name}:`, error.message);
+      console.error(`${indent}🔍 [DriveAPI] Stack trace:`, error.stack);
+    }
+  }
+
+  async authenticate() {
+    try {
+      console.log("🔑 Đang xác thực với Drive API...");
+      
       this.oauth2Client = new OAuth2Client(
         credentials.client_id,
         credentials.client_secret,
         credentials.redirect_uris[0]
       );
 
-      console.log("🔍 Kiểm tra token...");
-      let token;
-
-      try {
-        token = JSON.parse(fs.readFileSync("token.json"));
-      } catch (err) {
-        token = await this.createNewToken();
-      }
-
+      const token = await this.getToken();
       this.oauth2Client.setCredentials(token);
 
-      // Khởi tạo Drive API
+      // Khởi tạo drive instance
       this.drive = google.drive({
         version: "v3",
         auth: this.oauth2Client,
       });
+
+      console.log("🔧 [DriveAPI] Bắt đầu khởi tạo PDFDownloader");
+      console.log("🔍 [DriveAPI] Mode:", this.downloadOnly ? "Desktop" : "DriveAPI");
+      
+      // Khởi tạo PDF downloader với drive instance
+      if (this.downloadOnly) {
+        this.pdfDownloader = new DesktopPDFDownloader(
+          this.oauth2Client,
+          this.tempDir,
+          this.processLogger
+        );
+      } else {
+        console.log("🔧 [DriveAPI] Khởi tạo DriveAPIPDFDownloader");
+        console.log("🔍 [DriveAPI] Drive instance:", 
+          this.drive && this.drive.files ? "Đã sẵn sàng" : "Chưa khởi tạo");
+        
+        // Truyền drive instance vào constructor
+        this.pdfDownloader = new DriveAPIPDFDownloader(
+          this.drive,  // Truyền drive instance
+          this.oauth2Client,
+          this.tempDir,
+          this.processLogger
+        );
+
+        // Kiểm tra drive instance trong PDFDownloader
+        const pdfDownloaderDrive = this.pdfDownloader.driveAPI;
+        console.log("🔍 [DriveAPI] PDFDownloader drive methods:", 
+          pdfDownloaderDrive && pdfDownloaderDrive.files ? 
+          Object.keys(pdfDownloaderDrive.files).join(', ') : 
+          "Không có");
+
+        // Kiểm tra cụ thể hơn
+        if (!pdfDownloaderDrive || !pdfDownloaderDrive.files) {
+          throw new Error("Drive instance không được truyền đúng vào PDFDownloader");
+        }
+
+        // So sánh các methods cần thiết
+        const requiredMethods = ['get', 'list', 'create'];
+        const missingMethods = requiredMethods.filter(
+          method => !pdfDownloaderDrive.files[method]
+        );
+
+        if (missingMethods.length > 0) {
+          throw new Error(
+            `Drive instance thiếu các methods: ${missingMethods.join(', ')}`
+          );
+        }
+      }
+      
+      console.log("✅ [DriveAPI] Đã khởi tạo PDFDownloader:", this.pdfDownloader.constructor.name);
 
       // Lấy thông tin user
       const userInfo = await this.drive.about.get({
@@ -94,6 +187,24 @@ class DriveAPI {
       console.log(`✅ Đã xác thực thành công với tài khoản: ${this.userEmail}`);
     } catch (error) {
       console.error("❌ Lỗi xác thực:", error.message);
+      console.error("🔍 Stack trace:", error.stack);
+      throw error;
+    }
+  }
+
+  async getToken() {
+    try {
+      // Kiểm tra token đã lưu
+      const tokenPath = path.join(process.cwd(), 'token.json');
+      if (fs.existsSync(tokenPath)) {
+        const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
+        return token;
+      }
+
+      // Nếu chưa có token, tạo mới
+      return await this.createNewToken();
+    } catch (error) {
+      console.error('❌ Lỗi lấy token:', error.message);
       throw error;
     }
   }
@@ -104,10 +215,9 @@ class DriveAPI {
     const authUrl = this.oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: SCOPES,
-      prompt: "consent",
     });
 
-    console.log("\n📱 Truy cập URL này để xác thực:");
+    console.log("📱 Truy cập URL sau để xác thực:");
     console.log(authUrl);
 
     const rl = readline.createInterface({
@@ -116,7 +226,7 @@ class DriveAPI {
     });
 
     const code = await new Promise((resolve) => {
-      rl.question("Nhập mã code: ", (code) => {
+      rl.question("📝 Nhập mã xác thực: ", (code) => {
         rl.close();
         resolve(code);
       });
@@ -124,10 +234,16 @@ class DriveAPI {
 
     try {
       const { tokens } = await this.oauth2Client.getToken(code);
-      fs.writeFileSync("token.json", JSON.stringify(tokens));
+      
+      // Lưu token
+      const tokenPath = path.join(process.cwd(), 'token.json');
+      fs.writeFileSync(tokenPath, JSON.stringify(tokens));
+      console.log("💾 Đã lưu token tại:", tokenPath);
+      
       return tokens;
-    } catch (err) {
-      throw new Error(`Lỗi lấy token: ${err.message}`);
+    } catch (error) {
+      console.error('❌ Lỗi lấy token:', error.message);
+      throw error;
     }
   }
 
@@ -168,7 +284,6 @@ class DriveAPI {
       } else {
         this.videoHandler = new DriveAPIVideoHandler(this.oauth2Client, this.downloadOnly);
       }
-      this.pdfDownloader = new PDFDownloader(this, this.tempDir, this.processLogger, this.downloadOnly, this.targetFolderId);
 
       await this.processFolder(sourceFolderId, this.targetFolderId);
 
@@ -225,7 +340,7 @@ class DriveAPI {
         fields: "id, name",
       });
 
-      console.log(`✨ Đã tạo folder mới: "${name}" (${folder.data.id})`);
+      console.log(`✨ Đã tạo folder mi: "${name}" (${folder.data.id})`);
       return folder.data.id;
     } catch (error) {
       console.error(`❌ Lỗi khi tạo folder "${name}":`, error.message);
@@ -444,7 +559,6 @@ class DriveAPI {
       // Xử lý PDF files
       if (files.pdfs.length > 0) {
         console.log(`${indent}📑 Xử lý ${files.pdfs.length} PDF files...`);
-        const pdfDownloader = new PDFDownloader(this, this.tempDir, this.processLogger);
         
         for (const file of files.pdfs) {
           try {
@@ -456,7 +570,8 @@ class DriveAPI {
               continue;
             }
 
-            await pdfDownloader.downloadPDF(
+            // Sử dụng PDF downloader tương ứng với mode
+            await this.pdfDownloader.downloadPDF(
               file.id,
               file.name,
               this.downloadOnly ? currentFolderPath : currentTargetFolderId,
@@ -595,18 +710,6 @@ class DriveAPI {
     }
   }
 
-  async processPDF(file, targetFolderId, depth) {
-    const indent = "  ".repeat(depth);
-    console.log(`${indent}📑 Xử lý PDF: ${file.name}`);
-
-    try {
-      const pdfDownloader = new PDFDownloader(this);
-      await pdfDownloader.downloadPDF(file.id, file.name, targetFolderId);
-    } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý PDF ${file.name}:`, error.message);
-    }
-  }
-
   async getFolderName(folderId) {
     try {
       const response = await this.drive.files.get({
@@ -728,6 +831,162 @@ class DriveAPI {
           : "N/A"
       }`
     );
+  }
+
+  async processVideo(file, targetPath, depth) {
+    const indent = "  ".repeat(depth);
+    console.log(`${indent}🎥 Xử lý video: ${file.name}`);
+
+    try {
+      if (this.downloadOnly) {
+        await this.videoHandler.downloadVideo(file.id, file.name, targetPath);
+      } else {
+        await this.videoHandler.processVideo(file.id, file.name, targetPath);
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi xử lý video ${file.name}:`, error.message);
+    }
+  }
+
+  async processOtherFile(file, targetPath, depth) {
+    const indent = "  ".repeat(depth);
+    
+    // Kiểm tra blacklist trước khi xử lý
+    if (this.isBlacklisted(file.name)) {
+      console.log(`${indent}⏭️ Bỏ qua file trong blacklist: ${file.name}`);
+      return;
+    }
+
+    console.log(`${indent}📄 Xử lý file: ${file.name}`);
+
+    try {
+      const safeFileName = sanitizePath(file.name);
+      const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`);
+
+      await this.downloadFile(file.id, tempPath);
+
+      if (!this.downloadOnly) {
+        await this.uploadFile(tempPath, this.targetFolderId);
+      } else {
+        const finalPath = path.join(targetPath, safeFileName);
+        await fs.promises.rename(tempPath, finalPath);
+      }
+      
+      this.processedFiles++;
+
+    } catch (error) {
+      // Log lỗi chi tiết hơn
+      if (error?.response?.data) {
+        console.error(`${indent}❌ Lỗi xử lý file ${file.name}:`, error.response.data);
+      } else if (error?.error) {
+        console.error(`${indent}❌ Lỗi xử lý file ${file.name}:`, error.error);
+      } else {
+        console.error(`${indent}❌ Lỗi xử lý file ${file.name}:`, error.message);
+      }
+    }
+  }
+
+  async initializeHandlers() {
+    // Chỉ giữ lại phần khởi tạo video handler
+    if (this.downloadOnly) {
+      this.videoHandler = new DesktopVideoHandler(this.oauth2Client, this.downloadOnly);
+    } else {
+      this.videoHandler = new DriveAPIVideoHandler(this.oauth2Client, this.downloadOnly);
+    }
+  }
+
+  async setPermissions(fileId) {
+    try {
+      await this.drive.permissions.create({
+        fileId: fileId,
+        requestBody: {
+          role: 'reader',
+          type: 'anyone',
+          allowFileDiscovery: false
+        },
+        supportsAllDrives: true
+      });
+    } catch (error) {
+      console.error(`⚠️ Lỗi set permissions:`, error.message);
+    }
+  }
+
+  isBlacklisted(fileName) {
+    return this.blacklistPatterns.some(pattern => pattern.test(fileName));
+  }
+
+  async processPDFs(files, targetPath, depth = 0) {
+    console.log('\n📑 [DriveAPI] Xử lý PDF files...');
+    const indent = "  ".repeat(depth);
+
+    for (const file of files) {
+      console.log(`${indent}📑 [DriveAPI] Xử lý PDF: ${file.name}`);
+      console.log(`${indent}🔍 [DriveAPI] File ID: ${file.id}`);
+      
+      try {
+        if (!this.pdfDownloader) {
+          throw new Error('PDFDownloader chưa được khởi tạo');
+        }
+
+        if (this.downloadOnly) {
+          console.log(`${indent}📥 [DriveAPI] Gọi downloadToLocal`);
+          await this.pdfDownloader.downloadToLocal(
+            file.id,
+            file.name,
+            targetPath
+          );
+        } else {
+          console.log(`${indent}📤 [DriveAPI] Gọi downloadAndUpload`);
+          await this.pdfDownloader.downloadAndUpload(
+            file.id,
+            file.name,
+            this.targetFolderId
+          );
+        }
+
+      } catch (error) {
+        console.error(`${indent}❌ [DriveAPI] Lỗi xử lý PDF:`, error);
+        console.error(`${indent}🔍 [DriveAPI] Stack trace:`, error.stack);
+      }
+    }
+  }
+
+  async processFiles(files, targetPath, depth = 0) {
+    console.log('📑 [DriveAPI] Phân loại files...');
+    
+    // Phân loại files
+    const pdfFiles = files.filter(f => f.mimeType === 'application/pdf');
+    const videoFiles = files.filter(f => f.mimeType.includes('video'));
+    const otherFiles = files.filter(f => 
+      !f.mimeType.includes('video') && 
+      f.mimeType !== 'application/pdf' &&
+      !f.mimeType.includes('folder')
+    );
+
+    console.log(`📊 Tổng số files: ${files.length}`);
+    console.log(`  - PDFs: ${pdfFiles.length}`);
+    console.log(`  - Videos: ${videoFiles.length}`);
+    console.log(`  - Others: ${otherFiles.length}`);
+
+    // Xử lý video files trước
+    if (videoFiles.length > 0) {
+      console.log('\n🎥 Xử lý video files...');
+      await this.processVideos(videoFiles, targetPath);
+    }
+
+    // Xử lý PDF files
+    if (pdfFiles.length > 0) {
+      console.log('\n📑 Xử lý PDF files...');
+      await this.processPDFs(pdfFiles, targetPath, depth);
+    }
+
+    // Xử lý các file khác
+    if (otherFiles.length > 0) {
+      console.log('\n📄 Xử lý files khác...');
+      for (const file of otherFiles) {
+        await this.processFile(file, targetPath, depth);
+      }
+    }
   }
 }
 
