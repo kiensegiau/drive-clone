@@ -150,7 +150,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         console.log(`\n📥 Thử tải trực tiếp từ Drive API...`);
         await this.downloadFromDriveAPI(fileId, tempPath);
         
-        return await this.uploadToDrive(tempPath, targetFolderId);
+        return await this.uploadToDrive(tempPath, targetFolderId, fileName);
 
       } catch (apiError) {
         if (apiError.message.includes('403') || 
@@ -541,12 +541,12 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         throw new Error('File rỗng');
       }
 
-      // Sử dụng tên tùy chỉnh nếu có, không thì dùng tên file gốc
+      // Đảm bảo luôn ưu tiên dùng customFileName nếu có
       const fileName = customFileName || path.basename(filePath);
-      console.log(`📁 Upload ${fileName} (${(fileSize/1024/1024).toFixed(2)}MB)`);
+      console.log(`📁 Upload với tên: ${fileName} (${(fileSize/1024/1024).toFixed(2)}MB)`);
 
       const fileMetadata = {
-        name: fileName,
+        name: fileName,  // Sử dụng fileName đã được xử lý
         parents: [targetFolderId]
       };
 
@@ -569,7 +569,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       };
 
     } catch (error) {
-      console.error(`\n❌ L��i upload: ${error.message}`);
+      console.error(`\n❌ Li upload: ${error.message}`);
       return { 
         success: false, 
         error: error.message 

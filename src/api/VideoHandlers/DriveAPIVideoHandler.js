@@ -184,8 +184,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async downloadVideoWithChunks(url, outputPath, depth = 0, fileId, fileName, profileId = null) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 3;
-    const CONCURRENT_CHUNK_DOWNLOADS = 25;
-    const CHUNK_SIZE = 20 * 1024 * 1024;
+    const CONCURRENT_CHUNK_DOWNLOADS = 8;
+    const CHUNK_SIZE = 10 * 1024 * 1024;
     
     let browser;
     let fileHandle;
@@ -393,17 +393,17 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
               decompress: true,
               httpAgent: new http.Agent({ 
                 keepAlive: true,
-                maxSockets: 25,
-                maxFreeSockets: 25,
+                maxSockets: 16,
+                maxFreeSockets: 16,
                 timeout: 30000,
-                scheduling: 'lifo'
+                scheduling: 'fifo'
               }),
               httpsAgent: new https.Agent({
                 keepAlive: true,
-                maxSockets: 25,
-                maxFreeSockets: 25,
+                maxSockets: 16,
+                maxFreeSockets: 16,
                 timeout: 30000,
-                scheduling: 'lifo'
+                scheduling: 'fifo'
               })
             });
 
@@ -464,7 +464,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
         // Xử lý chunks theo nhóm nhỏ hơn để tránh quá tải
         const processChunkGroup = async (chunks) => {
-          const batchSize = 5;
+          const batchSize = 4;
           for (let i = 0; i < chunks.length; i += batchSize) {
             const batch = chunks.slice(i, i + batchSize);
             await Promise.all(batch.map(chunk => downloadPromises[chunk.index]));
@@ -547,5 +547,4 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   }
 }
 
-module.exports = DriveAPIVideoHandler; 
 module.exports = DriveAPIVideoHandler; 
