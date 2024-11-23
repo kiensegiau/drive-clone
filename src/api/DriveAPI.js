@@ -44,13 +44,21 @@ class DriveAPI {
       this.totalSize = 0;
       this.userEmail = null;
 
-      // Thêm blacklist patterns
+      // Cập nhật blacklist patterns chi tiết hơn
       this.blacklistPatterns = [
-        /thông tin liên hệ.*hỗ trợ/i,
-        /lợi ích tham gia nhóm/i,
-        /giới thiệu về nhóm/i,
-        /zalo.*hỗ trợ/i,
-        /tài liệu ôn thi official/i
+        /th[ôo]ng\s*tin\s*li[eê]n\s*h[eệ].*(h[ôỗ]\s*tr[ợơ]|official)/i,
+        /l[ơợ]i\s*[íi]ch.*tham\s*gia\s*nh[oó]m/i,
+        /gi[ớơ]i\s*thi[eệ]u.*v[eề].*nh[oó]m/i, 
+        /zalo.*h[ôỗ]\s*tr[ợơ]/i,
+        /t[aà]i\s*li[eệ]u\s*[ôo]n\s*thi.*official/i,
+        /group.*admin/i,
+        /admin.*contact/i,
+        /contact.*support/i,
+        /support.*group/i,
+        /^readme/i,
+        /^notice/i,
+        /^warning/i,
+        /^about\s*group/i
       ];
     } catch (error) {
       console.error("❌ Lỗi khởi tạo:", error);
@@ -487,12 +495,21 @@ class DriveAPI {
       // Lấy danh sách files trong folder
       const files = await this.listFiles(sourceFolderId);
       
-      // Log thống kê
-      console.log(`${indent}📊 Tổng số files: ${files.all.length}`);
-      console.log(`${indent}  - Videos: ${files.videos.length}`);
-      console.log(`${indent}  - PDFs: ${files.pdfs.length}`);
-      console.log(`${indent}  - Others: ${files.others.length}`);
-      console.log(`${indent}  - Folders: ${files.folders.length}`);
+      // Lọc bỏ các file trong blacklist trước khi xử lý
+      const filteredFiles = {
+        all: files.all.filter(f => !this.isBlacklisted(f.name)),
+        videos: files.videos.filter(f => !this.isBlacklisted(f.name)),
+        pdfs: files.pdfs.filter(f => !this.isBlacklisted(f.name)),
+        others: files.others.filter(f => !this.isBlacklisted(f.name)),
+        folders: files.folders
+      };
+      
+      // Log thống kê sau khi lọc
+      console.log(`${indent}📊 Tổng số files (sau khi lọc blacklist): ${filteredFiles.all.length}`);
+      console.log(`${indent}  - Videos: ${filteredFiles.videos.length}`);
+      console.log(`${indent}  - PDFs: ${filteredFiles.pdfs.length}`);
+      console.log(`${indent}  - Others: ${filteredFiles.others.length}`);
+      console.log(`${indent}  - Folders: ${filteredFiles.folders.length}`);
 
       // Tạo folder tương ứng trên Drive nếu đang ở chế độ upload
       let currentTargetFolderId = targetPath;
@@ -537,13 +554,13 @@ class DriveAPI {
       );
 
       // Xử lý videos với currentTargetFolderId đã được cập nhật
-      if (files.videos.length > 0) {
-        console.log(`${indent}🎥 Xử lý ${files.videos.length} video files...`);
+      if (filteredFiles.videos.length > 0) {
+        console.log(`${indent}🎥 Xử lý ${filteredFiles.videos.length} video files...`);
         const videoHandler = this.downloadOnly 
           ? new DesktopVideoHandler(this.oauth2Client, this.downloadOnly)
           : new DriveAPIVideoHandler(this.oauth2Client, this.downloadOnly);
         
-        for (const file of files.videos) {
+        for (const file of filteredFiles.videos) {
           videoHandler.addToQueue({
             fileId: file.id,
             fileName: file.name,
@@ -557,10 +574,10 @@ class DriveAPI {
       }
 
       // Xử lý PDF files
-      if (files.pdfs.length > 0) {
-        console.log(`${indent}📑 Xử lý ${files.pdfs.length} PDF files...`);
+      if (filteredFiles.pdfs.length > 0) {
+        console.log(`${indent}📑 Xử lý ${filteredFiles.pdfs.length} PDF files...`);
         
-        for (const file of files.pdfs) {
+        for (const file of filteredFiles.pdfs) {
           try {
             const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
             
@@ -585,10 +602,10 @@ class DriveAPI {
       }
 
       // Xử lý Other files
-      if (files.others.length > 0) {
-        console.log(`${indent}📄 Xử lý ${files.others.length} files khác...`);
+      if (filteredFiles.others.length > 0) {
+        console.log(`${indent}📄 Xử lý ${filteredFiles.others.length} files khác...`);
         
-        for (const file of files.others) {
+        for (const file of filteredFiles.others) {
           try {
             const safeFileName = sanitizePath(file.name);
             const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`);
@@ -647,7 +664,7 @@ class DriveAPI {
       }
 
       // Xử lý folders con (giữ nguyên code cũ)
-      for (const folder of files.folders) {
+      for (const folder of filteredFiles.folders) {
         await this.processFolder(
           folder.id,
           this.downloadOnly ? currentFolderPath : currentTargetFolderId,
@@ -835,6 +852,13 @@ class DriveAPI {
 
   async processVideo(file, targetPath, depth) {
     const indent = "  ".repeat(depth);
+    
+    // Kiểm tra blacklist ngay từ đầu
+    if (this.isBlacklisted(file.name)) {
+      console.log(`${indent}⏭️ Bỏ qua video trong blacklist: ${file.name}`);
+      return;
+    }
+
     console.log(`${indent}🎥 Xử lý video: ${file.name}`);
 
     try {
@@ -851,7 +875,7 @@ class DriveAPI {
   async processOtherFile(file, targetPath, depth) {
     const indent = "  ".repeat(depth);
     
-    // Kiểm tra blacklist trước khi xử lý
+    // Kiểm tra blacklist ngay từ đầu
     if (this.isBlacklisted(file.name)) {
       console.log(`${indent}⏭️ Bỏ qua file trong blacklist: ${file.name}`);
       return;
@@ -912,14 +936,22 @@ class DriveAPI {
   }
 
   isBlacklisted(fileName) {
-    return this.blacklistPatterns.some(pattern => pattern.test(fileName));
+    const matchedPattern = this.blacklistPatterns.find(pattern => pattern.test(fileName));
+    if (matchedPattern) {
+      console.log(`⏭️ Bỏ qua file rác: "${fileName}"`);
+      return true;
+    }
+    return false;
   }
 
   async processPDFs(files, targetPath, depth = 0) {
     console.log('\n📑 [DriveAPI] Xử lý PDF files...');
     const indent = "  ".repeat(depth);
 
-    for (const file of files) {
+    // Lọc blacklist trước khi xử lý
+    const validFiles = files.filter(f => !this.isBlacklisted(f.name));
+
+    for (const file of validFiles) {
       console.log(`${indent}📑 [DriveAPI] Xử lý PDF: ${file.name}`);
       console.log(`${indent}🔍 [DriveAPI] File ID: ${file.id}`);
       
@@ -954,39 +986,46 @@ class DriveAPI {
   async processFiles(files, targetPath, depth = 0) {
     console.log('📑 [DriveAPI] Phân loại files...');
     
-    // Phân loại files
-    const pdfFiles = files.filter(f => f.mimeType === 'application/pdf');
-    const videoFiles = files.filter(f => f.mimeType.includes('video'));
-    const otherFiles = files.filter(f => 
+    // Lọc blacklist trước khi phân loại
+    const validFiles = files.filter(f => !this.isBlacklisted(f.name));
+    
+    // Phân loại files sau khi đã lọc
+    const videoFiles = validFiles.filter(f => f.mimeType.includes('video'));
+    const pdfFiles = validFiles.filter(f => f.mimeType === 'application/pdf');
+    const otherFiles = validFiles.filter(f => 
       !f.mimeType.includes('video') && 
       f.mimeType !== 'application/pdf' &&
       !f.mimeType.includes('folder')
     );
 
-    console.log(`📊 Tổng số files: ${files.length}`);
-    console.log(`  - PDFs: ${pdfFiles.length}`);
-    console.log(`  - Videos: ${videoFiles.length}`);
-    console.log(`  - Others: ${otherFiles.length}`);
+    // Xử lý song song các loại file
+    const promises = [];
 
-    // Xử lý video files trước
+    // Xử lý videos
     if (videoFiles.length > 0) {
       console.log('\n🎥 Xử lý video files...');
-      await this.processVideos(videoFiles, targetPath);
+      const videoPromise = this.processVideos(videoFiles, targetPath);
+      promises.push(videoPromise);
     }
 
-    // Xử lý PDF files
+    // Xử lý PDFs
     if (pdfFiles.length > 0) {
       console.log('\n📑 Xử lý PDF files...');
-      await this.processPDFs(pdfFiles, targetPath, depth);
+      const pdfPromise = this.processPDFs(pdfFiles, targetPath, depth);
+      promises.push(pdfPromise);
     }
 
-    // Xử lý các file khác
+    // Xử lý files khác
     if (otherFiles.length > 0) {
       console.log('\n📄 Xử lý files khác...');
-      for (const file of otherFiles) {
-        await this.processFile(file, targetPath, depth);
-      }
+      const otherPromise = Promise.all(
+        otherFiles.map(file => this.processFile(file, targetPath, depth))
+      );
+      promises.push(otherPromise);
     }
+
+    // Đợi tất cả các promises hoàn thành
+    await Promise.all(promises);
   }
 }
 
