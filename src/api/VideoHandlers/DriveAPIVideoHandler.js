@@ -210,6 +210,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
       // Chỉ đóng browser sau khi đã lấy được URL và headers hoàn chỉnh
       console.log(`${indent}🧹 Đóng browser sau khi lấy được URL...`);
+      // Đợi 2s trước khi đóng browser
+      await new Promise(resolve => setTimeout(resolve, 2000));
       await browser.close();
       browser = null;
 
@@ -579,6 +581,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       // ... rest of refreshCookies implementation ...
     } finally {
       if (browser) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         await browser.close();
       }
     }
