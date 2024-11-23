@@ -25,6 +25,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.processLogger = new ProcessLogger();
     this.queue = [];
     this.downloadOnly = downloadOnly;
+    this.MAX_BACKGROUND_DOWNLOADS = 5;
+    this.activeBackgroundDownloads = new Set();
+    this.pendingDownloads = [];
 
     // Khởi tạo thư mục temp
     if (!fs.existsSync(this.TEMP_DIR)) {
@@ -40,6 +43,19 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const { fileId, fileName, targetPath, depth, targetFolderId, tempPath } = videoInfo;
     const MAX_RETRIES = 3;
     const RETRY_DELAY = 5000;
+    const indent = "  ".repeat(depth);
+
+    // Kiểm tra số lượng downloads hiện tại
+    if (this.activeBackgroundDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+      console.log(`${indent}⏳ Đợi slot trống (${this.activeBackgroundDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}) trước khi xử lý: ${fileName}`);
+      await new Promise(resolve => {
+        this.pendingDownloads.push({
+          type: 'process',
+          videoInfo,
+          resolve
+        });
+      });
+    }
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -280,7 +296,56 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   }
 
   // Sửa lại phương thức startDownloadInBackground để trả về promise
-  async startDownloadInBackground(videoUrl, outputPath, headers, fileName, depth, downloadStartTime) {
+  async startDownloadInBackground(videoUrl, outputPath, headers, fileName, depth) {
+    const indent = "  ".repeat(depth);
+
+    // N���u đang có quá nhiều downloads, thêm vào hàng đợi
+    if (this.activeBackgroundDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+      console.log(`${indent}⏳ Đợi slot trống (${this.activeBackgroundDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`);
+      await new Promise(resolve => {
+        this.pendingDownloads.push({
+          videoUrl, outputPath, headers, fileName, depth, resolve
+        });
+      });
+    }
+
+    // Thêm vào danh sách đang tải
+    this.activeBackgroundDownloads.add(fileName);
+    console.log(`${indent}📥 Bắt đầu tải (${this.activeBackgroundDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`);
+
+    try {
+      await this.downloadWithChunks(videoUrl, outputPath, headers, fileName, depth);
+      console.log(`${indent}✅ Hoàn thành: ${fileName}`);
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi tải ${fileName}:`, error.message);
+      if (fs.existsSync(outputPath)) {
+        fs.unlink(outputPath, () => {});
+      }
+    } finally {
+      // Xóa khỏi danh sách đang tải
+      this.activeBackgroundDownloads.delete(fileName);
+      
+      // Kiểm tra và chạy download tiếp theo trong hàng đợi
+      if (this.pendingDownloads.length > 0 && 
+          this.activeBackgroundDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
+        const nextDownload = this.pendingDownloads.shift();
+        
+        if (nextDownload.type === 'process') {
+          // Nếu là yêu cầu xử lý file mới
+          nextDownload.resolve();
+        } else {
+          // Nếu là yêu cầu download
+          const { videoUrl, outputPath, headers, fileName, depth } = nextDownload;
+          nextDownload.resolve();
+        }
+      }
+
+      console.log(`${indent}📊 Đang tải: ${this.activeBackgroundDownloads.size}, Đợi: ${this.pendingDownloads.length}`);
+    }
+  }
+
+  // Đổi tên method cũ để tránh nhầm lẫn
+  async downloadWithChunks(videoUrl, outputPath, headers, fileName, depth) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
     const CONCURRENT_CHUNK_DOWNLOADS = 4;
@@ -288,6 +353,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const RETRY_DELAY = 2000;
     let fileHandle;
     let totalDownloaded = 0;
+    const downloadStartTime = Date.now();
 
     try {
       // Lấy kích thước file với retry
