@@ -132,13 +132,35 @@ async function main(folderUrl) {
       }
     }
 
+    // Thêm phần hỏi số lượng file xử lý
+    let maxConcurrent = 3;
+    let maxBackground = 5;
+
+    if (!isDownloadMode) {
+      console.log("\n⚙️ Cấu hình tải xuống:");
+      
+      const concurrent = await askQuestion("Số video xử lý cùng lúc (mặc định: 3): ");
+      if (concurrent && !isNaN(concurrent)) {
+        maxConcurrent = parseInt(concurrent);
+      }
+
+      const background = await askQuestion("Số file tải/upload cùng lúc (mặc định: 5): ");
+      if (background && !isNaN(background)) {
+        maxBackground = parseInt(background);
+      }
+
+      console.log(`\n📊 Cấu hình đã chọn:`);
+      console.log(`- Số video xử lý cùng lúc: ${maxConcurrent}`);
+      console.log(`- Số file tải/upload cùng lúc: ${maxBackground}`);
+    }
+
     // Cleanup và khởi tạo thư mục
     if (!isDownloadMode) {
       await cleanupTempFiles();
     }
 
-    // Khởi tạo DriveAPI
-    driveAPI = new DriveAPI(isDownloadMode);
+    // Khởi tạo DriveAPI với tham số mới
+    driveAPI = new DriveAPI(isDownloadMode, maxConcurrent, maxBackground);
     await driveAPI.authenticate();
 
     // Xử lý folder

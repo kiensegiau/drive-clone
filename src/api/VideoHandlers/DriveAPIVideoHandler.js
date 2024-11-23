@@ -10,12 +10,12 @@ const http = require('http');
 const https = require('https');
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
-  constructor(oAuth2Client = null, downloadOnly = false) {
+  constructor(oAuth2Client = null, downloadOnly = false, maxConcurrent = 3, maxBackground = 5) {
     super(oAuth2Client, downloadOnly);
     this.MAX_RETRIES = 5;
     this.RETRY_DELAY = 2000;
     this.activeDownloads = 0;
-    this.MAX_CONCURRENT_DOWNLOADS = 3;
+    this.MAX_CONCURRENT_DOWNLOADS = maxConcurrent;
     this.downloadQueue = [];
     this.videoQueue = [];
     this.processingVideo = false;
@@ -25,7 +25,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.processLogger = new ProcessLogger();
     this.queue = [];
     this.downloadOnly = downloadOnly;
-    this.MAX_BACKGROUND_DOWNLOADS = 5;
+    this.MAX_BACKGROUND_DOWNLOADS = maxBackground;
     this.activeBackgroundDownloads = new Set();
     this.pendingDownloads = [];
 

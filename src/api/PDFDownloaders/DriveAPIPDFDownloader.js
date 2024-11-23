@@ -34,8 +34,15 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     this.browser = null;
     this.page = null;
     this.chromeManager = new ChromeManager();
+    this.MAX_CONCURRENT_CHECKS = 10;
     
     this.initTempDir();
+    
+    this.checkQueue = new Map();
+    this.processing = false;
+    
+    this.BATCH_SIZE = 20;
+    this.MAX_CONCURRENT_BATCHES = 5;
   }
 
   initTempDir() {
@@ -138,9 +145,14 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
   async downloadPDF(fileId, fileName, targetPath, targetFolderId) {
     try {
-      const existingFile = await this.checkExistingFile(fileName, targetFolderId);
+      // Kiểm tra file tồn tại song song
+      const existingFiles = await this.checkExistingFiles(
+        [{ name: fileName }], 
+        targetFolderId
+      );
+      const existingFile = existingFiles.get(fileName);
+      
       if (existingFile) {
-        console.log(`📝 File đã tồn tại, bỏ qua: ${fileName}`);
         return existingFile;
       }
 
@@ -530,7 +542,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
   async uploadToDrive(filePath, targetFolderId, customFileName) {
     try {
-      console.log(`\n📤 [DriveAPIPDFDownloader] Bắt đầu upload...`);
+      console.log(`\n📤 [DriveAPIPDFDownloader] Bắt đu upload...`);
       
       if (!fs.existsSync(filePath)) {
         throw new Error(`File không tồn tại: ${filePath}`);
@@ -546,7 +558,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       console.log(`📁 Upload với tên: ${fileName} (${(fileSize/1024/1024).toFixed(2)}MB)`);
 
       const fileMetadata = {
-        name: fileName,  // Sử dụng fileName đã được xử lý
+        name: fileName,  // Sử dụng fileName đã đưc xử lý
         parents: [targetFolderId]
       };
 
@@ -577,12 +589,152 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
+  async addToCheckQueue(file, targetFolderId) {
+    this.checkQueue.set(file.name, {
+      file,
+      targetFolderId,
+      status: 'pending'
+    });
+
+    if (!this.processing) {
+      this.processing = true;
+      await this.processCheckQueue();
+    }
+  }
+
+  async processCheckQueue() {
+    try {
+      while (this.checkQueue.size > 0) {
+        const pendingChecks = Array.from(this.checkQueue.entries())
+          .filter(([_, data]) => data.status === 'pending')
+          .slice(0, this.MAX_CONCURRENT_CHECKS);
+
+        if (pendingChecks.length === 0) break;
+
+        console.log(`\n🔍 Kiểm tra song song ${pendingChecks.length} files...`);
+
+        const checkPromises = pendingChecks.map(async ([fileName, data]) => {
+          try {
+            const query = `name='${fileName}' and '${data.targetFolderId}' in parents and trashed=false`;
+            const response = await this.driveAPI.files.list({
+              q: query,
+              fields: 'files(id, name, size)',
+              supportsAllDrives: true
+            });
+
+            if (response.data.files.length > 0) {
+              console.log(`📝 File đã tồn tại, bỏ qua: ${fileName}`);
+              data.result = {
+                success: true,
+                skipped: true,
+                uploadedFile: response.data.files[0]
+              };
+            } else {
+              data.result = null;
+            }
+            data.status = 'completed';
+          } catch (error) {
+            console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error.message);
+            data.status = 'error';
+            data.error = error;
+          }
+        });
+
+        await Promise.all(checkPromises);
+      }
+    } finally {
+      this.processing = false;
+    }
+  }
+
+  async checkExistingFiles(files, targetFolderId) {
+    try {
+      console.log(`\n🔍 Kiểm tra ${files.length} PDF files...`);
+      const results = new Map();
+      
+      // Chia files thành các batch nhỏ hơn
+      const batches = [];
+      for (let i = 0; i < files.length; i += this.BATCH_SIZE) {
+        batches.push(files.slice(i, i + this.BATCH_SIZE));
+      }
+
+      console.log(`📦 Chia thành ${batches.length} batch, mỗi batch ${this.BATCH_SIZE} files`);
+
+      // Xử lý song song theo số lượng batch tối đa
+      for (let i = 0; i < batches.length; i += this.MAX_CONCURRENT_BATCHES) {
+        const currentBatches = batches.slice(i, i + this.MAX_CONCURRENT_BATCHES);
+        
+        const batchPromises = currentBatches.map(async (batch, index) => {
+          console.log(`\n🔄 Xử lý batch ${i + index + 1}/${batches.length}...`);
+          
+          // Tạo một query cho cả batch
+          const fileQueries = batch.map(file => `name='${file.name}'`);
+          const query = `(${fileQueries.join(' or ')}) and '${targetFolderId}' in parents and trashed=false`;
+
+          try {
+            const response = await this.driveAPI.files.list({
+              q: query,
+              fields: 'files(id, name, size)',
+              pageSize: batch.length,
+              supportsAllDrives: true
+            });
+
+            // Xử lý kết quả của batch
+            response.data.files.forEach(file => {
+              results.set(file.name, {
+                success: true,
+                skipped: true,
+                uploadedFile: file,
+                fileSize: file.size
+              });
+            });
+
+            console.log(`✅ Batch ${i + index + 1}: Tìm thấy ${response.data.files.length} files`);
+          } catch (error) {
+            console.error(`❌ Lỗi xử lý batch ${i + index + 1}:`, error.message);
+            throw error;
+          }
+        });
+
+        // Chờ các batch trong nhóm hiện tại hoàn thành
+        await Promise.all(batchPromises);
+      }
+
+      // Đánh dấu các file không tồn tại
+      files.forEach(file => {
+        if (!results.has(file.name)) {
+          results.set(file.name, null);
+        }
+      });
+
+      // Log kết quả tổng hợp
+      const existingFiles = Array.from(results.entries())
+        .filter(([_, result]) => result !== null);
+      
+      if (existingFiles.length > 0) {
+        console.log(`\n📝 Tổng kết: ${existingFiles.length}/${files.length} files đã tồn tại:`);
+        existingFiles.forEach(([fileName, result]) => {
+          const size = result.fileSize ? `(${(result.fileSize/1024/1024).toFixed(2)}MB)` : '';
+          console.log(`  - ${fileName} ${size}`);
+        });
+      }
+
+      return results;
+
+    } catch (error) {
+      console.error('❌ Lỗi kiểm tra files:', error);
+      throw error;
+    }
+  }
+
   async downloadAndUpload(fileId, fileName, targetFolderId) {
     const safeFileName = sanitizePath(fileName);
     const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`);
     
     try {
-      const existingFile = await this.checkExistingFile(fileName, targetFolderId);
+      // Kiểm tra file tồn tại
+      const existingCheck = await this.checkExistingFiles([{name: fileName}], targetFolderId);
+      const existingFile = existingCheck.get(fileName);
       if (existingFile) {
         return existingFile;
       }
