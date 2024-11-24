@@ -1,6 +1,8 @@
 const puppeteer = require("puppeteer-core");
 const { exec } = require("child_process");
 const path = require("path");
+const util = require('util');
+const execAsync = util.promisify(exec);
 
 class ChromeManager {
   constructor(maxInstances = 3) {
@@ -184,6 +186,32 @@ class ChromeManager {
       }
     } catch (error) {
       console.error(`❌ Lỗi tổng thể trong closeInactiveBrowsers:`, error.message);
+    }
+  }
+
+  async killAllChromeProcesses() {
+    try {
+      const platform = process.platform;
+      let command = '';
+      
+      if (platform === 'win32') {
+        command = 'taskkill /F /IM chrome.exe /T';
+      } else if (platform === 'darwin') {
+        command = 'pkill -9 "Google Chrome"';
+      } else {
+        command = 'pkill -9 chrome';
+      }
+
+      await execAsync(command);
+      console.log('🧹 Đã đóng tất cả các process Chrome');
+      
+      // Đợi một chút để đảm bảo các process đã được đóng hoàn toàn
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (error) {
+      // Bỏ qua lỗi nếu không tìm thấy process Chrome nào
+      if (!error.message.includes('no process found')) {
+        console.error('⚠️ Lỗi khi đóng Chrome:', error.message);
+      }
     }
   }
 }
