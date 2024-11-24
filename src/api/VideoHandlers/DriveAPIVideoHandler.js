@@ -25,7 +25,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.processLogger = new ProcessLogger();
     this.queue = [];
     this.downloadOnly = downloadOnly;
-    this.MAX_BACKGROUND_DOWNLOADS = 5;
+    this.MAX_BACKGROUND_DOWNLOADS = 10;
     this.activeBackgroundDownloads = new Set();
     this.pendingDownloads = [];
 
@@ -74,7 +74,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           tempPath,
           depth,
           fileId,
-          fileName
+          fileName,
+          null,
+          targetFolderId
         );
 
         // Không đợi tải xong, trả về ngay
@@ -673,6 +675,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     console.log("\n✅ Đã xử lý xong tất cả videos trong queue");
   }
 
+  
   async uploadVideo(filePath, fileName, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 5;
@@ -705,7 +708,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
         const fileMetadata = {
           name: fileName,
-          parents: [targetFolderId],
+          parents: targetFolderId ? [targetFolderId] : undefined,
           description: "",
           properties: {
             source: "web_client",

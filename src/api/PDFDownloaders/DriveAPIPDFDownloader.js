@@ -144,7 +144,18 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async downloadPDF(fileId, fileName, targetPath, targetFolderId) {
+    let tempPath = null;
+    
     try {
+      // Kiểm tra tham số đầu vào
+      if (!fileId || !fileName || !targetFolderId) {
+        throw new Error('Thiếu thông tin file cần thiết');
+      }
+
+      console.log(`\n📄 Bắt đầu xử lý file: ${fileName}`);
+      console.log(`📌 File ID: ${fileId}`);
+      console.log(`📁 Target Folder ID: ${targetFolderId}`);
+      
       // Kiểm tra file tồn tại song song
       const existingFiles = await this.checkExistingFiles(
         [{ name: fileName }], 
@@ -153,14 +164,38 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       const existingFile = existingFiles.get(fileName);
       
       if (existingFile) {
-        return existingFile;
+        // Kiểm tra kích thước file đã tồn tại
+        if (existingFile.uploadedFile && existingFile.uploadedFile.size > 0) {
+          console.log(`✅ File đã tồn tại và hợp lệ, bỏ qua: ${fileName}`);
+          return existingFile;
+        } else {
+          console.log(`⚠️ File tồn tại nhưng có thể bị lỗi, thử tải lại...`);
+        }
       }
 
-      const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${fileName}`);
+      tempPath = path.join(this.tempDir, `temp_${Date.now()}_${fileName}`);
+
+      // Kiểm tra thư mục temp
+      if (!fs.existsSync(this.tempDir)) {
+        console.log(`📁 Tạo thư mục temp: ${this.tempDir}`);
+        fs.mkdirSync(this.tempDir, { recursive: true });
+      }
 
       try {
         console.log(`\n📥 Thử tải trực tiếp từ Drive API...`);
-        await this.downloadFromDriveAPI(fileId, tempPath);
+        const downloadResult = await this.downloadFromDriveAPI(fileId, tempPath);
+        
+        // Kiểm tra file đã tải
+        if (!fs.existsSync(tempPath)) {
+          throw new Error('File tải về không tồn tại');
+        }
+
+        const fileStats = fs.statSync(tempPath);
+        if (fileStats.size === 0) {
+          throw new Error('File tải về rỗng');
+        }
+
+        console.log(`✅ Tải thành công: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
         
         return await this.uploadToDrive(tempPath, targetFolderId, fileName);
 
@@ -169,26 +204,81 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             apiError.message.includes('cannotDownloadFile')) {
           
           console.log(`\n🔄 Không thể tải trực tiếp, chuyển sang phương pháp capture...`);
-          const captureResult = await this.captureAndCreatePDF(
-            fileId, 
-            tempPath,
-            targetFolderId,
-            fileName
-          );
           
-          if (!captureResult.success) {
-            throw new Error(`Capture thất bại: ${captureResult.error}`);
-          }
+          // Thêm retry logic cho capture
+          let retryCount = 0;
+          const maxRetries = 3;
+          let lastError = null;
 
-          return captureResult;
+          while (retryCount < maxRetries) {
+            try {
+              console.log(`\n🔄 Lần thử ${retryCount + 1}/${maxRetries} cho file: ${fileName}`);
+              
+              const captureResult = await this.captureAndCreatePDF(
+                fileId, 
+                tempPath,
+                targetFolderId,
+                fileName,
+                60000 * (retryCount + 1) // Tăng timeout theo số lần retry
+              );
+              
+              // Kiểm tra kết quả capture
+              if (captureResult.success) {
+                if (!fs.existsSync(tempPath)) {
+                  throw new Error('File PDF không được tạo');
+                }
+                const pdfStats = fs.statSync(tempPath);
+                if (pdfStats.size === 0) {
+                  throw new Error('File PDF rỗng');
+                }
+                return captureResult;
+              }
+              
+              lastError = new Error(captureResult.error);
+            } catch (captureError) {
+              lastError = captureError;
+              console.log(`\n⚠️ Lần thử ${retryCount + 1} thất bại: ${captureError.message}`);
+            } finally {
+              // Đảm bảo dọn dẹp sau mỗi lần thử
+              await this.cleanup().catch(() => {});
+            }
+            
+            retryCount++;
+            if (retryCount < maxRetries) {
+              console.log(`\n🔄 Đợi 5 giây trước khi thử lại...`);
+              await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+          }
+          
+          console.log(`\n❌ Không thể xử lý file sau ${maxRetries} lần thử: ${fileName}`);
+          console.log(`➡️ Tiếp tục với file tiếp theo...`);
+          return { 
+            success: false, 
+            error: lastError?.message || 'Capture thất bại sau nhiều lần thử',
+            skipped: true
+          };
         }
         
         throw apiError;
       }
 
     } catch (error) {
-      console.error(`\n❌ Lỗi xử lý file:`, error.message);
-      return { success: false, error: error.message };
+      console.error(`\n❌ Lỗi xử lý file ${fileName}:`, error.message);
+      console.log(`➡️ Tiếp tục với file tiếp theo...`);
+      return { 
+        success: false, 
+        error: error.message,
+        skipped: true
+      };
+    } finally {
+      // Dọn dẹp file tạm nếu còn tồn tại
+      try {
+        if (tempPath && fs.existsSync(tempPath)) {
+          fs.unlinkSync(tempPath);
+        }
+      } catch (cleanupError) {
+        console.warn(`⚠️ Không thể xóa file tạm: ${cleanupError.message}`);
+      }
     }
   }
 
@@ -216,59 +306,71 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     });
   }
 
-  async captureAndCreatePDF(fileId, outputPath, targetFolderId, originalFileName) {
+  async captureAndCreatePDF(fileId, outputPath, targetFolderId, originalFileName, timeout = 30000) {
     const downloadedImages = [];
     const tempDir = path.dirname(outputPath);
     
     try {
       await fs.promises.mkdir(tempDir, { recursive: true });
       
-      console.log(`🌐 [DriveAPIPDFDownloader] Lấy browser instance...`);
-      this.browser = await this.chromeManager.getBrowser();
-      console.log(`✅ [DriveAPIPDFDownloader] Đã có browser instance`);
-
-      console.log(`📑 [DriveAPIPDFDownloader] Tạo tab mới...`);
-      this.page = await this.browser.newPage();
-      console.log(`✅ [DriveAPIPDFDownloader] Đã tạo tab mới`);
+      // Thêm retry logic cho việc khởi tạo browser
+      let retryCount = 0;
+      const maxRetries = 3;
       
-      console.log(`⚙️ [DriveAPIPDFDownloader] Cấu hình page...`);
+      while (retryCount < maxRetries) {
+        try {
+          console.log(`🌐 [DriveAPIPDFDownloader] Lấy browser instance... (Lần ${retryCount + 1})`);
+          this.browser = await this.chromeManager.getBrowser();
+          this.page = await this.browser.newPage();
+          break;
+        } catch (error) {
+          retryCount++;
+          if (retryCount === maxRetries) throw error;
+          console.log(`\n⚠️ Lỗi khởi tạo browser, thử lại sau 5 giây...`);
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+
+      // Thiết lập page với timeout được truyền vào
       await this.page.setCacheEnabled(false);
       await this.page.setRequestInterception(true);
-      console.log(`✅ [DriveAPIPDFDownloader] Đã cấu hình page`);
+      
+      // Xử lý request interception với timeout guard
+      const requestHandlerPromise = new Promise((resolve) => {
+        this.page.on("request", (request) => {
+          const url = request.url();
+          if (url.includes("accounts.google.com") || url.includes("oauth")) {
+            request.continue();
+            return;
+          }
 
-      // Xử lý request interception
-      console.log(`🔄 [DriveAPIPDFDownloader] Thiết lập request handler...`);
-      this.page.on("request", (request) => {
-        const url = request.url();
-         
-        if (url.includes("accounts.google.com") || url.includes("oauth")) {
-          console.log(`🔑 [DriveAPIPDFDownloader] Auth request - continue`);
-          request.continue();
-          return;
-        }
-
-        if (url.includes("viewer2/prod") && url.includes("page=")) {
-          const pageMatch = url.match(/page=(\d+)/);
-          if (pageMatch) {
-            const pageNum = parseInt(pageMatch[1]);
-            if (!this.pageRequests.has(pageNum)) {
-              console.log(`📄 [DriveAPIPDFDownloader] Phát hiện trang ${pageNum}`);
-              this.pageRequests.set(pageNum, request);
+          if (url.includes("viewer2/prod") && url.includes("page=")) {
+            const pageMatch = url.match(/page=(\d+)/);
+            if (pageMatch) {
+              const pageNum = parseInt(pageMatch[1]);
+              if (!this.pageRequests.has(pageNum)) {
+                this.pageRequests.set(pageNum, request);
+              }
             }
           }
-        }
-        request.continue();
+          request.continue();
+        });
+        resolve();
       });
 
-      // Load PDF viewer
-      console.log(`\n🌐 [DriveAPIPDFDownloader] Mở PDF viewer...`);
-      console.log(`🔗 URL: https://drive.google.com/file/d/${fileId}/view`);
-      
-      await this.page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-        waitUntil: "networkidle0",
-        timeout: 30000
-      });
-      console.log(`✅ [DriveAPIPDFDownloader] Đã load PDF viewer`);
+      await Promise.race([
+        requestHandlerPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Request handler timeout')), timeout))
+      ]);
+
+      // Load PDF viewer với timeout guard
+      await Promise.race([
+        this.page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+          waitUntil: "networkidle0",
+          timeout: timeout
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Navigation timeout')), timeout + 5000))
+      ]);
 
       // Scroll để load tất cả trang
       console.log(`\n📜 [DriveAPIPDFDownloader] Bắt đầu scroll...`);
@@ -330,18 +432,22 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       return uploadResult;
 
     } catch (error) {
-      console.error(`\n❌ Lỗi xử lý:`, error.message);
+      console.error(`\n❌ Lỗi trong quá trình capture:`, error.message);
       return { success: false, error: error.message };
     } finally {
-      // Dọn dẹp
+      // Đảm bảo dọn dẹp resources
       try {
+        if (this.browser) {
+          await this.browser.close().catch(() => {});
+          this.browser = null;
+        }
         for (const image of downloadedImages) {
           if (image && fs.existsSync(image)) {
-            await fs.promises.unlink(image);
+            await fs.promises.unlink(image).catch(() => {});
           }
         }
-      } catch (err) {
-        console.warn(`⚠️ Lỗi khi dọn dẹp:`, err.message);
+      } catch (cleanupError) {
+        console.warn(`⚠️ Lỗi khi dọn dẹp:`, cleanupError.message);
       }
     }
   }
@@ -835,6 +941,184 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       
       throw error;
     }
+  }
+
+  async navigateWithRetry(fileId, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`\n🌐 [DriveAPIPDFDownloader] Thử mở PDF viewer lần ${attempt}...`);
+        await this.page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+          waitUntil: "networkidle0", 
+          timeout: 60000
+        });
+        return true;
+      } catch (error) {
+        console.log(`⚠️ Lỗi điều hướng lần ${attempt}: ${error.message}`);
+        if (attempt === maxRetries) {
+          throw error;
+        }
+        // Đợi trước khi thử lại
+        await new Promise(resolve => setTimeout(resolve, 5000));
+      }
+    }
+  }
+
+  // Thêm phương thức mới để xử lý nhiều file
+  async processPDFFiles(files) {
+    if (!Array.isArray(files) || files.length === 0) {
+      console.log('❌ Không có file nào để xử lý');
+      return new Map();
+    }
+
+    const results = new Map();
+    console.log(`\n📊 Tổng số file cần xử lý: ${files.length}`);
+
+    try {
+      // Kiểm tra trước các file có thể tải qua API
+      console.log(`\n🔍 Kiểm tra khả năng tải trực tiếp...`);
+      const apiDownloadable = [];
+      const needCapture = [];
+
+      for (const file of files) {
+        try {
+          // Thử HEAD request để kiểm tra quyền truy cập
+          await this.driveAPI.files.get({
+            fileId: file.id,
+            fields: 'size',
+            supportsAllDrives: true
+          });
+          apiDownloadable.push(file);
+        } catch (error) {
+          if (error.message.includes('403') || 
+              error.message.includes('cannotDownloadFile')) {
+            needCapture.push(file);
+          } else {
+            console.error(`❌ Lỗi kiểm tra file ${file.name}:`, error.message);
+            results.set(file.name, {
+              success: false,
+              error: error.message,
+              skipped: true
+            });
+          }
+        }
+      }
+
+      console.log(`\n📊 Phân loại files:`);
+      console.log(`📥 Có thể tải API: ${apiDownloadable.length}`);
+      console.log(`🔄 Cần capture: ${needCapture.length}`);
+
+      // Xử lý song song các file có thể tải qua API
+      if (apiDownloadable.length > 0) {
+        console.log(`\n🚀 Bắt đầu tải song song ${apiDownloadable.length} files...`);
+        
+        // Chia thành các batch nhỏ hơn
+        const batches = [];
+        for (let i = 0; i < apiDownloadable.length; i += this.BATCH_SIZE) {
+          batches.push(apiDownloadable.slice(i, i + this.BATCH_SIZE));
+        }
+
+        console.log(`📦 Chia thành ${batches.length} batch, mỗi batch ${this.BATCH_SIZE} files`);
+
+        // Xử lý song song theo số lượng batch tối đa
+        for (let i = 0; i < batches.length; i += this.MAX_CONCURRENT_BATCHES) {
+          const currentBatches = batches.slice(i, i + this.MAX_CONCURRENT_BATCHES);
+          
+          const batchPromises = currentBatches.map(async (batch, index) => {
+            console.log(`\n🔄 Xử lý batch ${i + index + 1}/${batches.length}...`);
+            
+            const downloadPromises = batch.map(async (file) => {
+              try {
+                const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${file.name}`);
+                
+                await this.downloadFromDriveAPI(file.id, tempPath);
+                
+                // Kiểm tra file đã tải
+                if (!fs.existsSync(tempPath)) {
+                  throw new Error('File tải về không tồn tại');
+                }
+
+                const fileStats = fs.statSync(tempPath);
+                if (fileStats.size === 0) {
+                  throw new Error('File tải về rỗng');
+                }
+
+                const uploadResult = await this.uploadToDrive(
+                  tempPath, 
+                  file.targetFolderId,
+                  file.name
+                );
+
+                console.log(`✅ Tải thành công: ${file.name} (${(fileStats.size/1024/1024).toFixed(2)}MB)`);
+                results.set(file.name, uploadResult);
+
+                // Xóa file tạm
+                fs.unlinkSync(tempPath);
+
+              } catch (error) {
+                console.error(`❌ Lỗi tải file ${file.name}:`, error.message);
+                results.set(file.name, {
+                  success: false,
+                  error: error.message,
+                  skipped: true
+                });
+                needCapture.push(file); // Thêm vào danh sách cần capture nếu tải API thất bại
+              }
+            });
+
+            await Promise.all(downloadPromises);
+          });
+
+          await Promise.all(batchPromises);
+        }
+      }
+
+      // Xử lý tuần tự các file cần capture
+      if (needCapture.length > 0) {
+        console.log(`\n🔄 Xử lý ${needCapture.length} files cần capture...`);
+        
+        for (const file of needCapture) {
+          try {
+            const result = await this.downloadPDF(
+              file.id,
+              file.name,
+              file.targetPath,
+              file.targetFolderId
+            );
+            results.set(file.name, result);
+          } catch (error) {
+            console.error(`❌ Lỗi capture file ${file.name}:`, error.message);
+            results.set(file.name, {
+              success: false,
+              error: error.message,
+              skipped: true
+            });
+          }
+        }
+      }
+
+    } catch (error) {
+      console.error(`\n❌ Lỗi xử lý batch:`, error.message);
+    }
+
+    // Tổng kết chi tiết
+    const successful = Array.from(results.entries()).filter(([_, r]) => r.success);
+    const failed = Array.from(results.entries()).filter(([_, r]) => !r.success);
+    const skipped = Array.from(results.entries()).filter(([_, r]) => r.skipped);
+    
+    console.log(`\n====================================`);
+    console.log(`📊 Tổng kết xử lý ${files.length} files:`);
+    console.log(`✅ Thành công: ${successful.length}`);
+    console.log(`❌ Thất bại: ${failed.length - skipped.length}`);
+    console.log(`⏩ Đã bỏ qua: ${skipped.length}`);
+    
+    if (failed.length > 0) {
+      console.log(`\n❌ Danh sách file thất bại:`);
+      failed.forEach(([fileName, result]) => {
+        console.log(`  - ${fileName}: ${result.error}`);
+      });
+    }
+
+    return results;
   }
 }
 
