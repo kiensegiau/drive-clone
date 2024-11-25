@@ -1,8 +1,12 @@
 const DriveAPI = require("./api/DriveAPI");
+const { initializeApp } = require('firebase/app');
+const { getDatabase, ref, get, update } = require('firebase/database');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { getLongPath } = require('./utils/pathUtils');
+const os = require('os');
+const crypto = require('crypto');
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -96,11 +100,152 @@ async function initDownloadDirs() {
     }
 }
 
+// Cấu hình Firebase
+const firebaseConfig = {
+  apiKey: "AIzaSyB8Haj2w6dSeagE44XzB7aty1YZrGJxnPM",
+  authDomain: "hocmai-1d38d.firebaseapp.com",
+  databaseURL: "https://hocmai-1d38d-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "hocmai-1d38d",
+  storageBucket: "hocmai-1d38d.appspot.com",
+  messagingSenderId: "861555630148",
+  appId: "1:861555630148:web:ca50d2a00510c9907d9c11",
+  measurementId: "G-T2X5ZEJN58"
+};
+
+// Khởi tạo Firebase
+const app = initializeApp(firebaseConfig);
+const database = getDatabase(app);
+
+// Hàm lấy hardware ID
+function getHardwareID() {
+  const cpu = os.cpus()[0].model;
+  const totalMem = os.totalmem();
+  const hostname = os.hostname();
+  const platform = os.platform();
+  
+  // Tạo một chuỗi duy nhất từ thông tin phần cứng
+  const hardwareString = `${cpu}-${totalMem}-${hostname}-${platform}`;
+  
+  // Mã hóa thành hardware ID
+  return crypto
+    .createHash('sha256')
+    .update(hardwareString)
+    .digest('hex');
+}
+
+// Hàm kiểm tra key
+async function validateLicenseKey(key) {
+  try {
+    const keyRef = ref(database, `licenses/${key}`);
+    const snapshot = await get(keyRef);
+    
+    if (!snapshot.exists()) {
+      throw new Error('Key không hợp lệ');
+    }
+    
+    const keyData = snapshot.val();
+    if (!keyData.active) {
+      throw new Error('Key đã bị vô hiệu hóa');
+    }
+    
+    if (keyData.expiryDate && new Date(keyData.expiryDate) < new Date()) {
+      throw new Error('Key đã hết hạn');
+    }
+
+    // Kiểm tra hardware ID
+    const currentHardwareID = getHardwareID();
+    
+    if (keyData.hardwareID) {
+      // Nếu key đã được gắn với một máy
+      if (keyData.hardwareID !== currentHardwareID) {
+        throw new Error('Key này đã được sử dụng trên máy khác');
+      }
+    } else {
+      // Nếu key chưa được gắn với máy nào, gắn với máy hiện tại
+      await update(keyRef, {
+        hardwareID: currentHardwareID,
+        firstUsedAt: new Date().toISOString()
+      });
+    }
+
+    // Cập nhật lần sử dụng cuối
+    await update(keyRef, {
+      lastUsed: new Date().toISOString(),
+      lastHardwareID: currentHardwareID
+    });
+    
+    return true;
+  } catch (error) {
+    throw new Error(`Lỗi xác thực key: ${error.message}`);
+  }
+}
+
+// Thêm hàm để đọc/ghi key
+function getSavedKey() {
+  try {
+    const keyPath = path.join(process.cwd(), 'config', 'license.json');
+    if (fs.existsSync(keyPath)) {
+      const data = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+      return data.key;
+    }
+  } catch (error) {
+    console.warn('⚠️ Không đọc được key đã lưu');
+  }
+  return null;
+}
+
+function saveKey(key) {
+  try {
+    const configDir = path.join(process.cwd(), 'config');
+    if (!fs.existsSync(configDir)) {
+      fs.mkdirSync(configDir, { recursive: true });
+    }
+    fs.writeFileSync(
+      path.join(configDir, 'license.json'),
+      JSON.stringify({ key, savedAt: new Date().toISOString() })
+    );
+  } catch (error) {
+    console.warn('⚠️ Không lưu được key');
+  }
+}
+
+function removeKey() {
+  try {
+    const keyPath = path.join(process.cwd(), 'config', 'license.json');
+    if (fs.existsSync(keyPath)) {
+      fs.unlinkSync(keyPath);
+      console.log("🗑️ Đã xóa key cũ");
+    }
+  } catch (error) {
+    console.warn('⚠️ Không xóa được file key');
+  }
+}
+
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
 
   try {
+    // Kiểm tra key đã lưu
+    let licenseKey = getSavedKey();
+    
+    if (!licenseKey) {
+      // Chỉ hỏi key nếu chưa có
+      licenseKey = await askQuestion("\n🔑 Nhập key của bạn: ");
+    } else {
+      console.log("✅ Đang sử dụng key đã lưu");
+    }
+
+    try {
+      // Xác thực key
+      await validateLicenseKey(licenseKey);
+      console.log("✅ Key hợp lệ");
+    } catch (error) {
+      // Nếu key không hợp lệ, xóa file key cũ
+      removeKey();
+      throw error; // Ném lại lỗi để dừng chương trình
+    }
+
     // Validate input
     if (!folderUrl) {
       throw new Error("Vui lòng cung cấp URL folder Google Drive");
