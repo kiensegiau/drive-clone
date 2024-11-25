@@ -1,37 +1,240 @@
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
-function getLongPath(filePath) {
-    // Chuẩn hóa đường dẫn
-    let normalizedPath = path.normalize(filePath);
-    
-    // Chỉ xử lý trên Windows
-    if (process.platform === 'win32') {
-        // Đã có prefix \\?\ thì giữ nguyên
-        if (normalizedPath.startsWith('\\\\?\\')) {
-            return normalizedPath;
-        }
-        
-        // Convert relative path thành absolute path
-        if (!path.isAbsolute(normalizedPath)) {
-            normalizedPath = path.resolve(normalizedPath);
-        }
-        
-        // Thêm prefix \\?\ cho đường dẫn dài
-        normalizedPath = `\\\\?\\${normalizedPath}`;
-        
-        // Đảm bảo dùng backslash
-        normalizedPath = normalizedPath.replace(/\//g, '\\');
+// Hằng số cho các thư mục
+const FOLDER_NAMES = {
+  CONFIG: 'config',
+  TEMP: 'temp',
+  DOWNLOADS: 'downloads',
+  VIDEOS: 'videos',
+  LOGS: 'logs',
+  CACHE: 'cache'
+};
+
+// Lấy thư mục gốc của ứng dụng
+function getAppRoot() {
+  try {
+    // Kiểm tra nếu đang chạy từ file exe
+    if (process.pkg) {
+      return path.dirname(process.execPath);
     }
-    
-    return normalizedPath;
+    // Nếu đang trong môi trường dev
+    return process.cwd();
+  } catch (error) {
+    console.error('❌ Lỗi lấy thư mục gốc:', error.message);
+    // Fallback về temp nếu có lỗi
+    return os.tmpdir();
+  }
 }
 
-function sanitizePath(filePath) {
-    // Chỉ loại bỏ các ký tự không hợp lệ, không rút gọn tên
-    return filePath.replace(/[<>:"|?*]/g, '_');
+// Chuẩn hóa tên file/thư mục
+function sanitizePath(name) {
+  if (!name) return '';
+  try {
+    return name
+      .replace(/[\/\\:*?"<>|]/g, '-') // Thay thế ký tự không hợp lệ
+      .replace(/\s+/g, ' ')           // Chuẩn hóa khoảng trắng  
+      .replace(/\.+/g, '.')           // Xử lý dấu chấm liên tiếp
+      .replace(/[^\x00-\x7F]/g, '')   // Loại bỏ ký tự unicode
+      .replace(/^\.+|\.+$/g, '')      // Xóa dấu chấm đầu/cuối
+      .trim();
+  } catch (error) {
+    console.error('❌ Lỗi chuẩn hóa tên:', error.message);
+    return `file_${Date.now()}`;  // Fallback tên an toàn
+  }
+}
+
+// Lấy đường dẫn an toàn cho thư mục temp
+function getSafeTempDir() {
+  try {
+    // Ưu tiên sử dụng thư mục temp của hệ thống
+    const systemTemp = os.tmpdir();
+    const appTemp = path.join(systemTemp, 'drive-clone-app');
+    
+    // Đảm bảo thư mục tồn tại
+    if (!fs.existsSync(appTemp)) {
+      fs.mkdirSync(appTemp, { recursive: true });
+    }
+    
+    // Tạo thư mục temp riêng cho mỗi phiên làm việc
+    const sessionTemp = path.join(appTemp, Date.now().toString());
+    if (!fs.existsSync(sessionTemp)) {
+      fs.mkdirSync(sessionTemp, { recursive: true });
+    }
+    
+    return sessionTemp;
+  } catch (error) {
+    console.error('❌ Lỗi tạo thư mục temp:', error);
+    // Fallback về temp của hệ thống
+    return path.join(os.tmpdir(), 'drive-clone-temp');
+  }
+}
+
+// Các hàm lấy đường dẫn với xử lý lỗi
+function getConfigPath() {
+  try {
+    return ensureDirectoryExists(path.join(getAppRoot(), FOLDER_NAMES.CONFIG));
+  } catch {
+    return ensureDirectoryExists(path.join(getSafeTempDir(), FOLDER_NAMES.CONFIG));
+  }
+}
+
+function getTempPath() {
+  try {
+    const tempBase = getSafeTempDir();
+    const tempPath = path.join(tempBase, FOLDER_NAMES.TEMP);
+    return ensureDirectoryExists(tempPath);
+  } catch (error) {
+    console.error('❌ Lỗi lấy đường dẫn temp:', error);
+    // Fallback về temp của hệ thống
+    const fallbackPath = path.join(os.tmpdir(), 'drive-clone-temp');
+    return ensureDirectoryExists(fallbackPath);
+  }
+}
+
+function getDownloadsPath() {
+  try {
+    return ensureDirectoryExists(path.join(getAppRoot(), FOLDER_NAMES.DOWNLOADS));
+  } catch {
+    return ensureDirectoryExists(path.join(getSafeTempDir(), FOLDER_NAMES.DOWNLOADS));
+  }
+}
+
+function getVideoTempPath() {
+  try {
+    return ensureDirectoryExists(path.join(getTempPath(), FOLDER_NAMES.VIDEOS));
+  } catch {
+    return ensureDirectoryExists(path.join(getSafeTempDir(), FOLDER_NAMES.VIDEOS));
+  }
+}
+
+function getLogsPath() {
+  try {
+    return ensureDirectoryExists(path.join(getAppRoot(), FOLDER_NAMES.LOGS));
+  } catch {
+    return ensureDirectoryExists(path.join(getSafeTempDir(), FOLDER_NAMES.LOGS));
+  }
+}
+
+// Tạo thư mục nếu chưa tồn tại với retry
+function ensureDirectoryExists(dirPath) {
+  if (!dirPath || typeof dirPath !== 'string') {
+    throw new Error('Đường dẫn không được để trống');
+  }
+
+  try {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    return dirPath;
+  } catch (error) {
+    console.error(`❌ Lỗi tạo thư mục ${dirPath}:`, error);
+    // Fallback về temp system
+    const fallbackPath = path.join(os.tmpdir(), 'drive-clone-temp', path.basename(dirPath));
+    fs.mkdirSync(fallbackPath, { recursive: true });
+    return fallbackPath;
+  }
+}
+
+// Xóa file an toàn với retry
+async function safeUnlink(filePath) {
+  const MAX_RETRIES = 3;
+  const RETRY_DELAY = 1000;
+
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      if (i === MAX_RETRIES - 1) {
+        console.warn(`⚠️ Không thể xóa file sau ${MAX_RETRIES} lần thử:`, filePath);
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+    }
+  }
+  return false;
+}
+
+// Dọn dẹp thư mục temp với kiểm tra dung lượng
+async function cleanupTempFiles(olderThanHours = 24) {
+  try {
+    const tempDir = getTempPath();
+    const MAX_TEMP_SIZE = 10 * 1024 * 1024 * 1024; // 10GB
+    
+    // Kiểm tra dung lượng temp
+    let totalSize = 0;
+    const files = await fs.promises.readdir(tempDir);
+    const now = Date.now();
+    
+    for (const file of files) {
+      const filePath = path.join(tempDir, file);
+      try {
+        const stats = await fs.promises.stat(filePath);
+        totalSize += stats.size;
+        
+        // Xóa file cũ hoặc khi temp quá lớn
+        const age = (now - stats.mtime.getTime()) / (1000 * 60 * 60);
+        if (age > olderThanHours || totalSize > MAX_TEMP_SIZE) {
+          await safeUnlink(filePath);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Lỗi xử lý file ${file}:`, error.message);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Lỗi dọn dẹp temp:', error.message);
+  }
+}
+
+// Lấy đường dẫn tương đối an toàn
+function getRelativePath(fullPath) {
+  try {
+    return path.relative(getAppRoot(), fullPath);
+  } catch {
+    return path.basename(fullPath);
+  }
+}
+
+// Kiểm tra đường dẫn hợp lệ và an toàn
+function isValidPath(pathToCheck) {
+  try {
+    // Kiểm tra cú pháp
+    path.parse(pathToCheck);
+    
+    // Kiểm tra ký tự đặc biệt
+    if (/[<>:"|?*]/.test(pathToCheck)) {
+      return false;
+    }
+    
+    // Kiểm tra độ dài
+    if (pathToCheck.length > 255) {
+      return false; 
+    }
+    
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 module.exports = {
-    getLongPath,
-    sanitizePath
+  getAppRoot,
+  sanitizePath,
+  getSafeTempDir,
+  getConfigPath,
+  getTempPath,
+  getDownloadsPath,
+  getVideoTempPath,
+  getLogsPath,
+  ensureDirectoryExists,
+  safeUnlink,
+  cleanupTempFiles,
+  getRelativePath,
+  isValidPath,
+  FOLDER_NAMES
 }; 

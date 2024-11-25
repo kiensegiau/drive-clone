@@ -1,6 +1,6 @@
 # Dependencies
 /node_modules
-
+/src/config/chrome-profiles
 # Output directories
 /output
 /temp

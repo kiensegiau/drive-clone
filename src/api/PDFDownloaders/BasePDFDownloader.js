@@ -3,30 +3,35 @@ const path = require("path");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const axios = require("axios");
-const { getLongPath, sanitizePath } = require('../../utils/pathUtils');
-const os = require('os');
+const { 
+  getTempPath,
+  sanitizePath,
+  ensureDirectoryExists,
+  safeUnlink,
+  cleanupTempFiles 
+} = require('../../utils/pathUtils');
 
 class BasePDFDownloader {
-  constructor(tempDir, processLogger) {
-    this.tempDir = getLongPath(path.join(os.tmpdir(), 'drive-clone-pdfs'));
-    this.processLogger = processLogger;
-    this.initTempDir();
-  }
-
-  initTempDir() {
+  constructor() {
     try {
-      if (!fs.existsSync(this.tempDir)) {
-        fs.mkdirSync(this.tempDir, { recursive: true });
+      this.tempDir = getTempPath();
+      if (!this.tempDir) {
+        throw new Error('Không thể khởi tạo thư mục temp');
       }
-      fs.accessSync(this.tempDir, fs.constants.W_OK);
+      ensureDirectoryExists(this.tempDir);
     } catch (error) {
-      console.error('❌ Không thể tạo/ghi vào thư mục temp:', error.message);
-      this.tempDir = getLongPath(path.join(process.cwd(), 'temp', 'drive-clone-pdfs'));
-      fs.mkdirSync(this.tempDir, { recursive: true });
+      console.error('❌ Lỗi khởi tạo BasePDFDownloader:', error.message);
+      throw error;
     }
   }
 
+  async initTempDir() {
+    throw new Error('Method initTempDir() phải được implement');
+  }
+
   async createPDFFromImages(downloadedImages, outputPath, profileId) {
+    outputPath = sanitizePath(outputPath);
+    
     const doc = new PDFDocument({
       autoFirstPage: false,
       margin: 0,
@@ -46,6 +51,7 @@ class BasePDFDownloader {
         const stats = await fs.promises.stat(imagePath);
         if (stats.size === 0) {
           console.error(`⚠️ Bỏ qua file rỗng: ${imagePath}`);
+          await safeUnlink(imagePath);
           continue;
         }
 
@@ -55,6 +61,8 @@ class BasePDFDownloader {
         doc.image(img, 0, 0);
 
         console.log(`✅ Đã thêm trang ${imagePath}`);
+        
+        await safeUnlink(imagePath);
       } catch (error) {
         console.error(`⨯ Lỗi thêm trang ${imagePath}: ${error.message}`);
       }
@@ -62,6 +70,9 @@ class BasePDFDownloader {
 
     doc.end();
     await new Promise((resolve) => pdfStream.on("finish", resolve));
+    
+    await cleanupTempFiles(2);
+    
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 

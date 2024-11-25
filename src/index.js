@@ -4,7 +4,17 @@ const { getDatabase, ref, get, update } = require('firebase/database');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
-const { getLongPath } = require('./utils/pathUtils');
+const {
+  getAppRoot,
+  sanitizePath,
+  getConfigPath,
+  getTempPath,
+  getDownloadsPath,
+  ensureDirectoryExists,
+  safeUnlink,
+  cleanupTempFiles,
+  FOLDER_NAMES
+} = require('./utils/pathUtils');
 const os = require('os');
 const crypto = require('crypto');
 
@@ -17,30 +27,19 @@ function askQuestion(question) {
   return new Promise(resolve => rl.question(question, resolve));
 }
 
-function cleanupTempFiles() {
-  const tempDir = getLongPath(path.join(process.cwd(), 'temp'));
-  if (tempDir.length > 260 && !tempDir.startsWith('\\\\?\\')) {
-    console.warn('⚠️ Đường dẫn temp quá dài, đang sử dụng long path');
-  }
-  
-  // Tạo thư mục temp nếu chưa tồn tại
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir, { recursive: true });
-    return;
-  }
-
-  // Đọc tất cả files trong thư mục temp
-  const files = fs.readdirSync(tempDir);
-  
-  console.log(`🧹 Đang dọn dẹp ${files.length} file tạm...`);
-  
-  for (const file of files) {
-    try {
-      const filePath = path.join(tempDir, file);
-      fs.unlinkSync(filePath);
-    } catch (error) {
-      console.warn(`⚠️ Không thể xóa file ${file}:`, error.message);
+async function cleanup() {
+  console.log('🧹 Đang dọn dẹp...');
+  try {
+    const tempDir = getTempPath();
+    if (fs.existsSync(tempDir)) {
+      const files = fs.readdirSync(tempDir);
+      for (const file of files) {
+        const filePath = path.join(tempDir, file);
+        await safeUnlink(filePath);
+      }
     }
+  } catch (error) {
+    console.error('❌ Lỗi dọn dẹp:', error);
   }
 }
 
@@ -57,47 +56,27 @@ process.on('uncaughtException', async (error) => {
   process.exit(1);
 });
 
-async function cleanup() {
-  console.log('🧹 Đang dọn dẹp...');
-  try {
-    const tempDir = getLongPath(path.join(process.cwd(), 'temp'));
-    if (fs.existsSync(tempDir)) {
-      const files = fs.readdirSync(tempDir);
-      for (const file of files) {
-        const filePath = path.join(tempDir, file);
-        try {
-          fs.unlinkSync(filePath);
-        } catch (error) {
-          console.warn(`⚠️ Không thể xóa: ${filePath}`);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('❌ Lỗi dọn dẹp:', error);
-  }
-}
-
 // Cấu hình thư mục tải về
 const downloadConfig = {
-    baseDir: path.join(process.cwd(), 'downloads'),
-    videoDir: 'videos',
-    pdfDir: 'pdfs',
-    otherDir: 'others'
+  baseDir: getDownloadsPath(),
+  videoDir: FOLDER_NAMES.VIDEOS,
+  pdfDir: 'pdfs',
+  otherDir: 'others'
 };
 
 // Tạo các thư mục cần thiết
 async function initDownloadDirs() {
-    const dirs = [
-        downloadConfig.baseDir,
-        path.join(downloadConfig.baseDir, downloadConfig.videoDir),
-        path.join(downloadConfig.baseDir, downloadConfig.pdfDir),
-        path.join(downloadConfig.baseDir, downloadConfig.otherDir)
-    ];
+  const dirs = [
+    downloadConfig.baseDir,
+    path.join(downloadConfig.baseDir, downloadConfig.videoDir),
+    path.join(downloadConfig.baseDir, downloadConfig.pdfDir),
+    path.join(downloadConfig.baseDir, downloadConfig.otherDir)
+  ];
 
-    for (const dir of dirs) {
-        await fs.mkdir(dir, { recursive: true });
-        console.log(`📁 Đã tạo thư mục: ${dir}`);
-    }
+  for (const dir of dirs) {
+    await ensureDirectoryExists(dir);
+    console.log(`📁 Đã tạo thư mục: ${dir}`);
+  }
 }
 
 // Cấu hình Firebase
@@ -183,9 +162,9 @@ async function validateLicenseKey(key) {
 // Thêm hàm để đọc/ghi key
 function getSavedKey() {
   try {
-    const keyPath = path.join(process.cwd(), 'config', 'license.json');
-    if (fs.existsSync(keyPath)) {
-      const data = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+    const configPath = path.join(getConfigPath(), 'license.json');
+    if (fs.existsSync(configPath)) {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       return data.key;
     }
   } catch (error) {
@@ -196,12 +175,9 @@ function getSavedKey() {
 
 function saveKey(key) {
   try {
-    const configDir = path.join(process.cwd(), 'config');
-    if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true });
-    }
+    const configPath = path.join(getConfigPath(), 'license.json');
     fs.writeFileSync(
-      path.join(configDir, 'license.json'),
+      configPath,
       JSON.stringify({ key, savedAt: new Date().toISOString() })
     );
   } catch (error) {
@@ -209,11 +185,11 @@ function saveKey(key) {
   }
 }
 
-function removeKey() {
+async function removeKey() {
   try {
-    const keyPath = path.join(process.cwd(), 'config', 'license.json');
+    const keyPath = path.join(getConfigPath(), 'license.json');
     if (fs.existsSync(keyPath)) {
-      fs.unlinkSync(keyPath);
+      await safeUnlink(keyPath);
       console.log("🗑️ Đã xóa key cũ");
     }
   } catch (error) {
@@ -268,8 +244,9 @@ async function main(folderUrl) {
     const isDownloadMode = choice === '2';
     
     if (isDownloadMode) {
-      const homeDir = require('os').homedir();
-      const defaultPath = getLongPath(path.join(homeDir, 'my-drive', 'drive-clone'));
+      const homeDir = os.homedir();
+      const defaultPath = path.join(getDownloadsPath(), 'drive-clone');
+      await ensureDirectoryExists(defaultPath);
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
       
       const confirm = await askQuestion("\nBạn có muốn tiếp tục không? (y/n): ");
@@ -303,7 +280,7 @@ async function main(folderUrl) {
 
     // Cleanup và khởi tạo thư mục
     if (!isDownloadMode) {
-      await cleanupTempFiles();
+      await cleanupTempFiles(24); // Xóa files cũ hơn 24h
     }
 
     // Khởi tạo DriveAPI với tham số mới

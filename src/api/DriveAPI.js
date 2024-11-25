@@ -6,9 +6,18 @@ const readline = require('readline');
 const DriveAPIPDFDownloader = require('./PDFDownloaders/DriveAPIPDFDownloader');
 const DriveAPIVideoHandler = require('./VideoHandlers/DriveAPIVideoHandler');
 
+const {
+  getConfigPath,
+  getTempPath,
+  sanitizePath,
+  ensureDirectoryExists,
+  cleanupTempFiles
+} = require('../utils/pathUtils');
+
 class DriveAPI {
   constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
-    const { credentials, SCOPES } = require('../config/auth');
+    const configPath = getConfigPath();
+    const { credentials, SCOPES } = require(path.join(configPath, 'auth'));
     
     this.downloadOnly = downloadOnly;
     this.maxConcurrent = maxConcurrent;
@@ -29,10 +38,26 @@ class DriveAPI {
       credentials.redirect_uris[0]
     );
 
-    // Khởi tạo thư mục temp
-    this.tempDir = path.join(process.cwd(), 'temp');
-    if (!fs.existsSync(this.tempDir)) {
-      fs.mkdirSync(this.tempDir, { recursive: true });
+    // Khởi tạo tempDir an toàn
+    try {
+      this.tempDir = getTempPath();
+      if (!this.tempDir) {
+        throw new Error('Không thể khởi tạo thư mục temp');
+      }
+      ensureDirectoryExists(this.tempDir);
+      
+      // Khởi tạo các handlers với tempDir
+      this.pdfDownloader = new DriveAPIPDFDownloader(
+        this.sourceDrive,
+        this.targetDrive,
+        this.tempDir,
+        console
+      );
+      
+      // ... phần còn lại giữ nguyên ...
+    } catch (error) {
+      console.error('❌ Lỗi khởi tạo DriveAPI:', error.message);
+      throw error;
     }
 
     // Khởi tạo stats để theo dõi
@@ -106,7 +131,7 @@ class DriveAPI {
 
   async getToken(type = 'source') {
     try {
-      const tokenPath = path.join(process.cwd(), `token_${type}.json`);
+      const tokenPath = path.join(getConfigPath(), `token_${type}.json`);
       
       // Kiểm tra file token đã tồn tại
       if (fs.existsSync(tokenPath)) {
@@ -178,7 +203,7 @@ class DriveAPI {
         const { tokens } = await client.getToken(code);
         
         // Lưu token
-        const tokenPath = path.join(process.cwd(), `token_${type}.json`);
+        const tokenPath = path.join(getConfigPath(), `token_${type}.json`);
         fs.writeFileSync(tokenPath, JSON.stringify(tokens));
         console.log(`\n💾 Đã lưu token ${type} tại: ${tokenPath}`);
         
@@ -229,6 +254,9 @@ class DriveAPI {
     try {
       console.log(`\n🔍 Đang kiểm tra quyền truy cập folder...`);
       
+      // Dọn dẹp temp files trước khi bắt đầu
+      await cleanupTempFiles();
+
       // Lấy thông tin folder nguồn
       const folderInfo = await this.sourceDrive.files.get({
         fileId: sourceFolderId,
@@ -290,53 +318,47 @@ class DriveAPI {
 
   async findOrCreateFolder(folderName, parentId = null) {
     try {
-      // Làm sạch tên folder
-      const sanitizedName = this.sanitizeFolderName(folderName);
-
-      const query = parentId 
-        ? `name='${sanitizedName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
-        : `name='${sanitizedName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+      // Giữ nguyên tên folder gốc, không sanitize
+      const originalFolderName = folderName;
+      
+      // Tìm folder hiện có
+      const query = `mimeType='application/vnd.google-apps.folder' and name='${originalFolderName}'${
+        parentId ? ` and '${parentId}' in parents` : ''
+      } and trashed=false`;
 
       const response = await this.targetDrive.files.list({
         q: query,
         fields: 'files(id, name)',
-        spaces: 'drive',
+        supportsAllDrives: true
       });
 
-      // Nếu folder đã tồn tại
       if (response.data.files.length > 0) {
-        console.log(`📂 Đã tồn tại folder: "${folderName}" (${response.data.files[0].id})`);
-        return response.data.files[0];
+        const folder = response.data.files[0];
+        console.log(`📂 Đã tồn tại folder: "${folder.name}" (${folder.id})`);
+        return folder;
       }
 
-      // Tạo folder mới nếu chưa tồn tại
-      console.log(`📁 Tạo folder mới: "${folderName}"`);
+      // Tạo folder mới nếu chưa có
+      console.log(`📁 Tạo folder mới: "${originalFolderName}"`);
       const fileMetadata = {
-        name: sanitizedName,  // Sử dụng tên đã làm sạch
+        name: originalFolderName,
         mimeType: 'application/vnd.google-apps.folder',
-        ...(parentId && { parents: [parentId] }),
+        parents: parentId ? [parentId] : undefined
       };
 
       const folder = await this.targetDrive.files.create({
-        resource: fileMetadata,
+        requestBody: fileMetadata,
         fields: 'id, name',
+        supportsAllDrives: true
       });
 
-      console.log(`✅ Đã tạo folder: "${folderName}" (${folder.data.id})`);
+      console.log(`✅ Đã tạo folder: "${folder.data.name}" (${folder.data.id})`);
       return folder.data;
 
     } catch (error) {
-      console.error(`❌ Lỗi tạo/tìm folder:`, error.message);
+      console.error(`❌ Lỗi tạo/tìm folder "${folderName}":`, error.message);
       throw error;
     }
-  }
-
-  // Thêm hàm mới để làm sạch tên folder
-  sanitizeFolderName(name) {
-    return name
-      .replace(/[\/\\:*?"<>|]/g, '-') // Thay thế các ký tự không hợp lệ bằng dấu gạch ngang
-      .replace(/\s+/g, ' ')           // Chuẩn hóa khoảng trắng
-      .trim();                        // Xóa khoảng trắng đầu/cuối
   }
 
   async processFolder(folderId) {
@@ -403,15 +425,15 @@ class DriveAPI {
           }
         }
 
-        // Xử lý PDF files
+        // Xử lý PDF files với temp path mới
         if (pdfFiles.length > 0) {
           console.log(`\n📑 Xử lý ${pdfFiles.length} file PDF...`);
           console.log(`📁 Upload vào folder: ${this.currentTargetFolderId}`);
           
           const pdfDownloader = new DriveAPIPDFDownloader(
-            this.sourceDrive,    // Drive instance để tải
-            this.targetDrive,    // Drive instance để upload
-            this.tempDir,
+            this.sourceDrive,
+            this.targetDrive,
+            getTempPath(),
             this.processLogger
           );
 
@@ -426,11 +448,11 @@ class DriveAPI {
           await pdfDownloader.processPDFFiles(pdfFilesInfo);
         }
 
-        // Xử lý video files
+        // Xử lý video files với temp path mới
         if (videoFiles.length > 0) {
           console.log(`\n🎥 Xử lý ${videoFiles.length} file video...`);
           const videoHandler = new DriveAPIVideoHandler(
-            this.sourceDrive,  // Thêm sourceDrive
+            this.sourceDrive,
             this.targetDrive,
             false,
             this.maxConcurrent,

@@ -1,8 +1,15 @@
 const puppeteer = require("puppeteer-core");
 const { exec } = require("child_process");
-const path = require("path");
 const util = require('util');
+const path = require('path');
+const fs = require('fs');
 const execAsync = util.promisify(exec);
+const {
+  sanitizePath,
+  ensureDirectoryExists,
+  getTempPath,
+  getConfigPath
+} = require('../utils/pathUtils');
 
 class ChromeManager {
   constructor(maxInstances = 3) {
@@ -11,6 +18,20 @@ class ChromeManager {
     this.isLaunching = new Set();
     this.queues = new Map();
     this.currentProfile = 0;
+    
+    try {
+      this.tempDir = getTempPath();
+      if (!this.tempDir) {
+        throw new Error('Không thể khởi tạo thư mục temp');
+      }
+      ensureDirectoryExists(this.tempDir);
+      
+      this.profilesDir = path.join(getConfigPath(), 'chrome-profiles');
+      ensureDirectoryExists(this.profilesDir);
+    } catch (error) {
+      console.error('❌ Lỗi khởi tạo ChromeManager:', error.message);
+      throw error;
+    }
   }
 
   static getInstance() {
@@ -51,11 +72,8 @@ class ChromeManager {
       this.isLaunching.add(profileId);
 
       try {
-        const userDataDir = path.join(
-          process.env.LOCALAPPDATA || "",
-          "Google",
-          "Chrome",
-          "User Data " + profileId
+        const userDataDir = ensureDirectoryExists(
+          path.join(this.profilesDir, sanitizePath(`profile_${profileId}`))
         );
 
         console.log(`🌐 Khởi động Chrome với profile: ${profileId}`);
@@ -74,7 +92,10 @@ class ChromeManager {
             "--disable-setuid-sandbox",
             "--disable-web-security",
             "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-site-isolation-trials"
+            "--disable-site-isolation-trials",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--password-store=basic"
           ],
           defaultViewport: null,
           ignoreDefaultArgs: [
@@ -121,25 +142,14 @@ class ChromeManager {
   async killAllChrome() {
     try {
       if (process.platform === "win32") {
-        await new Promise((resolve) => {
-          exec("taskkill /F /IM chrome.exe /T", (error) => {
-            try {
-              if (error) {
-                console.log("⚠️ Không có Chrome process nào đang chạy");
-              } else {
-                console.log("✅ Đã kill tất cả Chrome process");
-              }
-              resolve();
-            } catch (error) {
-              console.error(`❌ Lỗi xử lý kill Chrome:`, error.message);
-              resolve();
-            }
-          });
-        });
-        await new Promise(r => setTimeout(r, 1000));
+        await execAsync("taskkill /F /IM chrome.exe /T");
+        console.log("✅ Đã kill tất cả Chrome process");
       }
+      await new Promise(r => setTimeout(r, 2000));
     } catch (error) {
-      console.error("❌ Lỗi khi kill Chrome:", error.message);
+      if (!error.message.includes('không tìm thấy process')) {
+        console.error("❌ Lỗi khi kill Chrome:", error.message);
+      }
     }
   }
 
@@ -148,26 +158,17 @@ class ChromeManager {
       if (profileId) {
         const browser = this.browsers.get(profileId);
         if (browser) {
-          try {
-            await browser.close();
-            this.browsers.delete(profileId);
-          } catch (error) {
-            console.error(`❌ Lỗi đóng browser ${profileId}:`, error.message);
-            this.browsers.delete(profileId);
-          }
+          await browser.close().catch(() => {});
+          this.browsers.delete(profileId);
         }
       } else {
         for (const browser of this.browsers.values()) {
-          try {
-            await browser.close();
-          } catch (error) {
-            console.error(`❌ Lỗi đóng browser:`, error.message);
-          }
+          await browser.close().catch(() => {});
         }
         this.browsers.clear();
       }
     } catch (error) {
-      console.error(`❌ Lỗi tổng thể trong closeBrowser:`, error.message);
+      console.error(`❌ Lỗi trong closeBrowser:`, error.message);
     }
   }
 
@@ -185,7 +186,7 @@ class ChromeManager {
         }
       }
     } catch (error) {
-      console.error(`❌ Lỗi tổng thể trong closeInactiveBrowsers:`, error.message);
+      console.error(`❌ Lỗi trong closeInactiveBrowsers:`, error.message);
     }
   }
 
@@ -204,11 +205,8 @@ class ChromeManager {
 
       await execAsync(command);
       console.log('🧹 Đã đóng tất cả các process Chrome');
-      
-      // Đợi một chút để đảm bảo các process đã được đóng hoàn toàn
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
-      // Bỏ qua lỗi nếu không tìm thấy process Chrome nào
       if (!error.message.includes('no process found')) {
         console.error('⚠️ Lỗi khi đóng Chrome:', error.message);
       }
