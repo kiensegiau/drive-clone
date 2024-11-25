@@ -240,6 +240,8 @@ async function main(folderUrl) {
       // Xác thực key
       await validateLicenseKey(licenseKey);
       console.log("✅ Key hợp lệ");
+      // Lưu key sau khi xác thực thành công
+      saveKey(licenseKey);
     } catch (error) {
       // Nếu key không hợp lệ, xóa file key cũ
       removeKey();
