@@ -220,12 +220,26 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async getVideoUrlAndHeaders(browser, fileId, indent) {
     let currentPage = null;
     let retries = 3;
+    let lastError = null;
 
     while (retries > 0) {
       try {
-        currentPage = await browser.newPage();
+        // Thêm timeout khi tạo page mới
+        const pagePromise = browser.newPage();
+        currentPage = await Promise.race([
+          pagePromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout tạo page mới')), 30000)
+          )
+        ]);
+
         await currentPage.setDefaultNavigationTimeout(60000);
         await currentPage.setDefaultTimeout(60000);
+
+        // Thêm xử lý lỗi chi tiết hơn
+        if (!currentPage) {
+          throw new Error('Không thể tạo page mới');
+        }
 
         return new Promise(async (resolve, reject) => {
           const timeout = setTimeout(() => {
@@ -351,21 +365,36 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           }
         });
       } catch (error) {
+        lastError = error;
         console.error(
-          `${indent}❌ Lỗi xử lý video (Lần ${4 - retries}/3):`,
-          error.message
+          `${indent}❌ Lỗi xử lý video (Lần ${4 - retries}/3): ${error.message}`
         );
+        
         if (currentPage) {
-          // Đi 2s trước khi đóng page khi có lỗi
-          await new Promise((resolve) => setTimeout(resolve, 2000));
-          await currentPage.close();
+          try {
+            await currentPage.close();
+          } catch (closeError) {
+            console.error(`${indent}⚠️ Lỗi đóng page:`, closeError.message);
+          }
           currentPage = null;
         }
+
         retries--;
         if (retries > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
+          await new Promise(resolve => setTimeout(resolve, 5000));
         } else {
-          throw error;
+          // Kill tất cả Chrome và thử khởi động lại
+          try {
+            console.log(`${indent}🔄 Kill tất cả Chrome và khởi động lại browser...`);
+            await browser.close();
+            await this.chromeManager.killAllChromeProcesses();
+            browser = await this.chromeManager.getBrowser(null, true);
+            retries = 1; // Cho thêm 1 lần thử nữa
+          } catch (restartError) {
+            console.error(`${indent}❌ Không thể khởi động lại browser:`, restartError.message);
+            throw lastError;
+          }
         }
       }
     }
