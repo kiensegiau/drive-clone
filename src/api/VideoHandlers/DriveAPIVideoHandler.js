@@ -32,12 +32,23 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.videoQueue = [];
     this.processingVideo = false;
     
-    // Sử dụng pathUtils để lấy thư mục temp an toàn
-    this.TEMP_DIR = getVideoTempPath();
-    if (!this.TEMP_DIR) {
-      throw new Error('Không thể khởi tạo thư mục temp');
+    // Tạo thư mục temp ngay trong thư mục hiện tại
+    try {
+      // Thử tạo trong thư mục hiện tại trước
+      this.TEMP_DIR = path.join(process.cwd(), 'temp');
+      fs.mkdirSync(this.TEMP_DIR, { recursive: true });
+    } catch (error) {
+      console.warn('⚠️ Không thể tạo temp trong thư mục hiện tại:', error.message);
+      try {
+        // Nếu không được thì tạo trong thư mục temp của hệ thống
+        this.TEMP_DIR = path.join(os.tmpdir(), 'drive-downloader-temp');
+        fs.mkdirSync(this.TEMP_DIR, { recursive: true });
+      } catch (err) {
+        console.error('❌ Không thể tạo thư mục temp:', err.message);
+        throw err;
+      }
     }
-    ensureDirectoryExists(this.TEMP_DIR);
+    console.log('📁 Thư mục temp:', this.TEMP_DIR);
 
     this.cookies = null;
     this.chromeManager = ChromeManager.getInstance();
@@ -47,16 +58,37 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.pendingDownloads = [];
 
     // Dọn dẹp file tạm cũ khi khởi tạo
-    this.initTempCleanup();
+    this.initTempCleanup().catch(err => {
+      console.warn('⚠️ Lỗi initial cleanup:', err.message);
+    });
   }
 
   // Thêm method khởi tạo và dọn dẹp temp
   async initTempCleanup() {
     try {
-      // Sử dụng cleanupTempFiles từ pathUtils
-      await cleanupTempFiles(24);
+      console.log('📁 Thư mục temp:', this.TEMP_DIR);
+      
+      // Kiểm tra và tạo thư mục temp nếu chưa tồn tại
+      if (!fs.existsSync(this.TEMP_DIR)) {
+        fs.mkdirSync(this.TEMP_DIR, { recursive: true });
+        console.log('✅ Đã tạo thư mục temp');
+        return;
+      }
+
+      // Dọn dẹp các file cũ
+      const files = await fs.promises.readdir(this.TEMP_DIR);
+      for (const file of files) {
+        try {
+          const filePath = path.join(this.TEMP_DIR, file);
+          await fs.promises.unlink(filePath);
+          console.log(`🧹 Đã xóa file tạm cũ: ${file}`);
+        } catch (err) {
+          console.warn(`⚠️ Không thể xóa file tạm ${file}:`, err.message);
+        }
+      }
     } catch (error) {
-      console.error("❌ Lỗi dọn dẹp temp:", error.message);
+      console.error("❌ Lỗi khởi tạo thư mục temp:", error.message);
+      // Không throw error, chỉ log lỗi
     }
   }
 
@@ -439,8 +471,19 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
 
     try {
-      // Sử dụng ensureDirectoryExists từ pathUtils
-      ensureDirectoryExists(path.dirname(outputPath));
+      // Tạo tên file tạm mới trong thư mục temp
+      const tempFileName = `temp_${Date.now()}_${sanitizePath(fileName)}`;
+      const tempPath = path.join(this.TEMP_DIR, tempFileName);
+      
+      console.log(`${indent}📁 Đường dẫn tạm: ${tempPath}`);
+
+      // Tạo file tạm trống
+      try {
+        await fs.promises.writeFile(tempPath, '');
+      } catch (writeError) {
+        console.error(`${indent}❌ Lỗi tạo file tạm:`, writeError.message);
+        throw writeError;
+      }
 
       // Đợi slot nếu đã đạt giới hạn
       if (this.activeBackgroundDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
@@ -457,23 +500,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             resolve,
           });
         });
-      }
-
-      // Tạo file tạm trống
-      try {
-        await fs.promises.writeFile(outputPath, '');
-        
-        // Kiểm tra file đã được tạo thành công
-        const fileExists = await fs.promises.access(outputPath)
-          .then(() => true)
-          .catch(() => false);
-          
-        if (!fileExists) {
-          throw new Error(`Không thể tạo file tạm: ${outputPath}`);
-        }
-      } catch (writeError) {
-        console.error(`${indent}❌ Lỗi tạo file tạm:`, writeError.message);
-        throw writeError;
       }
 
       this.activeBackgroundDownloads.add(fileName);
@@ -507,27 +533,15 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
 
     } catch (error) {
-      // Sử dụng safeUnlink từ pathUtils
-      await safeUnlink(outputPath);
+      console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
       throw error;
-    } finally {
-      // Dọn dẹp cuối cùng
-      try {
-        await safeUnlink(outputPath);
-      } catch (error) {
-        console.warn(`${indent}⚠️ Lỗi xóa file tạm:`, error.message);
-      }
     }
   }
 
   // Đổi tn method cũ để tránh nhầm lẫn
   async downloadWithChunks(videoUrl, outputPath, headers, fileName, depth) {
+    let fileHandle = null;
     const indent = "  ".repeat(depth);
-    const MAX_RETRIES = 5;
-    const CONCURRENT_CHUNK_DOWNLOADS = 4;
-    const CHUNK_SIZE = 10 * 1024 * 1024;
-    let downloadedSize = 0;
-    const startTime = Date.now();
 
     try {
       // Sử dụng ensureDirectoryExists từ pathUtils
@@ -573,7 +587,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
 
       // Mở file đ ghi
-      const fileHandle = await fs.promises.open(outputPath, "r+");
+      fileHandle = await fs.promises.open(outputPath, "r+");
 
       // Tải từng nhóm chunks (không log)
       const chunkGroups = [];
@@ -614,11 +628,50 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         `${indent}✅ Hoàn thành tải (${totalTime}s, TB: ${avgSpeed} MB/s)`
       );
 
-      await fileHandle.close();
-    } catch (error) {
-      // Sử dụng safeUnlink từ pathUtils
-      await safeUnlink(outputPath);
-      throw error;
+    } finally {
+      // Đóng file handle an toàn
+      if (fileHandle) {
+        try {
+          await fileHandle.close();
+          fileHandle = null;
+          // Đợi thêm thời gian để đảm bảo file được giải phóng hoàn toàn
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (err) {
+          console.warn(`${indent}⚠️ Lỗi đóng file handle:`, err.message);
+        }
+      }
+
+      // Thử xóa file với nhiều lần thử
+      let retryCount = 5;
+      while (retryCount > 0) {
+        try {
+          if (fs.existsSync(outputPath)) {
+            await fs.promises.unlink(outputPath);
+            console.log(`${indent}🧹 Đã xóa file tạm: ${path.basename(outputPath)}`);
+            break;
+          }
+        } catch (err) {
+          console.warn(`${indent}⚠️ Lần ${6-retryCount}/5: Không thể xóa file tạm:`, err.message);
+          if (retryCount === 1) {
+            // Lần cuối thử force close tất cả handles
+            try {
+              if (fileHandle) {
+                await fileHandle.close();
+                fileHandle = null;
+              }
+              // Force garbage collection nếu có thể
+              if (global.gc) {
+                global.gc();
+              }
+            } catch (e) {
+              console.warn(`${indent}⚠️ Lỗi force close:`, e.message);
+            }
+          }
+          retryCount--;
+          // Đợi lâu hơn giữa các lần thử
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
     }
   }
 
@@ -656,52 +709,75 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const activeDownloads = new Set();
     const failedFiles = [];
 
-    while (this.queue.length > 0 || activeDownloads.size > 0) {
-      while (this.queue.length > 0 && activeDownloads.size < this.MAX_CONCURRENT_DOWNLOADS) {
-        const videoInfo = this.queue.shift();
-        const downloadPromise = (async () => {
-          try {
-            // Sử dụng sanitizePath và getTempPath từ pathUtils
-            const safeFileName = sanitizePath(videoInfo.fileName);
-            const tempPath = path.join(getTempPath(), `temp_${Date.now()}_${safeFileName}`);
-            
+    try {
+      while (this.queue.length > 0 || activeDownloads.size > 0) {
+        // Xử lý các file trong queue
+        while (
+          this.queue.length > 0 && 
+          activeDownloads.size < this.MAX_CONCURRENT_DOWNLOADS
+        ) {
+          const videoInfo = this.queue.shift();
+          const downloadPromise = (async () => {
             try {
-              await fs.promises.writeFile(tempPath, "");
-              videoInfo.tempPath = tempPath;
+              // Tạo đường dẫn file tạm trong thư mục temp
+              const safeFileName = sanitizePath(videoInfo.fileName);
+              const tempPath = path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`);
+              
+              console.log(`\n🎥 Xử lý: ${videoInfo.fileName}`);
+              console.log(`📁 Temp path: ${tempPath}`);
 
-              const result = await this.processVideoDownload(videoInfo);
-              if (!result.success) {
-                failedFiles.push({
-                  fileName: result.fileName,
-                  error: result.error
-                });
+              try {
+                // Tạo file tạm trống
+                await fs.promises.writeFile(tempPath, "");
+                videoInfo.tempPath = tempPath;
+
+                const result = await this.processVideoDownload(videoInfo);
+                if (!result.success) {
+                  failedFiles.push({
+                    fileName: result.fileName,
+                    error: result.error
+                  });
+                  console.error(`❌ Lỗi xử lý ${videoInfo.fileName}:`, result.error);
+                }
+              } finally {
+                // Xóa file tạm
+                try {
+                  if (fs.existsSync(tempPath)) {
+                    await fs.promises.unlink(tempPath);
+                    console.log(`🧹 Đã xóa file tạm: ${tempPath}`);
+                  }
+                } catch (unlinkError) {
+                  console.warn(`⚠️ Không thể xóa file tạm ${tempPath}:`, unlinkError.message);
+                }
               }
             } finally {
-              // Sử dụng safeUnlink từ pathUtils
-              await safeUnlink(tempPath);
+              activeDownloads.delete(downloadPromise);
             }
-          } finally {
-            activeDownloads.delete(downloadPromise);
-          }
-        })();
+          })();
 
-        activeDownloads.add(downloadPromise);
+          activeDownloads.add(downloadPromise);
+        }
+
+        // Đợi ít nhất một download hoàn thành
+        if (activeDownloads.size > 0) {
+          await Promise.race(Array.from(activeDownloads));
+        }
       }
 
-      if (activeDownloads.size > 0) {
-        await Promise.race(Array.from(activeDownloads));
+      // In kết quả cuối cùng
+      if (failedFiles.length > 0) {
+        console.log("\n⚠️ Danh sách file bị lỗi:");
+        failedFiles.forEach(file => {
+          console.log(`❌ ${file.fileName}: ${file.error}`);
+        });
       }
-    }
 
-    // In danh sách lỗi
-    if (failedFiles.length > 0) {
-      console.log("\n⚠️ Danh sách file bị lỗi:");
-      failedFiles.forEach(file => {
-        console.log(`❌ ${file.fileName}: ${file.error}`);
-      });
-    }
+      console.log(`\n✅ Đã xử lý xong tất cả videos trong queue (${failedFiles.length} files lỗi)`);
 
-    console.log(`\n✅ Đã xử lý xong tất cả videos trong queue (${failedFiles.length} files lỗi)`);
+    } catch (error) {
+      console.error("\n❌ Lỗi xử lý queue:", error.message);
+      throw error;
+    }
   }
 
   
@@ -709,7 +785,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
     const MAX_RETRIES = 3;  // Giảm số lần retry
     const RETRY_DELAY = 5000;
-    const UPLOAD_TIMEOUT = 60000; // 1 phút timeout
+    const UPLOAD_TIMEOUT = 120000; // 1 phút timeout
     const startTime = Date.now();
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -795,6 +871,37 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         console.log(`${indent}⏳ Thử lại sau ${RETRY_DELAY / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       }
+    }
+  }
+
+  // Thêm utility function để cleanup temp một cách an toàn
+  async cleanupTempDirectory() {
+    try {
+      if (!fs.existsSync(this.TEMP_DIR)) return;
+
+      const files = await fs.promises.readdir(this.TEMP_DIR);
+      console.log(`\n🧹 Dọn dẹp ${files.length} files tạm...`);
+
+      for (const file of files) {
+        const filePath = path.join(this.TEMP_DIR, file);
+        let retryCount = 5;
+
+        while (retryCount > 0) {
+          try {
+            await fs.promises.unlink(filePath);
+            console.log(`✅ Đã xóa: ${file}`);
+            break;
+          } catch (err) {
+            console.warn(`⚠️ Lần ${6-retryCount}/5: Không thể xóa ${file}:`, err.message);
+            retryCount--;
+            if (retryCount > 0) {
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Lỗi dọn dẹp temp:', error.message);
     }
   }
 }

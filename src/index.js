@@ -339,3 +339,11 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+if (process.pkg) {
+  // Khi chạy từ file exe
+  process.env.APP_PATH = path.dirname(process.execPath);
+} else {
+  // Khi chạy từ source
+  process.env.APP_PATH = process.cwd();
+}

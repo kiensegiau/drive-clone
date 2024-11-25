@@ -318,11 +318,11 @@ class DriveAPI {
 
   async findOrCreateFolder(folderName, parentId = null) {
     try {
-      // Giữ nguyên tên folder gốc, không sanitize
-      const originalFolderName = folderName;
+      // Làm sạch tên folder cho query, nhưng giữ nguyên tên gốc để tạo
+      const escapedFolderName = folderName.replace(/'/g, "\\'");
       
       // Tìm folder hiện có
-      const query = `mimeType='application/vnd.google-apps.folder' and name='${originalFolderName}'${
+      const query = `mimeType='application/vnd.google-apps.folder' and name='${escapedFolderName}'${
         parentId ? ` and '${parentId}' in parents` : ''
       } and trashed=false`;
 
@@ -339,9 +339,9 @@ class DriveAPI {
       }
 
       // Tạo folder mới nếu chưa có
-      console.log(`📁 Tạo folder mới: "${originalFolderName}"`);
+      console.log(`📁 Tạo folder mới: "${folderName}"`);
       const fileMetadata = {
-        name: originalFolderName,
+        name: folderName, // Sử dụng tên gốc không escape
         mimeType: 'application/vnd.google-apps.folder',
         parents: parentId ? [parentId] : undefined
       };

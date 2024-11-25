@@ -12,8 +12,7 @@ const {
   ensureDirectoryExists
 } = require('../../utils/pathUtils');
 const ChromeManager = require("../ChromeManager");
-const { google } = require('googleapis');
-const os = require('os');
+
 
 class DriveAPIPDFDownloader extends BasePDFDownloader {
   constructor(sourceDrive, targetDrive, tempDir, logger = console) {
