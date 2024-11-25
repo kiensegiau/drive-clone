@@ -729,102 +729,93 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   
   async uploadVideo(filePath, fileName, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
-    const MAX_RETRIES = 5;
+    const MAX_RETRIES = 3;  // Giảm số lần retry
     const RETRY_DELAY = 5000;
+    const UPLOAD_TIMEOUT = 60000; // 1 phút timeout
     const startTime = Date.now();
-    let uploadedSize = 0;
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const fileSize = fs.statSync(filePath).size;
         const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
-        console.log(`${indent}📤 Bắt đầu upload video: ${fileName}`);
+        console.log(`${indent}📤 Bắt đầu upload video (Lần ${attempt + 1}): ${fileName}`);
         console.log(`${indent}📦 Kích thước: ${fileSizeMB}MB`);
 
-        // Thêm interval để hiển thị tốc độ upload
-        const progressInterval = setInterval(() => {
-          const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
-          const currentSpeed = (
-            uploadedSize /
-            1024 /
-            1024 /
-            currentTime
-          ).toFixed(2);
-          const progress = ((uploadedSize / fileSize) * 100).toFixed(1);
-          console.log(
-            `${indent}⏫ Upload: ${progress}% - Tốc độ: ${currentSpeed} MB/s`
-          );
-        }, 3000);
+        // Tạo promise với timeout
+        const uploadPromise = new Promise(async (resolve, reject) => {
+          const progressInterval = setInterval(() => {
+            const elapsedTime = Date.now() - startTime;
+            console.log(`${indent}⏳ Đã upload ${(elapsedTime / 1000).toFixed(0)}s...`);
+          }, 3000);
 
-        const fileMetadata = {
-          name: fileName,
-          parents: targetFolderId ? [targetFolderId] : undefined,
-          description: "",
-          properties: {
-            source: "web_client",
-            upload_source: "web_client",
-            upload_time: Date.now().toString(),
-            upload_agent: "Mozilla/5.0 Chrome/120.0.0.0",
-            processed: "false",
-            processing_status: "PENDING",
-          },
-          appProperties: {
-            force_high_quality: "true",
-            processing_priority: "HIGH",
-          },
-        };
+          try {
+            const fileMetadata = {
+              name: fileName,
+              parents: targetFolderId ? [targetFolderId] : undefined
+            };
 
-        const media = {
-          mimeType: "video/mp4",
-          body: fs.createReadStream(filePath, {
-            highWaterMark: 256 * 1024,
-          }),
-        };
+            const media = {
+              mimeType: "video/mp4",
+              body: fs.createReadStream(filePath)
+            };
 
-        const uploadStartTime = Date.now();
-        const response = await this.targetDrive.files.create({
-          requestBody: fileMetadata,
-          media: media,
-          fields: "id, name, size, mimeType, webViewLink",
-          supportsAllDrives: true,
-          enforceSingleParent: true,
-          ignoreDefaultVisibility: true,
-          keepRevisionForever: true,
-          uploadType: fileSize > 5 * 1024 * 1024 ? "resumable" : "multipart",
+            const response = await this.targetDrive.files.create({
+              requestBody: fileMetadata,
+              media: media,
+              fields: "id, name",
+              supportsAllDrives: true
+            });
+
+            clearInterval(progressInterval);
+            resolve(response);
+          } catch (error) {
+            clearInterval(progressInterval);
+            reject(error);
+          }
         });
 
-        const totalTime = ((Date.now() - uploadStartTime) / 1000).toFixed(2);
-        const avgSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(2);
+        // Race giữa upload và timeout
+        const response = await Promise.race([
+          uploadPromise,
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Upload timeout sau 1 phút')), UPLOAD_TIMEOUT)
+          )
+        ]);
 
-        console.log(
-          `${indent}✅ Upload thành công: ${fileName} (${totalTime}s, TB: ${avgSpeed} MB/s)`
-        );
+        console.log(`${indent}✅ Upload thành công: ${fileName}`);
         console.log(`${indent}📎 File ID: ${response.data.id}`);
 
-        // Set permissions với acc2
+        // Set permissions
         await this.targetDrive.permissions.create({
           fileId: response.data.id,
           requestBody: {
             role: "reader",
             type: "anyone",
-            allowFileDiscovery: false,
-            viewersCanCopyContent: true,
           },
           supportsAllDrives: true,
           sendNotificationEmail: false,
         });
 
-        clearInterval(progressInterval);
         return response.data;
+
       } catch (error) {
         console.error(
           `${indent}❌ Lỗi upload (lần ${attempt + 1}/${MAX_RETRIES}):`,
           error.message
         );
-        if (attempt === MAX_RETRIES - 1) throw error;
+        
+        if (attempt === MAX_RETRIES - 1) {
+          console.log(`${indent}⚠️ Đã thử ${MAX_RETRIES} lần không thành công, bỏ qua file: ${fileName}`);
+          return {
+            success: false,
+            error: error.message,
+            fileName: fileName
+          };
+        }
+
         console.log(`${indent}⏳ Thử lại sau ${RETRY_DELAY / 1000}s...`);
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       }
     }
   }

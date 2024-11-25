@@ -290,10 +290,12 @@ class DriveAPI {
 
   async findOrCreateFolder(folderName, parentId = null) {
     try {
-      // Luôn sử dụng targetDrive để tạo/tìm folder
+      // Làm sạch tên folder
+      const sanitizedName = this.sanitizeFolderName(folderName);
+
       const query = parentId 
-        ? `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
-        : `name='${folderName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+        ? `name='${sanitizedName}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
+        : `name='${sanitizedName}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
 
       const response = await this.targetDrive.files.list({
         q: query,
@@ -310,7 +312,7 @@ class DriveAPI {
       // Tạo folder mới nếu chưa tồn tại
       console.log(`📁 Tạo folder mới: "${folderName}"`);
       const fileMetadata = {
-        name: folderName,
+        name: sanitizedName,  // Sử dụng tên đã làm sạch
         mimeType: 'application/vnd.google-apps.folder',
         ...(parentId && { parents: [parentId] }),
       };
@@ -327,6 +329,14 @@ class DriveAPI {
       console.error(`❌ Lỗi tạo/tìm folder:`, error.message);
       throw error;
     }
+  }
+
+  // Thêm hàm mới để làm sạch tên folder
+  sanitizeFolderName(name) {
+    return name
+      .replace(/[\/\\:*?"<>|]/g, '-') // Thay thế các ký tự không hợp lệ bằng dấu gạch ngang
+      .replace(/\s+/g, ' ')           // Chuẩn hóa khoảng trắng
+      .trim();                        // Xóa khoảng trắng đầu/cuối
   }
 
   async processFolder(folderId) {
