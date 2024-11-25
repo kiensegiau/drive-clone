@@ -427,7 +427,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             await this.createPDFFromImages(validImages, outputPath);
 
             if (!fs.existsSync(outputPath)) {
-              throw new Error('PDF không được tạo');
+              throw new Error('PDF không ��ược tạo');
             }
 
             // Upload với retry
@@ -809,25 +809,27 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       console.log(`📦 Chia thành ${batches.length} batch, mỗi batch ${this.BATCH_SIZE} files`);
 
-      // Xử lý song song theo số lượng batch tối đa
-      for (let i = 0; i < batches.length; i += this.MAX_CONCURRENT_BATCHES) {
-        const currentBatches = batches.slice(i, i + this.MAX_CONCURRENT_BATCHES);
+      // Xử lý từng batch
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        console.log(`\n🔄 Xử lý batch ${i + 1}/${batches.length}...`);
         
-        const batchPromises = currentBatches.map(async (batch, index) => {
-          console.log(`\n🔄 Xử lý batch ${i + index + 1}/${batches.length}...`);
-          
+        try {
           // Tạo một query cho cả batch
-          const fileQueries = batch.map(file => `name='${file.name}'`);
+          const fileQueries = batch.map(file => {
+            const escapedName = file.name.replace(/'/g, "\\'"); // Escape single quotes
+            return `name='${escapedName}'`;
+          });
           const query = `(${fileQueries.join(' or ')}) and '${targetFolderId}' in parents and trashed=false`;
 
-          try {
-            const response = await this.driveAPI.files.list({
-              q: query,
-              fields: 'files(id, name, size)',
-              pageSize: batch.length,
-              supportsAllDrives: true
-            });
+          const response = await this.targetDrive.files.list({
+            q: query,
+            fields: 'files(id, name, size)',
+            pageSize: batch.length,
+            supportsAllDrives: true
+          });
 
+          if (response && response.data && Array.isArray(response.data.files)) {
             // Xử lý kết quả của batch
             response.data.files.forEach(file => {
               results.set(file.name, {
@@ -838,15 +840,22 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
               });
             });
 
-            console.log(`✅ Batch ${i + index + 1}: Tìm thấy ${response.data.files.length} files`);
-          } catch (error) {
-            console.error(`❌ Lỗi xử lý batch ${i + index + 1}:`, error.message);
-            throw error;
+            console.log(`✅ Batch ${i + 1}: Tìm thấy ${response.data.files.length} files`);
+          } else {
+            console.warn(`⚠️ Batch ${i + 1}: Response không hợp lệ`);
+            // Đánh dấu tất cả file trong batch này là chưa tồn tại
+            batch.forEach(file => {
+              results.set(file.name, null);
+            });
           }
-        });
 
-        // Chờ các batch trong nhóm hiện tại hoàn thành
-        await Promise.all(batchPromises);
+        } catch (error) {
+          console.error(`❌ Lỗi xử lý batch ${i + 1}:`, error.message);
+          // Đánh dấu tất cả file trong batch này là chưa tồn tại
+          batch.forEach(file => {
+            results.set(file.name, null);
+          });
+        }
       }
 
       // Đánh dấu các file không tồn tại
@@ -872,7 +881,12 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
     } catch (error) {
       console.error('❌ Lỗi kiểm tra files:', error);
-      throw error;
+      // Trả về Map với tất cả file được đánh dấu là chưa tồn tại
+      const results = new Map();
+      files.forEach(file => {
+        results.set(file.name, null);
+      });
+      return results;
     }
   }
 
@@ -1006,14 +1020,24 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async processPDFFiles(files) {
+    const results = {
+      success: [],
+      failed: []
+    };
+
     try {
       console.log(`\n📊 Tổng số file cần xử lý: ${files.length}`);
       
       console.log(`\n🔍 Kiểm tra khả năng tải trực tiếp...`);
       const downloadMethods = await Promise.all(
         files.map(async file => {
-          const method = await this.checkDownloadMethod(file);
-          return { ...file, downloadMethod: method };
+          try {
+            const method = await this.checkDownloadMethod(file);
+            return { ...file, downloadMethod: method };
+          } catch (error) {
+            console.log(`⚠️ Không thể kiểm tra file ${file.name}: ${error.message}`);
+            return { ...file, downloadMethod: null };
+          }
         })
       );
 
@@ -1025,6 +1049,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       console.log(`📥 Có thể tải API: ${apiDownloads.length}`);
       console.log(`🔄 Cần capture: ${captureDownloads.length}`);
 
+      // Xử lý API downloads
       if (apiDownloads.length > 0) {
         console.log(`\n🚀 Bắt đầu tải song song ${apiDownloads.length} files...`);
         const BATCH_SIZE = 20;
@@ -1035,9 +1060,21 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           console.log(`🔄 Xử lý batch ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(apiDownloads.length/BATCH_SIZE)}...`);
           
           await Promise.all(batch.map(async file => {
+            let filePath = null;
             try {
+              // Kiểm tra file đã tồn tại
+              const existingCheck = await this.checkExistingFiles([{name: file.name}], file.targetFolderId);
+              const existingFile = existingCheck.get(file.name);
+              if (existingFile) {
+                results.success.push({
+                  fileName: file.name,
+                  result: existingFile
+                });
+                return;
+              }
+
               // Tải file
-              const filePath = await this.downloadFile(file.fileId);
+              filePath = await this.downloadFile(file.fileId);
               
               // Upload file
               const uploadResult = await this.uploadToDrive(
@@ -1046,25 +1083,82 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
                 file.name
               );
 
-              // Xóa file tạm sau khi upload
-              if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-              }
+              results.success.push({
+                fileName: file.name,
+                result: uploadResult
+              });
 
-              return uploadResult;
             } catch (error) {
               console.error(`\n❌ Lỗi xử lý file ${file.name}:`, error.message);
-              return {
-                success: false,
-                error: error.message,
-                file: file
-              };
+              console.log(`🔄 Tiếp tục với file tiếp theo...`);
+              results.failed.push({
+                fileName: file.name,
+                error: error.message
+              });
+            } finally {
+              // Dọn dẹp file tạm
+              if (filePath && fs.existsSync(filePath)) {
+                try {
+                  fs.unlinkSync(filePath);
+                } catch (err) {
+                  console.warn(`⚠️ Không thể xóa file tạm ${filePath}: ${err.message}`);
+                }
+              }
             }
           }));
         }
       }
 
-      // ... rest of the code ...
+      // Xử lý Capture downloads
+      if (captureDownloads.length > 0) {
+        console.log(`\n🔄 Xử lý ${captureDownloads.length} files cần capture...`);
+        
+        for (const file of captureDownloads) {
+          try {
+            const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${file.name}`);
+            const result = await this.captureAndCreatePDF(
+              file.fileId,
+              tempPath,
+              file.targetFolderId,
+              file.name
+            );
+
+            if (result.success) {
+              results.success.push({
+                fileName: file.name,
+                result
+              });
+            } else {
+              results.failed.push({
+                fileName: file.name,
+                error: result.error
+              });
+            }
+          } catch (error) {
+            console.error(`\n❌ Lỗi capture file ${file.name}:`, error.message);
+            console.log(`🔄 Tiếp tục với file tiếp theo...`);
+            results.failed.push({
+              fileName: file.name,
+              error: error.message
+            });
+          }
+        }
+      }
+
+      // Thống kê kết quả
+      console.log(`\n📊 Kết quả xử lý:
+      ✅ Thành công: ${results.success.length}
+      ❌ Thất bại: ${results.failed.length}
+      `);
+
+      if (results.failed.length > 0) {
+        console.log(`\n⚠️ Danh sách file thất bại:`);
+        results.failed.forEach(f => {
+          console.log(`- ${f.fileName}: ${f.error}`);
+        });
+      }
+
+      return results;
 
     } catch (error) {
       console.error(`\n❌ Lỗi xử lý PDF:`, error.message);
@@ -1136,4 +1230,5 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 }
 
+module.exports = DriveAPIPDFDownloader; 
 module.exports = DriveAPIPDFDownloader; 
