@@ -8,14 +8,19 @@ const os = require("os");
 const axios = require("axios");
 const http = require("http");
 const https = require("https");
+const { google } = require('googleapis');
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
-  constructor(oAuth2Client = null, downloadOnly = false) {
-    super(oAuth2Client, downloadOnly);
+  constructor(sourceDrive, targetDrive, downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
+    super();
+    this.sourceDrive = sourceDrive;
+    this.targetDrive = targetDrive;
+    this.downloadOnly = downloadOnly;
+    this.MAX_CONCURRENT_DOWNLOADS = maxConcurrent;
+    this.MAX_BACKGROUND_DOWNLOADS = maxBackground;
     this.MAX_RETRIES = 5;
     this.RETRY_DELAY = 2000;
     this.activeDownloads = 0;
-    this.MAX_CONCURRENT_DOWNLOADS = 3;
     this.downloadQueue = [];
     this.videoQueue = [];
     this.processingVideo = false;
@@ -24,8 +29,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.chromeManager = ChromeManager.getInstance();
     this.processLogger = new ProcessLogger();
     this.queue = [];
-    this.downloadOnly = downloadOnly;
-    this.MAX_BACKGROUND_DOWNLOADS = 10;
     this.activeBackgroundDownloads = new Set();
     this.pendingDownloads = [];
 
@@ -112,7 +115,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           const query = `name='${sanitizePath(
             fileName
           )}' and '${targetFolderId}' in parents and trashed=false`;
-          const existingFile = await this.drive.files.list({
+          const existingFile = await this.targetDrive.files.list({
             q: query,
             fields: "files(id, name)",
             supportsAllDrives: true,
@@ -495,7 +498,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         chunks.push({ start, end });
       }
 
-      // Mở file để ghi
+      // Mở file đ ghi
       const fileHandle = await fs.promises.open(outputPath, "r+");
 
       // Tải từng nhóm chunks (không log)
@@ -696,7 +699,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         };
 
         const uploadStartTime = Date.now();
-        const response = await this.drive.files.create({
+        const response = await this.targetDrive.files.create({
           requestBody: fileMetadata,
           media: media,
           fields: "id, name, size, mimeType, webViewLink",
@@ -715,8 +718,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         );
         console.log(`${indent}📎 File ID: ${response.data.id}`);
 
-        // Set permissions
-        await this.drive.permissions.create({
+        // Set permissions với acc2
+        await this.targetDrive.permissions.create({
           fileId: response.data.id,
           requestBody: {
             role: "reader",
