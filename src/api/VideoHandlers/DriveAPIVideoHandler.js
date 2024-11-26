@@ -108,6 +108,21 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return;
     }
 
+    // Kiểm tra số lượng downloads ngầm
+    if (this.activeDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+      console.log(
+        `${indent}⏳ Đợi slot tải ngầm (${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`
+      );
+      await new Promise((resolve) => {
+        this.pendingDownloads.push({
+          type: "download",
+          videoInfo,
+          resolve,
+        });
+      });
+      return;
+    }
+
     // Thêm vào danh sách đang mở Chrome
     this.activeChrome.add(fileName);
     console.log(`${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
@@ -123,6 +138,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       // Xóa khỏi danh sách Chrome và thêm vào downloads ngầm
       this.activeChrome.delete(fileName);
       this.activeDownloads.add(fileName);
+      console.log(`${indent}📥 Đang tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
 
       // Bắt đầu tải ngầm
       this.startDownloadInBackground(
@@ -136,11 +152,32 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         console.error(`${indent}❌ Lỗi tải ngầm ${fileName}:`, error.message);
       }).finally(() => {
         this.activeDownloads.delete(fileName);
-        if (this.pendingDownloads.length > 0) {
-          const next = this.pendingDownloads.shift();
-          next.resolve();
+        console.log(`${indent}📥 Còn lại tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
+        
+        // Xử lý queue downloads trước
+        while (this.pendingDownloads.length > 0 && 
+               this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
+          const next = this.pendingDownloads.find(p => p.type === "download");
+          if (next) {
+            const idx = this.pendingDownloads.indexOf(next);
+            this.pendingDownloads.splice(idx, 1);
+            next.resolve();
+          } else {
+            break;
+          }
         }
-        // Gọi processNextDownload sau khi hoàn thành
+        
+        // Sau đó mới xử lý queue Chrome
+        if (this.pendingDownloads.length > 0 && 
+            this.activeChrome.size < this.MAX_CONCURRENT_DOWNLOADS) {
+          const next = this.pendingDownloads.find(p => p.type === "process");
+          if (next) {
+            const idx = this.pendingDownloads.indexOf(next);
+            this.pendingDownloads.splice(idx, 1);
+            next.resolve();
+          }
+        }
+        
         this.processNextDownload();
       });
 
