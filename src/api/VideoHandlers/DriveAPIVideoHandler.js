@@ -93,10 +93,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const { fileId, fileName, depth, targetFolderId } = videoInfo;
     const indent = "  ".repeat(depth);
 
-    // Kiểm tra số lượng downloads ngầm
-    if (this.activeDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+    // Kiểm tra số lượng Chrome đang mở
+    if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
       console.log(
-        `${indent}⏳ Đợi slot tải ngầm (${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`
+        `${indent}⏳ Đợi slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}): ${fileName}`
       );
       await new Promise((resolve) => {
         this.pendingDownloads.push({
@@ -110,6 +110,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
     // Thêm vào danh sách đang mở Chrome
     this.activeChrome.add(fileName);
+    console.log(`${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
 
     try {
       const browser = await this.chromeManager.getBrowser(null);
@@ -123,7 +124,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       this.activeChrome.delete(fileName);
       this.activeDownloads.add(fileName);
 
-      // Bắt đầu tải ngầm - sửa lại cấu trúc tham số
+      // Bắt đầu tải ngầm
       this.startDownloadInBackground(
         videoUrl, 
         tempPath, 
@@ -139,6 +140,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           const next = this.pendingDownloads.shift();
           next.resolve();
         }
+        // Gọi processNextDownload sau khi hoàn thành
         this.processNextDownload();
       });
 
@@ -147,7 +149,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       throw error;
     }
 
-    // Tiếp tục xử lý file tiếp theo ngay sau khi có URL
+    // Đợi Chrome đóng xong mới xử lý file tiếp theo
+    await new Promise(resolve => setTimeout(resolve, 1000));
     this.processNextDownload();
   }
 
@@ -162,21 +165,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           return;
         }
 
-        // Kiểm tra slot Chrome trống
-        const chromeSlots = this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size;
-        const filesToProcess = Math.min(chromeSlots, this.queue.length);
-
-        if (filesToProcess > 0) {
-          console.log(`\n📊 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
-          console.log(`📊 Đang tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
-
-          for (let i = 0; i < filesToProcess; i++) {
-            const nextVideo = this.queue.shift();
-            if (nextVideo) {
-              await this.processVideoDownload(nextVideo).catch(error => {
-                console.error('❌ Lỗi xử lý video:', error.message);
-              });
-            }
+        // Chỉ xử lý nếu còn slot Chrome trống
+        if (this.activeChrome.size < this.MAX_CONCURRENT_DOWNLOADS) {
+          const nextVideo = this.queue.shift();
+          if (nextVideo) {
+            await this.processVideoDownload(nextVideo).catch(error => {
+              console.error('❌ Lỗi xử lý video:', error.message);
+            });
           }
         }
       } catch (error) {
@@ -184,6 +179,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
     };
 
+    // Khởi động xử lý đầu tiên
     await this.processNextDownload();
   }
 
