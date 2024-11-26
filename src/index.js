@@ -206,22 +206,18 @@ async function main(folderUrl) {
     let licenseKey = getSavedKey();
     
     if (!licenseKey) {
-      // Chỉ hỏi key nếu chưa có
       licenseKey = await askQuestion("\n🔑 Nhập key của bạn: ");
     } else {
       console.log("✅ Đang sử dụng key đã lưu");
     }
 
     try {
-      // Xác thực key
       await validateLicenseKey(licenseKey);
       console.log("✅ Key hợp lệ");
-      // Lưu key sau khi xác thực thành công
       saveKey(licenseKey);
     } catch (error) {
-      // Nếu key không hợp lệ, xóa file key cũ
       removeKey();
-      throw error; // Ném lại lỗi để dừng chương trình
+      throw error;
     }
 
     // Validate input
@@ -256,35 +252,18 @@ async function main(folderUrl) {
       }
     }
 
-    // Thêm phần hỏi số lượng file xử lý
-    let maxConcurrent = 3;
-    let maxBackground = 5;
-
-    if (!isDownloadMode) {
-      console.log("\n⚙️ Cấu hình tải xuống:");
-      
-      const concurrent = await askQuestion("Số video xử lý cùng lúc (mặc định: 3): ");
-      if (concurrent && !isNaN(concurrent)) {
-        maxConcurrent = parseInt(concurrent);
-      }
-
-      const background = await askQuestion("Số file tải/upload cùng lúc (mặc định: 5): ");
-      if (background && !isNaN(background)) {
-        maxBackground = parseInt(background);
-      }
-
-      console.log(`\n📊 Cấu hình đã chọn:`);
-      console.log(`- Số video xử lý cùng lúc: ${maxConcurrent}`);
-      console.log(`- Số file tải/upload cùng lúc: ${maxBackground}`);
-    }
+    // Thêm lựa chọn chế độ tải
+    const mode = await askQuestion("\n📥 Chọn chế độ tải:\n1. Nhanh (tải song song)\n2. Chậm (tải tuần tự)\nLựa chọn của bạn (1/2) [mặc định: 1]: ");
+    const downloadMode = mode === "2" ? "slow" : "fast";
+    console.log(`\n${downloadMode === "fast" ? "🚀" : "🐌"} Đã chọn chế độ: ${downloadMode === "fast" ? "Nhanh (tải song song)" : "Chậm (tải tuần tự)"}`);
 
     // Cleanup và khởi tạo thư mục
     if (!isDownloadMode) {
       await cleanupTempFiles(24); // Xóa files cũ hơn 24h
     }
 
-    // Khởi tạo DriveAPI với tham số mới
-    driveAPI = new DriveAPI(isDownloadMode, maxConcurrent, maxBackground);
+    // Khởi tạo DriveAPI với chế độ tải đã chọn
+    driveAPI = new DriveAPI(isDownloadMode, downloadMode);
     await driveAPI.authenticate();
 
     // Xử lý folder
@@ -311,7 +290,7 @@ async function main(folderUrl) {
     throw error;
   } finally {
     if (driveAPI) {
-      
+      // Cleanup nếu cần
     }
     rl.close();
   }

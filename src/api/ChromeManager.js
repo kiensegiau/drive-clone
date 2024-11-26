@@ -12,12 +12,25 @@ const {
 } = require('../utils/pathUtils');
 
 class ChromeManager {
-  constructor(maxInstances = 3) {
+  static instance = null;
+  
+  static getInstance(maxInstances = 1) {
+    if (!ChromeManager.instance) {
+      ChromeManager.instance = new ChromeManager(maxInstances);
+    } else {
+      ChromeManager.instance.maxInstances = maxInstances;
+    }
+    return ChromeManager.instance;
+  }
+
+  constructor(maxInstances = 1) {
     this.browsers = new Map();
     this.maxInstances = maxInstances;
     this.isLaunching = new Set();
     this.queues = new Map();
     this.currentProfile = 0;
+    
+    console.log(`\n🌐 Khởi tạo ChromeManager với ${maxInstances} instances`);
     
     try {
       this.tempDir = getTempPath();
@@ -34,15 +47,28 @@ class ChromeManager {
     }
   }
 
-  static getInstance() {
-    if (!ChromeManager.instance) {
-      ChromeManager.instance = new ChromeManager();
-    }
-    return ChromeManager.instance;
-  }
-
   async getBrowser(preferredProfile = null) {
     try {
+      if (this.browsers.size >= this.maxInstances) {
+        let minPages = Infinity;
+        let selectedBrowser = null;
+        
+        for (const [id, browser] of this.browsers.entries()) {
+          try {
+            const pages = await browser.pages();
+            if (pages.length < minPages) {
+              minPages = pages.length;
+              selectedBrowser = browser;
+            }
+          } catch (error) {
+            console.warn(`⚠️ Browser ${id} không phản hồi, xóa...`);
+            this.browsers.delete(id);
+          }
+        }
+        
+        if (selectedBrowser) return selectedBrowser;
+      }
+
       const profileId = preferredProfile || `profile_${this.currentProfile}`;
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 

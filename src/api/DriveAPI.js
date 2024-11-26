@@ -15,13 +15,14 @@ const {
 } = require('../utils/pathUtils');
 
 class DriveAPI {
-  constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
+  constructor(downloadOnly = false, downloadMode = 'fast') {
     const configPath = getConfigPath();
     const { credentials, SCOPES } = require(path.join(configPath, 'auth'));
     
     this.downloadOnly = downloadOnly;
-    this.maxConcurrent = maxConcurrent;
-    this.maxBackground = maxBackground;
+    this.downloadMode = downloadMode;
+    this.maxConcurrent = downloadMode === 'fast' ? 2 : 1;
+    this.maxBackground = downloadMode === 'fast' ? 4 : 1;
     this.credentials = credentials;
     this.SCOPES = SCOPES;
     
@@ -493,7 +494,13 @@ class DriveAPI {
           if (videoFiles.length > 0) {
             try {
               console.log(`\n🎥 Xử lý ${videoFiles.length} file video...`);
-              const videoHandler = new DriveAPIVideoHandler(
+              
+              // Chọn handler dựa vào chế độ
+              const VideoHandler = this.downloadMode === 'fast' 
+                ? require('./VideoHandlers/DriveAPIVideoHandler')
+                : require('./VideoHandlers/slowvideo');
+              
+              const videoHandler = new VideoHandler(
                 this.sourceDrive,
                 this.targetDrive,
                 false,
@@ -503,13 +510,18 @@ class DriveAPI {
 
               // Thêm files vào queue
               for (const file of videoFiles) {
-                await videoHandler.addToQueue(file).catch(error => {
+                await videoHandler.addToQueue({
+                  fileId: file.id,
+                  fileName: file.name,
+                  depth: 0,
+                  targetFolderId: this.currentTargetFolderId
+                }).catch(error => {
                   console.error(`❌ Lỗi thêm video "${file.name}" vào queue:`, error.message);
                   errors.push({type: 'video', name: file.name, error: error.message});
                   hasErrors = true;
                 });
               }
-              
+
               await videoHandler.processQueue().catch(error => {
                 console.error(`❌ Lỗi xử lý video queue:`, error.message);
                 errors.push({type: 'video_queue', error: error.message});
