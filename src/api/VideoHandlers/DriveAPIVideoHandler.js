@@ -60,11 +60,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.processLogger = new ProcessLogger();
     this.queue = [];
     this.pendingDownloads = [];
-
-    // Dọn dẹp file tạm cũ khi khởi tạo
-    this.initTempCleanup().catch(err => {
-      console.warn('⚠️ Lỗi initial cleanup:', err.message);
-    });
+    this.globalActiveDownloads = new Set();
+    this.globalActiveChrome = new Set();     // Theo dõi tất cả Chrome đang mở
+    this.pendingQueue = [];                  // Queue chung cho cả process
   }
 
   // Thêm method khởi tạo và dọn dẹp temp
@@ -93,14 +91,14 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const { fileId, fileName, depth, targetFolderId } = videoInfo;
     const indent = "  ".repeat(depth);
 
-    // Kiểm tra số lượng Chrome đang mở
-    if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
+    // Kiểm tra số lượng Chrome đang mở TOÀN CỤC
+    if (this.globalActiveChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
       console.log(
-        `${indent}⏳ Đợi slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}): ${fileName}`
+        `${indent}⏳ Đợi slot Chrome (${this.globalActiveChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}): ${fileName}`
       );
       await new Promise((resolve) => {
-        this.pendingDownloads.push({
-          type: "process",
+        this.pendingQueue.push({
+          type: "chrome",
           videoInfo,
           resolve,
         });
@@ -108,87 +106,92 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return;
     }
 
-    // Kiểm tra số lượng downloads ngầm
-    if (this.activeDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
-      console.log(
-        `${indent}⏳ Đợi slot tải ngầm (${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`
-      );
-      await new Promise((resolve) => {
-        this.pendingDownloads.push({
-          type: "download",
-          videoInfo,
-          resolve,
-        });
-      });
-      return;
-    }
-
-    // Thêm vào danh sách đang mở Chrome
-    this.activeChrome.add(fileName);
-    console.log(`${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
+    // Thêm vào danh sách Chrome đang mở TOÀN CỤC
+    this.globalActiveChrome.add(fileName);
+    console.log(`${indent}🌐 Chrome đang mở: ${this.globalActiveChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
 
     try {
       const browser = await this.chromeManager.getBrowser(null);
       const { videoUrl, headers } = await this.getVideoUrlAndHeaders(browser, fileId, indent);
       
-      // Tạo tempPath
+      // Xóa khỏi danh sách Chrome TOÀN CỤC
+      this.globalActiveChrome.delete(fileName);
+
+      // Kiểm tra số lượng downloads ngầm TOÀN CỤC
+      if (this.globalActiveDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+        console.log(
+          `${indent}⏳ Đợi slot tải ngầm (${this.globalActiveDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}): ${fileName}`
+        );
+        await new Promise((resolve) => {
+          this.pendingQueue.push({
+            type: "download",
+            videoInfo: { ...videoInfo, videoUrl, headers },
+            resolve,
+          });
+        });
+        return;
+      }
+
+      // Thêm vào danh sách downloads TOÀN CỤC
+      this.globalActiveDownloads.add(fileName);
+      console.log(`${indent}📥 Đang tải ngầm: ${this.globalActiveDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
+
+      // Tạo tempPath và bắt đầu tải
       const safeFileName = sanitizePath(fileName);
       const tempPath = path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`);
-      
-      // Xóa khỏi danh sách Chrome và thêm vào downloads ngầm
-      this.activeChrome.delete(fileName);
-      this.activeDownloads.add(fileName);
-      console.log(`${indent}📥 Đang tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
 
-      // Bắt đầu tải ngầm
-      this.startDownloadInBackground(
-        videoUrl, 
-        tempPath, 
-        headers, 
-        fileName, 
-        depth, 
+      await this.startDownloadInBackground(
+        videoUrl,
+        tempPath,
+        headers,
+        fileName,
+        depth,
         targetFolderId
       ).catch(error => {
         console.error(`${indent}❌ Lỗi tải ngầm ${fileName}:`, error.message);
       }).finally(() => {
-        this.activeDownloads.delete(fileName);
-        console.log(`${indent}📥 Còn lại tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
+        this.globalActiveDownloads.delete(fileName);
+        console.log(`${indent}📥 Còn lại tải ngầm: ${this.globalActiveDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`);
         
-        // Xử lý queue downloads trước
-        while (this.pendingDownloads.length > 0 && 
-               this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
-          const next = this.pendingDownloads.find(p => p.type === "download");
-          if (next) {
-            const idx = this.pendingDownloads.indexOf(next);
-            this.pendingDownloads.splice(idx, 1);
-            next.resolve();
-          } else {
-            break;
-          }
-        }
-        
-        // Sau đó mới xử lý queue Chrome
-        if (this.pendingDownloads.length > 0 && 
-            this.activeChrome.size < this.MAX_CONCURRENT_DOWNLOADS) {
-          const next = this.pendingDownloads.find(p => p.type === "process");
-          if (next) {
-            const idx = this.pendingDownloads.indexOf(next);
-            this.pendingDownloads.splice(idx, 1);
-            next.resolve();
-          }
-        }
-        
-        this.processNextDownload();
+        this.processNextFromQueue();
       });
 
     } catch (error) {
-      this.activeChrome.delete(fileName);
+      this.globalActiveChrome.delete(fileName);
       throw error;
     }
 
-    // Đợi Chrome đóng xong mới xử lý file tiếp theo
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    this.processNextDownload();
+    // Sau khi đóng Chrome, xử lý tiếp queue
+    this.processNextFromQueue();
+  }
+
+  // Xử lý queue chung
+  async processNextFromQueue() {
+    // Ưu tiên xử lý downloads trước
+    while (this.pendingQueue.length > 0 && 
+           this.globalActiveDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
+      const next = this.pendingQueue.find(p => p.type === "download");
+      if (next) {
+        const idx = this.pendingQueue.indexOf(next);
+        this.pendingQueue.splice(idx, 1);
+        next.resolve();
+      } else {
+        break;
+      }
+    }
+
+    // Sau đó xử lý Chrome
+    while (this.pendingQueue.length > 0 && 
+           this.globalActiveChrome.size < this.MAX_CONCURRENT_DOWNLOADS) {
+      const next = this.pendingQueue.find(p => p.type === "chrome");
+      if (next) {
+        const idx = this.pendingQueue.indexOf(next);
+        this.pendingQueue.splice(idx, 1);
+        next.resolve();
+      } else {
+        break;
+      }
+    }
   }
 
   async processQueue() {
