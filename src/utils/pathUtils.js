@@ -80,16 +80,27 @@ function getConfigPath() {
   }
 }
 
-function getTempPath(fileName) {
-  // Sử dụng os.tmpdir() nếu không tạo được trong thư mục hiện tại
-  const tempDir = fs.existsSync(path.join(process.cwd(), 'temp')) 
-    ? path.join(process.cwd(), 'temp')
-    : path.join(os.tmpdir(), 'drive-downloader-temp');
+function getTempPath(fileName = '') {
+  try {
+    // Tạo đường dẫn temp cơ bản
+    const tempDir = path.join(getAppRoot(), FOLDER_NAMES.TEMP);
     
-  // Đảm bảo thư mục tồn tại
-  fs.mkdirSync(tempDir, { recursive: true });
-  
-  return path.join(tempDir, fileName);
+    // Đảm bảo thư mục tồn tại
+    ensureDirectoryExists(tempDir);
+    
+    // Nếu có tên file, trả về đường dẫn đầy đủ với file
+    if (fileName) {
+      return path.join(tempDir, fileName);
+    }
+    
+    return tempDir;
+  } catch (error) {
+    console.error('❌ Lỗi tạo đường dẫn temp:', error);
+    // Fallback về temp của hệ thống
+    const systemTemp = path.join(os.tmpdir(), 'drive-clone-temp');
+    ensureDirectoryExists(systemTemp);
+    return fileName ? path.join(systemTemp, fileName) : systemTemp;
+  }
 }
 
 function getDownloadsPath() {
@@ -118,8 +129,14 @@ function getLogsPath() {
 
 // Tạo thư mục nếu chưa tồn tại với retry
 function ensureDirectoryExists(dirPath) {
+  if (!dirPath) {
+    throw new Error('Đường dẫn không được để trống');
+  }
   try {
-    fs.mkdirSync(dirPath, { recursive: true });
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    return dirPath;
   } catch (error) {
     console.warn(`⚠️ Không thể tạo thư mục ${dirPath}:`, error.message);
     // Thử tạo trong temp của hệ thống
@@ -127,7 +144,6 @@ function ensureDirectoryExists(dirPath) {
     fs.mkdirSync(systemTempDir, { recursive: true });
     return systemTempDir;
   }
-  return dirPath;
 }
 
 // Xóa file an toàn với retry

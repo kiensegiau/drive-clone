@@ -46,7 +46,7 @@ async function cleanup() {
 // Thêm signal handlers
 process.on('SIGINT', async () => {
   console.log('\n\n⚠️ Đang dừng chương trình...');
-  await cleanup();
+
   process.exit(0);
 });
 
@@ -311,7 +311,7 @@ async function main(folderUrl) {
     throw error;
   } finally {
     if (driveAPI) {
-      await cleanup();
+      
     }
     rl.close();
   }
