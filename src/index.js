@@ -332,7 +332,14 @@ async function main(folderUrl) {
       }
 
       const selectedDrive = disks[selectedDriveIndex].mounted;
-      defaultPath = path.join(selectedDrive, 'drive-clone');
+      
+      // Thêm My Drive nếu là ổ G:
+      if (selectedDrive.startsWith('G:')) {
+        defaultPath = path.join(selectedDrive, 'My Drive', 'drive-clone');
+      } else {
+        defaultPath = path.join(selectedDrive, 'drive-clone');
+      }
+      
       await ensureDirectoryExists(defaultPath);
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
       

@@ -20,8 +20,10 @@ class PDFDownloader {
     this.page = null;
     this.chromeManager = new ChromeManager();
     
-    // Đảm bảo downloadOnly được set từ driveAPI
-    console.log(`📥 PDF Downloader mode: ${driveAPI.downloadOnly ? 'download only' : 'download & upload'}`);
+    // Đảm bảo downloadOnly luôn là true cho desktop version
+    this.downloadOnly = true;
+    
+    console.log(`📥 PDF Downloader mode: download only`);
 
     // Tạo thư mục temp nếu chưa tồn tại
     if (!fs.existsSync(this.tempDir)) {
@@ -151,62 +153,13 @@ class PDFDownloader {
                 const stats = await fs.promises.stat(outputPath);
                 const processedSize = stats.size;
 
-                // Kiểm tra mode download only
-                if (this.driveAPI.downloadOnly) {
-                  console.log(`✅ Đã lưu PDF vào: ${outputPath}`);
-                  resolve({
-                    success: true,
-                    filePath: outputPath,
-                    originalSize,
-                    processedSize
-                  });
-                  return;
-                }
-                
-                // Nếu là mode upload, tiếp tục upload file
-                console.log(`\n📤 Đang upload lên Drive...`);
-                let uploadAttempt = 0;
-                let uploadedFile = null;
-
-                while (uploadAttempt < MAX_UPLOAD_RETRIES) {
-                  try {
-                    uploadedFile = await this.driveAPI.uploadFile(outputPath);
-                    console.log(`✨ Upload hoàn tất!`);
-                    
-                    // Permission handling with retry
-                    let permissionAttempt = 0;
-                    while (permissionAttempt < MAX_UPLOAD_RETRIES) {
-                      try {
-                        await this.driveAPI.drive.permissions.create({
-                          fileId: uploadedFile.id,
-                          requestBody: {
-                            role: 'reader',
-                            type: 'anyone'
-                          }
-                        });
-                        break;
-                      } catch (permError) {
-                        permissionAttempt++;
-                        if (permissionAttempt === MAX_UPLOAD_RETRIES) throw permError;
-                        console.log(`⚠️ Retry permission (${permissionAttempt}/${MAX_UPLOAD_RETRIES})`);
-                        await new Promise(r => setTimeout(r, RETRY_DELAY));
-                      }
-                    }
-
-                    resolve({
-                      uploadedFile,
-                      originalSize,
-                      processedSize,
-                      newUrl: `https://drive.google.com/file/d/${uploadedFile.id}/view`
-                    });
-                    break;
-                  } catch (uploadError) {
-                    uploadAttempt++;
-                    if (uploadAttempt === MAX_UPLOAD_RETRIES) throw uploadError;
-                    console.log(`⚠️ Retry upload (${uploadAttempt}/${MAX_UPLOAD_RETRIES})`);
-                    await new Promise(r => setTimeout(r, RETRY_DELAY));
-                  }
-                }
+                // Luôn trả về success và không upload
+                resolve({
+                  success: true,
+                  filePath: outputPath,
+                  originalSize,
+                  processedSize
+                });
               } catch (error) {
                 reject(error);
               }

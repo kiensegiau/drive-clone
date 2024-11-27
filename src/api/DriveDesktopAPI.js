@@ -6,7 +6,7 @@ const PDFDownloader = require("./PDFDownloaders/DesktopPDFDownloader");
 const VideoHandler = require("./VideoHandlers/DesktopVideoHandler");
 const { getConfigPath } = require('../utils/pathUtils');
 const readline = require("readline");
-const { sanitizePath } = require("../../src/utils/ProcessLogger");
+const { sanitizePath } = require("../utils/pathUtils");
 const { app } = require('electron');
 
 class DriveAPI {
@@ -495,7 +495,7 @@ async  ensureDirectoryExists(dirPath) {
         try {
           await videoHandler.processQueue();
         } catch (error) {
-          console.error(`${indent}❌ Lỗi xử lý queue videos:`, error.message);
+          console.error(`${indent}❌ L���i xử lý queue videos:`, error.message);
         }
       }
 

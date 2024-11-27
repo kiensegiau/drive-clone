@@ -17,25 +17,25 @@ const {
 class DriveAPI {
   constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
     const configPath = getConfigPath();
-    const { credentials, SCOPES } = require(path.join(configPath, 'auth'));
+    const auth = require('../../config/auth');
     
     this.downloadOnly = downloadOnly;
     this.maxConcurrent = maxConcurrent;
     this.maxBackground = maxBackground;
-    this.credentials = credentials;
-    this.SCOPES = SCOPES;
+    this.credentials = auth.credentials;
+    this.SCOPES = auth.SCOPES;
     
     // Khởi tạo OAuth clients
     this.sourceClient = new OAuth2Client(
-      credentials.client_id,
-      credentials.client_secret,
-      credentials.redirect_uris[0]
+      auth.credentials.client_id,
+      auth.credentials.client_secret,
+      auth.credentials.redirect_uris[0]
     );
 
     this.targetClient = new OAuth2Client(
-      credentials.client_id,
-      credentials.client_secret,
-      credentials.redirect_uris[0]
+      auth.credentials.client_id,
+      auth.credentials.client_secret,
+      auth.credentials.redirect_uris[0]
     );
 
     // Khởi tạo tempDir trước khi sử dụng
