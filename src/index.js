@@ -161,41 +161,104 @@ async function validateLicenseKey(key) {
   }
 }
 
-// Thêm hàm để đọc/ghi key
+// Thêm hàm kiểm tra và tạo thư mục config
+function ensureConfigDirectory() {
+  try {
+    const isPkg = typeof process.pkg !== 'undefined';
+    const rootDir = isPkg ? path.dirname(process.execPath) : process.cwd();
+    const configPath = path.join(rootDir, 'config');
+    
+    if (!fs.existsSync(configPath)) {
+      fs.mkdirSync(configPath, { recursive: true });
+    }
+    
+    // Kiểm tra quyền ghi
+    fs.accessSync(configPath, fs.constants.W_OK);
+    return configPath;
+  } catch (error) {
+    console.warn('⚠️ Không thể tạo thư mục config:', error.message);
+    // Thử tạo trong AppData nếu là Windows
+    if (process.platform === 'win32') {
+      const appDataPath = path.join(process.env.APPDATA, 'drive-clone');
+      if (!fs.existsSync(appDataPath)) {
+        fs.mkdirSync(appDataPath, { recursive: true });
+      }
+      return appDataPath;
+    }
+    return null;
+  }
+}
+
+// Sửa hàm đọc key
 function getSavedKey() {
   try {
-    const configPath = path.join(getConfigPath(), 'license.json');
+    const configDir = ensureConfigDirectory();
+    if (!configDir) {
+      throw new Error('Không thể tạo thư mục config');
+    }
+
+    const configPath = path.join(configDir, 'license.json');
+    console.log(`📂 Đọc key từ: ${configPath}`);
+    
     if (fs.existsSync(configPath)) {
       const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-      return data.key;
+      if (data && data.key) {
+        console.log('✅ Đã đọc được key đã lưu');
+        return data.key;
+      }
     }
   } catch (error) {
-    console.warn('⚠️ Không đọc được key đã lưu');
+    console.warn('⚠️ Không đọc được key đã lưu:', error.message);
   }
   return null;
 }
 
+// Sửa hàm lưu key
 function saveKey(key) {
   try {
-    const configPath = path.join(getConfigPath(), 'license.json');
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ key, savedAt: new Date().toISOString() })
-    );
+    const configDir = ensureConfigDirectory();
+    if (!configDir) {
+      throw new Error('Không thể tạo thư mục config');
+    }
+
+    const configPath = path.join(configDir, 'license.json');
+    console.log(`💾 Lưu key vào: ${configPath}`);
+    
+    const data = {
+      key,
+      savedAt: new Date().toISOString()
+    };
+
+    fs.writeFileSync(configPath, JSON.stringify(data, null, 2));
+    console.log('✅ Đã lưu key thành công');
+    
+    // Kiểm tra lại xem đã lưu thành công chưa
+    const savedData = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (!savedData || !savedData.key) {
+      throw new Error('Lưu key không thành công');
+    }
   } catch (error) {
-    console.warn('⚠️ Không lưu được key');
+    console.warn('⚠️ Không lưu được key:', error.message);
   }
 }
 
+// Sửa hàm xóa key
 async function removeKey() {
   try {
-    const keyPath = path.join(getConfigPath(), 'license.json');
+    const configDir = ensureConfigDirectory();
+    if (!configDir) {
+      throw new Error('Không thể tạo thư mục config');
+    }
+
+    const keyPath = path.join(configDir, 'license.json');
+    console.log(`🗑️ Xóa key tại: ${keyPath}`);
+    
     if (fs.existsSync(keyPath)) {
-      await safeUnlink(keyPath);
-      console.log("🗑️ Đã xóa key cũ");
+      await fs.promises.unlink(keyPath);
+      console.log("✅ Đã xóa key cũ");
     }
   } catch (error) {
-    console.warn('⚠️ Không xóa được file key');
+    console.warn('⚠️ Không xóa được file key:', error.message);
   }
 }
 
@@ -383,4 +446,49 @@ if (process.pkg) {
 } else {
   // Khi chạy từ source
   process.env.APP_PATH = process.cwd();
+}
+
+async function selectDrive() {
+  try {
+    // Lấy danh sách ổ đĩa
+    const drives = await getDrives();
+    
+    // Hiển thị danh sách
+    console.log('\nDanh sách ổ đĩa:');
+    drives.forEach((drive, index) => {
+      console.log(`${index + 1}. ${drive.path} (${drive.label || 'Không tên'})`);
+    });
+
+    // Chọn ổ đĩa
+    const choice = await question('\nChọn ổ đĩa (nhập số thứ tự): ');
+    const index = parseInt(choice) - 1;
+    
+    if (index >= 0 && index < drives.length) {
+      const selectedDrive = drives[index];
+      
+      // Kiểm tra đặc biệt cho ổ đĩa mạng
+      try {
+        fs.accessSync(selectedDrive.path, fs.constants.W_OK);
+      } catch (error) {
+        console.log(`⚠️ Ổ đĩa ${selectedDrive.path} có thể là ổ đĩa mạng`);
+        console.log('💡 Đang kiểm tra kết nối...');
+        
+        // Đợi một chút để đảm bảo kết nối được thiết lập
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      
+      const targetPath = path.join(selectedDrive.path, 'drive-clone');
+      console.log(`\n📂 Thư mục đích: ${targetPath}`);
+      
+      return targetPath;
+    } else {
+      throw new Error('Lựa chọn không hợp lệ');
+    }
+  } catch (error) {
+    console.error('❌ Lỗi khi chọn ổ đĩa:', error.message);
+    // Fallback về Documents
+    const documentsPath = path.join(require('os').homedir(), 'Documents', 'drive-clone');
+    console.log(`↪️ Sử dụng thư mục mặc định: ${documentsPath}`);
+    return documentsPath;
+  }
 }
