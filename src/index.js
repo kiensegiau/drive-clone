@@ -17,6 +17,8 @@ const {
 } = require('./utils/pathUtils');
 const os = require('os');
 const crypto = require('crypto');
+const DriveDesktopAPI = require("./api/DriveDesktopAPI");
+const DesktopVideoHandler = require("./api/VideoHandlers/DesktopVideoHandler");
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -200,6 +202,7 @@ async function removeKey() {
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
+  let defaultPath = null;
 
   try {
     // Kiểm tra key đã lưu
@@ -244,8 +247,29 @@ async function main(folderUrl) {
     const isDownloadMode = choice === '2';
     
     if (isDownloadMode) {
-      const homeDir = os.homedir();
-      const defaultPath = path.join(getDownloadsPath(), 'drive-clone');
+      const nodeDiskInfo = require('node-disk-info');
+      let disks;
+      try {
+        disks = await nodeDiskInfo.getDiskInfo();
+      } catch (error) {
+        console.error("Không thể lấy thông tin ổ đĩa:", error);
+        throw new Error("Không thể lấy thông tin ổ đĩa");
+      }
+      
+      console.log("\n💾 Các ổ đĩa có sẵn:");
+      disks.forEach((disk, index) => {
+        console.log(`${index + 1}. ${disk.mounted} (${disk.filesystem}, Còn trống: ${formatBytes(disk.available)})`);
+      });
+
+      const driveChoice = await askQuestion("\nChọn ổ đĩa (nhập số thứ tự): ");
+      const selectedDriveIndex = parseInt(driveChoice) - 1;
+      
+      if (isNaN(selectedDriveIndex) || selectedDriveIndex < 0 || selectedDriveIndex >= disks.length) {
+        throw new Error("Lựa chọn ổ đĩa không hợp lệ");
+      }
+
+      const selectedDrive = disks[selectedDriveIndex].mounted;
+      defaultPath = path.join(selectedDrive, 'drive-clone');
       await ensureDirectoryExists(defaultPath);
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
       
@@ -284,7 +308,11 @@ async function main(folderUrl) {
     }
 
     // Khởi tạo DriveAPI với tham số mới
-    driveAPI = new DriveAPI(isDownloadMode, maxConcurrent, maxBackground);
+    if (isDownloadMode) {
+      driveAPI = new DriveDesktopAPI(defaultPath, maxConcurrent);
+    } else {
+      driveAPI = new DriveAPI(false, maxConcurrent, maxBackground);
+    }
     await driveAPI.authenticate();
 
     // Xử lý folder
@@ -328,6 +356,15 @@ function extractFolderId(url) {
     return url;
   }
   return null;
+}
+
+// Thêm hàm format bytes
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
 module.exports = { main };

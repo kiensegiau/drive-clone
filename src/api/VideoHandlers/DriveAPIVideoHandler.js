@@ -317,7 +317,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         return new Promise(async (resolve, reject) => {
           const timeout = setTimeout(() => {
             reject(new Error("Timeout lấy URL video"));
-          }, 7000);
+          }, 15000);
 
           currentPage.on("response", async (response) => {
             const url = response.url();

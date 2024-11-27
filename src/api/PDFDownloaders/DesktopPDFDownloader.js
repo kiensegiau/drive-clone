@@ -3,7 +3,8 @@ const fs = require('fs');
 const axios = require('axios');
 const BasePDFDownloader = require('./BasePDFDownloader');
 const ChromeManager = require('../ChromeManager');
-const { getLongPath, sanitizePath } = require("../../utils/pathUtils");
+const { sanitizePath } = require("../../utils/pathUtils");
+const { google } = require('googleapis');
 
 class DesktopPDFDownloader extends BasePDFDownloader {
   constructor(oauth2Client, tempDir, processLogger) {
@@ -15,12 +16,43 @@ class DesktopPDFDownloader extends BasePDFDownloader {
     this.userAgent = null;
     this.browser = null;
     this.page = null;
+    this.drive = google.drive({
+      version: 'v3',
+      auth: this.oauth2Client
+    });
   }
 
   async downloadPDF(fileId, fileName, targetPath) {
     const tempFiles = [];
     
     try {
+      const normalizedPath = path.resolve(targetPath);
+      
+      if (fs.existsSync(normalizedPath)) {
+        console.log(`⏩ File đã tồn tại: ${normalizedPath}`);
+        return {
+          success: true,
+          filePath: normalizedPath,
+          skipped: true
+        };
+      }
+
+      const targetDir = path.dirname(normalizedPath);
+      await fs.promises.mkdir(targetDir, { recursive: true });
+      
+      // Thử tải trực tiếp qua API trước
+      try {
+        console.log('📥 Đang thử tải qua API...');
+        const result = await this.downloadViaAPI(fileId, targetPath);
+        if (result.success) {
+          console.log('✅ Tải qua API thành công!');
+          return result;
+        }
+      } catch (apiError) {
+        console.log('⚠️ Không thể tải qua API, chuyển sang phương pháp capture...');
+      }
+
+      // Nếu tải API thất bại, dùng phương pháp capture
       this.pageRequests.clear();
       this.browser = await this.chromeManager.getBrowser();
       this.page = await this.browser.newPage();
@@ -35,7 +67,7 @@ class DesktopPDFDownloader extends BasePDFDownloader {
       
       return {
         success: true,
-        filePath: targetPath
+        filePath: normalizedPath
       };
     } catch (error) {
       console.error(`❌ Lỗi capture PDF:`, error.message);
@@ -200,6 +232,56 @@ class DesktopPDFDownloader extends BasePDFDownloader {
       );
     } catch (error) {
       console.error('❌ Lỗi cleanup temp:', error);
+    }
+  }
+
+  async downloadViaAPI(fileId, targetPath) {
+    try {
+      const response = await this.drive.files.get(
+        {
+          fileId: fileId,
+          alt: 'media'
+        },
+        {
+          responseType: 'stream'
+        }
+      );
+
+      // Kiểm tra response
+      if (!response.data) {
+        throw new Error('Không nhận được dữ liệu từ API');
+      }
+
+      // Tạo write stream
+      const writer = fs.createWriteStream(targetPath);
+
+      // Pipe response vào file
+      return new Promise((resolve, reject) => {
+        response.data
+          .pipe(writer)
+          .on('finish', () => {
+            // Kiểm tra file size
+            const stats = fs.statSync(targetPath);
+            if (stats.size < 1024) { // Nhỏ hơn 1KB có thể là lỗi
+              fs.unlinkSync(targetPath);
+              reject(new Error('File tải về quá nhỏ, có thể bị lỗi'));
+            }
+            resolve({
+              success: true,
+              filePath: targetPath
+            });
+          })
+          .on('error', (error) => {
+            fs.unlinkSync(targetPath);
+            reject(error);
+          });
+      });
+
+    } catch (error) {
+      if (fs.existsSync(targetPath)) {
+        fs.unlinkSync(targetPath);
+      }
+      throw error;
     }
   }
 }

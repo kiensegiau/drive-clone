@@ -33,12 +33,10 @@ function sanitizePath(name) {
   if (!name) return '';
   try {
     return name
-      .replace(/[\/\\:*?"<>|]/g, '-') // Thay thế ký tự không hợp lệ
+      .replace(/[\/\\:*?"<>|]/g, '-') // Thay thế ký tự không hợp lệ bằng dấu -
       .replace(/\s+/g, ' ')           // Chuẩn hóa khoảng trắng  
       .replace(/\.+/g, '.')           // Xử lý dấu chấm liên tiếp
-      .replace(/[^\x00-\x7F]/g, '')   // Loại bỏ ký tự unicode
-      .replace(/^\.+|\.+$/g, '')      // Xóa dấu chấm đầu/cuối
-      .trim();
+      .trim();                        // Xóa khoảng trắng đầu/cuối
   } catch (error) {
     console.error('❌ Lỗi chuẩn hóa tên:', error.message);
     return `file_${Date.now()}`;  // Fallback tên an toàn
