@@ -2,20 +2,28 @@
   "name": "drive-clone",
   "version": "1.0.0",
   "main": "src/index.js",
-  "bin": "src/index.js",
+  "bin": "./src/index.js",
   "pkg": {
     "assets": [
+      "node_modules/**/*",
+      "config/**/*",
       "src/**/*",
-      "node_modules/**/*"
+      "node_modules/puppeteer/**/*",
+      "node_modules/puppeteer-core/**/*"
     ],
-    "targets": [
-      "node16-win-x64"
+    "scripts": [
+      "src/**/*.js"
     ],
+    "targets": ["node16-win-x64"],
     "outputPath": "dist"
   },
   "scripts": {
     "start": "node src/index.js",
-    "build": "pkg ."
+    "build": "npm run clean && npm run prepare-pkg && pkg . --no-bytecode",
+    "prepare": "node scripts/prepare-pkg.js",
+    "clean": "rimraf dist .pkg-cache",
+    "prepare-pkg": "node scripts/prepare-pkg.js",
+    "postbuild": "node scripts/post-build.js"
   },
   "dependencies": {
     "axios": "^1.7.7",
@@ -41,5 +49,16 @@
     "electron-builder": "^25.1.8",
     "electron-reloader": "^1.2.3",
     "nodemon": "^2.0.20"
-  }
+  },
+  "pkg-externals": [
+    "axios",
+    "@firebase/webchannel-wrapper",
+    "brotli",
+    "typed-query-selector",
+    "electron",
+    "node-fs",
+    "fs",
+    "puppeteer",
+    "puppeteer-core"
+  ]
 }

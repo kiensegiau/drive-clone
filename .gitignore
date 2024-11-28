@@ -25,3 +25,16 @@
 .DS_Store
 Thumbs.db
 
+# Git files
+.git
+.gitignore
+
+# Node modules
+node_modules
+
+# Distribution files
+dist
+
+# Package cache
+.pkg-cache
+

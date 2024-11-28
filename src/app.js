@@ -2,8 +2,7 @@ const { google } = require("googleapis");
 const { OAuth2Client } = require("google-auth-library");
 const path = require("path");
 const fs = require("fs");
-const { NETWORK_CONFIG } = require("./config/constants");
-const { credentials, SCOPES } = require("./config/auth");
+
 const readline = require("readline");
 const { getLongPath } = require("./utils/pathUtils");
 const VideoQualityChecker = require("./api/VideoQualityChecker");

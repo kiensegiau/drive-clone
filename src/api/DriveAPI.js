@@ -17,7 +17,7 @@ const {
 class DriveAPI {
   constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
     const configPath = getConfigPath();
-    const auth = require('../../config/auth');
+    const auth = require('../config/auth');
     
     this.downloadOnly = downloadOnly;
     this.maxConcurrent = maxConcurrent;
