@@ -310,7 +310,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       }
 
       // Đảm bảo xóa file tạm
-      await safeUnlink(tempPath);
+     
       
       return result;
     } catch (error) {

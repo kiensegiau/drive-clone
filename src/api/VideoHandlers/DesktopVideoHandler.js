@@ -6,10 +6,7 @@ const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../../config/auth.js");
 const ChromeManager = require("../ChromeManager.js");
 const ProcessLogger = require("../../utils/ProcessLogger.js");
-const https = require("https");
-const got = require('got');
-const { pipeline } = require('stream');
-const os = require('os');
+
 const { sanitizePath, getTempPath, getDownloadsPath } = require("../../utils/pathUtils");
 
 class VideoHandler {
@@ -90,7 +87,13 @@ class VideoHandler {
       tempFiles.push(tempPath);
 
       // Tạo đường dẫn đích cuối cùng
-      const finalPath = path.join(targetFolderId, safeFileName);
+      let finalPath;
+      if (this.isDriveStorage) {
+        finalPath = path.join(targetFolderId, safeFileName);
+      } else {
+        finalPath = targetFolderId;
+      }
+      console.log(`🔍 Đường dẫn file cuối cùng: ${finalPath}`);
 
       // Tạo thư mục đích nếu chưa tồn tại
       const finalDir = path.dirname(finalPath);
@@ -873,7 +876,7 @@ class VideoHandler {
           supportsAllDrives: true,
         });
       } catch (shareError) {
-        console.error(`⚠️ Lỗi cấu hình sharing:`, shareError.message);
+        console.error(`⚠️ L��i cấu hình sharing:`, shareError.message);
       }
     } catch (error) {
       console.error(`❌ Lỗi ensure video processing:`, error.message);
@@ -1013,8 +1016,9 @@ class VideoHandler {
       if (this.isDriveStorage) {
         finalPath = path.join(targetPath, safeFileName);
       } else {
-        finalPath = targetPath; // Đối với ổ đĩa thông thường, targetPath đã là đường dẫn đầy đủ
+        finalPath = targetPath;
       }
+      console.log(`🔍 Đường dẫn file cuối cùng: ${finalPath}`);
       
       try {
         if (!fs.existsSync(path.dirname(finalPath))) {

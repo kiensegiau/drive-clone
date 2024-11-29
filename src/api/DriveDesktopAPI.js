@@ -6,8 +6,7 @@ const PDFDownloader = require("./PDFDownloaders/DesktopPDFDownloader");
 const VideoHandler = require("./VideoHandlers/DesktopVideoHandler");
 const { getConfigPath } = require('../utils/pathUtils');
 const readline = require("readline");
-const { sanitizePath } = require("../utils/pathUtils");
-const { app } = require('electron');
+
 
 class DriveAPI {
   constructor(targetPath, maxConcurrent = 3) {

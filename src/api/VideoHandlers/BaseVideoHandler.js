@@ -1,6 +1,5 @@
 const path = require("path");
 const fs = require("fs");
-const { exec } = require("child_process");
 const axios = require("axios");
 const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../../config/auth");
@@ -13,9 +12,7 @@ const {
   cleanupTempFiles,
   ensureDirectoryExists
 } = require("../../utils/pathUtils");
-const https = require("https");
-const { pipeline } = require("stream");
-const os = require("os");
+
 
 class BaseVideoHandler {
   constructor(oAuth2Client = null, downloadOnly = false) {

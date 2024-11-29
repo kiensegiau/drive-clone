@@ -37,7 +37,7 @@ async function cleanup() {
       const files = fs.readdirSync(tempDir);
       for (const file of files) {
         const filePath = path.join(tempDir, file);
-        await safeUnlink(filePath);
+     
       }
     }
   } catch (error) {
@@ -372,10 +372,7 @@ async function main(folderUrl) {
       console.log(`- Số file tải/upload cùng lúc: ${maxBackground}`);
     }
 
-    // Cleanup và khởi tạo thư mục
-    if (!isDownloadMode) {
-      await cleanupTempFiles(24); // Xóa files cũ hơn 24h
-    }
+
 
     // Khởi tạo DriveAPI với tham số mới
     if (isDownloadMode) {

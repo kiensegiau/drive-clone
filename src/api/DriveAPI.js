@@ -246,10 +246,7 @@ class DriveAPI {
   async start(sourceFolderId) {
     try {
       console.log(`\n🔍 Đang kiểm tra quyền truy cập folder...`);
-      
-      // Dọn dẹp temp files trước khi bắt đầu
-      await cleanupTempFiles();
-
+     
       // Lấy thông tin folder nguồn
       const folderInfo = await this.sourceDrive.files.get({
         fileId: sourceFolderId,
