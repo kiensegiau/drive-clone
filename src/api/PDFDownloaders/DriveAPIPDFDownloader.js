@@ -251,67 +251,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             error: apiError.message,
             skipped: true
           };
-
-          /* Đã bỏ phần capture để đơn giản hóa xử lý
-          console.log(
-            `\n🔄 Không thể tải trực tiếp, chuyển sang phương pháp capture...`
-          );
-
-          // Thử phương pháp capture với retry
-          let retryCount = 0;
-          const maxRetries = 3;
-          let lastError = null;
-
-          while (retryCount < maxRetries) {
-            try {
-              console.log(
-                `\n🔄 Lần thử capture ${retryCount + 1}/${maxRetries}`
-              );
-
-              const captureResult = await this.captureAndCreatePDF(
-                fileId,
-                tempPath,
-                targetFolderId,
-                fileName,
-                60000 * (retryCount + 1) // Tăng timeout theo số lần retry
-              );
-
-              if (captureResult.success) {
-                return captureResult;
-              }
-
-              lastError = new Error(captureResult.error || "Capture thất bại");
-            } catch (captureError) {
-              lastError = captureError;
-              console.log(
-                `\n⚠️ Lần thử ${retryCount + 1} thất bại: ${
-                  captureError.message
-                }`
-              );
-
-              // Dọn dẹp sau mỗi lần thử
-              await this.cleanup().catch(() => {});
-
-              if (retryCount < maxRetries - 1) {
-                console.log(`\n🔄 Đợi 5 giây trước khi thử lại...`);
-                await new Promise((resolve) => setTimeout(resolve, 5000));
-              }
-            }
-
-            retryCount++;
-          }
-
-          // Chỉ bỏ qua sau khi đã thử capture nhiều lần
-          console.log(
-            `\n❌ Không thể xử lý file sau ${maxRetries} lần thử capture`
-          );
-          return {
-            success: false,
-            error:
-              lastError?.message || "Không thể xử lý file sau nhiều lần thử",
-            skipped: true,
-          };
-          */
         }
 
         // Nếu là lỗi khác, ném ra để xử lý ở catch bên ngoài
@@ -1178,38 +1117,38 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
                   filePath = await this.downloadFile(file.fileId);
                 } catch (downloadError) {
                   // Nếu lỗi 403 hoặc cannotDownloadFile, thử phương pháp capture
-                  // if (
-                  //   downloadError.message.includes("403") ||
-                  //   downloadError.message.includes("cannotDownloadFile")
-                  // ) {
-                  //   console.log(
-                  //     `\n🔄 Không thể tải trực tiếp ${file.name}, chuyển sang phương pháp capture...`
-                  //   );
+                  if (
+                    downloadError.message.includes("403") ||
+                    downloadError.message.includes("cannotDownloadFile")
+                  ) {
+                    console.log(
+                      `\n🔄 Không thể tải trực tiếp ${file.name}, chuyển sang phương pháp capture...`
+                    );
 
-                  //   const tempPath = path.join(
-                  //     this.tempDir,
-                  //     `temp_${Date.now()}_${file.name}`
-                  //   );
-                  //   const captureResult = await this.captureAndCreatePDF(
-                  //     file.fileId,
-                  //     tempPath,
-                  //     file.targetFolderId,
-                  //     file.name,
-                  //     60000 // timeout 60s
-                  //   );
+                    const tempPath = path.join(
+                      this.tempDir,
+                      `temp_${Date.now()}_${file.name}`
+                    );
+                    const captureResult = await this.captureAndCreatePDF(
+                      file.fileId,
+                      tempPath,
+                      file.targetFolderId,
+                      file.name,
+                      60000 // timeout 60s
+                    );
 
-                  //   if (captureResult.success) {
-                  //     results.success.push({
-                  //       fileName: file.name,
-                  //       result: captureResult,
-                  //     });
-                  //     return;
-                  //   } else {
-                  //     throw new Error(
-                  //       `Capture thất bại: ${captureResult.error}`
-                  //     );
-                  //   }
-                  // }
+                    if (captureResult.success) {
+                      results.success.push({
+                        fileName: file.name,
+                        result: captureResult,
+                      });
+                      return;
+                    } else {
+                      throw new Error(
+                        `Capture thất bại: ${captureResult.error}`
+                      );
+                    }
+                  }
                   throw downloadError;
                 }
 
