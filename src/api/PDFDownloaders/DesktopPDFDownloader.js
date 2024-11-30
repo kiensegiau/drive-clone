@@ -511,10 +511,10 @@ class PDFDownloader {
         return { success: true, filePath: outputPath };
       } catch (error) {
         // Nếu không tải được qua API, thử capture
-        if (error?.error?.code === 403 || error.message.includes("cannotDownloadFile")) {
-          console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
-          return await this.captureAndSaveLocal(fileId, outputPath);
-        }
+        // if (error?.error?.code === 403 || error.message.includes("cannotDownloadFile")) {
+        //   console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
+        //   return await this.captureAndSaveLocal(fileId, outputPath);
+        // }
         throw error;
       }
     } catch (error) {

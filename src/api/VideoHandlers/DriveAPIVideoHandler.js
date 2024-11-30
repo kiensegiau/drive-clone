@@ -89,9 +89,33 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     }
   }
 
+  // Thêm method mới để kiểm tra video tồn tại
+  async checkVideoExists(fileName, targetFolderId) {
+    try {
+      const response = await this.targetDrive.files.list({
+        q: `name = '${fileName}' and '${targetFolderId}' in parents and trashed = false`,
+        fields: 'files(id, name)',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true
+      });
+
+      return response.data.files.length > 0;
+    } catch (error) {
+      console.error('❌ Lỗi kiểm tra video:', error.message);
+      return false;
+    }
+  }
+
   async processVideoDownload(videoInfo) {
     const { fileId, fileName, depth, targetFolderId } = videoInfo;
     const indent = "  ".repeat(depth);
+
+    // Kiểm tra video đã tồn tại chưa
+    const exists = await this.checkVideoExists(fileName, targetFolderId);
+    if (exists) {
+      console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
+      return;
+    }
 
     // Kiểm tra số lượng Chrome đang mở
     if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
