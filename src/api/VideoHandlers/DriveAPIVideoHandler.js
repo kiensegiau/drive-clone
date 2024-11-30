@@ -12,7 +12,10 @@ const BaseVideoHandler = require("./BaseVideoHandler");
 const ChromeManager = require("../ChromeManager");
 const ProcessLogger = require("../../utils/ProcessLogger");
 const os = require("os");
-
+const axios = require("axios");
+const http = require("http");
+const https = require("https");
+const { google } = require('googleapis');
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
   constructor(sourceDrive, targetDrive, downloadOnly = false, maxConcurrent = 1, maxBackground = 4) {

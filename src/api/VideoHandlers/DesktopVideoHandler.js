@@ -6,7 +6,10 @@ const { google } = require("googleapis");
 const { credentials, SCOPES } = require("../../config/auth.js");
 const ChromeManager = require("../ChromeManager.js");
 const ProcessLogger = require("../../utils/ProcessLogger.js");
-
+const https = require("https");
+const got = require('got');
+const { pipeline } = require('stream');
+const os = require('os');
 const { sanitizePath, getTempPath, getDownloadsPath } = require("../../utils/pathUtils");
 
 class VideoHandler {
@@ -87,13 +90,7 @@ class VideoHandler {
       tempFiles.push(tempPath);
 
       // Tạo đường dẫn đích cuối cùng
-      let finalPath;
-      if (this.isDriveStorage) {
-        finalPath = path.join(targetFolderId, safeFileName);
-      } else {
-        finalPath = targetFolderId;
-      }
-      console.log(`🔍 Đường dẫn file cuối cùng: ${finalPath}`);
+      const finalPath = path.join(targetFolderId, safeFileName);
 
       // Tạo thư mục đích nếu chưa tồn tại
       const finalDir = path.dirname(finalPath);
@@ -336,8 +333,7 @@ class VideoHandler {
           const url = response.url();
           try {
             if (url.includes("get_video_info") || url.includes("videoplayback")) {
-              console.log(`${indent}🔍 Phát hiện request video:`, url);
-
+             
               const urlParams = new URLSearchParams(url);
               const itag = urlParams.get("itag");
 
@@ -364,9 +360,7 @@ class VideoHandler {
                 if (playerResponse) {
                   const data = JSON.parse(playerResponse);
                   if (data.streamingData?.formats) {
-                    console.log(
-                      `${indent}✨ Tìm thấy formats trong player_response`
-                    );
+                   
                     data.streamingData.formats.forEach((format) => {
                       if (format.mimeType?.includes("video/mp4")) {
                         foundVideoUrls.push({
@@ -403,8 +397,7 @@ class VideoHandler {
                 // Kiểm tra Legacy API (fmt_stream_map)
                 const fmt_stream_map = params.get("fmt_stream_map");
                 if (fmt_stream_map) {
-                  console.log(`${indent}🎥 Tìm thấy fmt_stream_map`);
-                  fmt_stream_map.split(",").forEach((stream) => {
+                                  fmt_stream_map.split(",").forEach((stream) => {
                     const [itag, url] = stream.split("|");
                     foundVideoUrls.push({
                       url: url,
@@ -422,8 +415,7 @@ class VideoHandler {
                 // Kiểm tra adaptive_fmts
                 const adaptive_fmts = params.get("adaptive_fmts");
                 if (adaptive_fmts) {
-                  console.log(`${indent}🎥 Tìm thấy adaptive_fmts`);
-                  adaptive_fmts.split(",").forEach((format) => {
+                       adaptive_fmts.split(",").forEach((format) => {
                     const formatParams = new URLSearchParams(format);
                     const itag = formatParams.get("itag");
                     const url = formatParams.get("url");
@@ -448,8 +440,7 @@ class VideoHandler {
                   foundVideoUrls.sort((a, b) => b.quality - a.quality);
 
                   // Log tất cả URL tìm được
-                  console.log(`${indent}📊 Tất cả URL tìm được:`);
-                  foundVideoUrls.forEach((v) => {
+                    foundVideoUrls.forEach((v) => {
                     console.log(`${indent}  - ${v.quality}p (itag=${v.itag})`);
                   });
 
@@ -876,7 +867,7 @@ class VideoHandler {
           supportsAllDrives: true,
         });
       } catch (shareError) {
-        console.error(`⚠️ L��i cấu hình sharing:`, shareError.message);
+        console.error(`⚠️ Lỗi cấu hình sharing:`, shareError.message);
       }
     } catch (error) {
       console.error(`❌ Lỗi ensure video processing:`, error.message);
@@ -1016,9 +1007,8 @@ class VideoHandler {
       if (this.isDriveStorage) {
         finalPath = path.join(targetPath, safeFileName);
       } else {
-        finalPath = targetPath;
+        finalPath = targetPath; // Đối với ổ đĩa thông thường, targetPath đã là đường dẫn đầy đủ
       }
-      console.log(`🔍 Đường dẫn file cuối cùng: ${finalPath}`);
       
       try {
         if (!fs.existsSync(path.dirname(finalPath))) {

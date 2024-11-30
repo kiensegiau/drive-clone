@@ -2,7 +2,7 @@ const puppeteer = require("puppeteer-core");
 const { exec } = require("child_process");
 const util = require('util');
 const path = require('path');
-
+const fs = require('fs');
 const execAsync = util.promisify(exec);
 const {
   sanitizePath,
