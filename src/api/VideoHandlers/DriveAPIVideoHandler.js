@@ -76,6 +76,12 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.initTempCleanup().catch((err) => {
       console.warn("⚠️ Lỗi initial cleanup:", err.message);
     });
+
+    // Thêm biến đếm số lượng upload và timestamp
+    this.uploadCount = 0;
+    this.lastPauseTime = Date.now();
+    this.UPLOAD_BATCH_SIZE = 5; // Số lượng video upload trước khi nghỉ
+    this.PAUSE_DURATION = 5 * 60 * 1000; // 5 phút = 300000ms
   }
 
   // Thêm method khởi tạo và dọn dẹp temp
@@ -312,8 +318,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       try {
         if (this.queue.length === 0) {
           console.log("\n✅ Đã xử lý xong tất cả files");
-          // Kiểm tra và retry các video lỗi
-          await this.retryFailedVideos();
+          // Bỏ qua phần retry failed videos
           return;
         }
 
@@ -322,55 +327,30 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           if (nextVideo) {
             const retryCount = this.videoRetries.get(nextVideo.fileName) || 0;
 
-            // Log để debug
             console.log(
-              `\n🔄 Xử lý video: ${nextVideo.fileName} (Lần thử: ${
-                retryCount + 1
-              })`
+              `\n🔄 Xử lý video: ${nextVideo.fileName} (Lần thử: ${retryCount + 1})`
             );
 
             if (retryCount < 3) {
-              // Tối đa 3 lần retry cho mỗi video
               this.videoRetries.set(nextVideo.fileName, retryCount + 1);
-              await this.processVideoDownload(nextVideo).catch(
-                async (error) => {
-                  console.error("❌ Lỗi xử lý video:", error.message);
-                  // Thêm lại vào queue nếu chưa quá số lần retry
-                  if (retryCount < 2) {
-                    console.log(
-                      `⏳ Thêm lại vào queue để thử lại: ${nextVideo.fileName}`
-                    );
-                    this.queue.push(nextVideo);
-                  } else {
-                    console.log(
-                      `❌ Đã thử ${
-                        retryCount + 1
-                      } lần, lưu vào failed videos: ${nextVideo.fileName}`
-                    );
-                    await this.logFailedVideo({
-                      ...nextVideo,
-                      error: error.message,
-                    });
-                  }
+              await this.processVideoDownload(nextVideo).catch(async (error) => {
+                console.error("❌ Lỗi xử lý video:", error.message);
+                if (retryCount < 2) {
+                  console.log(`⏳ Thêm lại vào queue để thử lại: ${nextVideo.fileName}`);
+                  this.queue.push(nextVideo);
+                } else {
+                  console.log(`❌ Đã thử ${retryCount + 1} lần, bỏ qua: ${nextVideo.fileName}`);
                 }
-              );
-            } else {
-              console.log(
-                `❌ Đã vượt quá số lần thử cho phép: ${nextVideo.fileName}`
-              );
-              await this.logFailedVideo({
-                ...nextVideo,
-                error: "Exceeded maximum retry attempts",
               });
+            } else {
+              console.log(`❌ Đã vượt quá số lần thử cho phép: ${nextVideo.fileName}`);
             }
           }
         }
 
-        // Tiếp tục xử lý video tiếp theo
         await this.processNextDownload();
       } catch (error) {
         console.error("❌ Lỗi processNextDownload:", error);
-        // Log chi tiết lỗi để debug
         console.error(error.stack);
       }
     };
@@ -623,7 +603,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             await browser.close();
             await this.chromeManager.killAllChromeProcesses();
             browser = await this.chromeManager.getBrowser(null, true);
-            retries = 1; // Cho thêm 1 lần th��� nữa
+            retries = 1; // Cho thêm 1 lần th nữa
           } catch (restartError) {
             console.error(
               `${indent}❌ Không thể khởi động lại browser:`,
@@ -826,8 +806,20 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
   async uploadVideo(filePath, fileName, targetFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
-    const MAX_RETRIES = 15; // Tăng số lần retry
-    let currentDelay = 60000; // Bắt đầu với 1 phút
+    const MAX_RETRIES = 15;
+    let currentDelay = 60000;
+
+    // Kiểm tra xem có cần nghỉ không
+    if (this.uploadCount >= this.UPLOAD_BATCH_SIZE) {
+      const timeSinceLastPause = Date.now() - this.lastPauseTime;
+      if (timeSinceLastPause < this.PAUSE_DURATION) {
+        const waitTime = this.PAUSE_DURATION - timeSinceLastPause;
+        console.log(`${indent}⏸️ Đã upload ${this.uploadCount} videos, tạm dừng ${Math.ceil(waitTime/1000/60)} phút...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+      this.uploadCount = 0;
+      this.lastPauseTime = Date.now();
+    }
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -894,6 +886,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           supportsAllDrives: true,
           sendNotificationEmail: false,
         });
+
+        // Tăng biến đếm khi upload thành công
+        this.uploadCount++;
+        console.log(`${indent}📊 Đã upload ${this.uploadCount}/${this.UPLOAD_BATCH_SIZE} videos trong batch hiện tại`);
 
         return response.data;
 
