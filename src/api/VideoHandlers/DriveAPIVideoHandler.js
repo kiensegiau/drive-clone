@@ -92,16 +92,63 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   // Thêm method mới để kiểm tra video tồn tại
   async checkVideoExists(fileName, targetFolderId) {
     try {
+      console.log(`\n🔍 Kiểm tra file: "${fileName}"`);
+      console.log(`Mã hex của tên file: ${Buffer.from(fileName).toString('hex')}`);
+      
+      // Chuẩn hóa tên file gốc
+      const normalizedFileName = fileName
+        .trim()
+        .replace(/[\u200B-\u200D\uFEFF]/g, '') // Xóa zero-width spaces
+        .replace(/\s+/g, ' '); // Chuẩn hóa khoảng trắng
+
+      console.log(`Tên file sau chuẩn hóa: "${normalizedFileName}"`);
+      console.log(`Mã hex sau chuẩn hóa: ${Buffer.from(normalizedFileName).toString('hex')}`);
+
       const response = await this.targetDrive.files.list({
-        q: `name = '${fileName}' and '${targetFolderId}' in parents and trashed = false`,
-        fields: 'files(id, name)',
+        q: `'${targetFolderId}' in parents and trashed = false and mimeType contains 'video/'`,
+        fields: 'files(id, name, mimeType, size, modifiedTime)',
         supportsAllDrives: true,
         includeItemsFromAllDrives: true
       });
 
-      return response.data.files.length > 0;
+      if (response.data.files.length > 0) {
+        console.log(`\n📁 Tìm thấy ${response.data.files.length} videos trong thư mục:`);
+        
+        for (const file of response.data.files) {
+          // Chuẩn hóa tên file trong Drive
+          const normalizedExistingName = file.name
+            .trim()
+            .replace(/[\u200B-\u200D\uFEFF]/g, '')
+            .replace(/\s+/g, ' ');
+
+          console.log(`\nSo sánh file:
+          Drive: "${normalizedExistingName}"
+          Hex Drive: ${Buffer.from(normalizedExistingName).toString('hex')}
+          Gốc: "${normalizedFileName}"
+          Hex Gốc: ${Buffer.from(normalizedFileName).toString('hex')}
+          Size: ${(file.size/1024/1024).toFixed(2)}MB`);
+            
+          // So sánh chính xác
+          if (normalizedExistingName === normalizedFileName) {
+            console.log(`\n✅ Tìm thấy file trùng khớp:
+            - ID: ${file.id}
+            - Tên: ${file.name}
+            - Size: ${(file.size/1024/1024).toFixed(2)}MB
+            - Modified: ${new Date(file.modifiedTime).toLocaleString()}\n`);
+            return true;
+          }
+        }
+
+        console.log('\n❌ Không tìm thấy file trùng khớp -> Sẽ tải mới');
+        return false;
+      }
+
+      console.log('\n❌ Thư mục trống -> Sẽ tải mới');
+      return false;
+
     } catch (error) {
-      console.error('❌ Lỗi kiểm tra video:', error.message);
+      console.error('\n❌ Lỗi kiểm tra:', error.message);
+      console.error(error.stack);
       return false;
     }
   }
