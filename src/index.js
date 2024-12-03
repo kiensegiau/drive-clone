@@ -373,13 +373,15 @@ async function main(folderUrl) {
       `);
     }
 
-
+    // Thêm phần hỏi thời gian dừng
+    const pauseDurationInput = await askQuestion("Nhập thời gian dừng khi upload (phút, mặc định: 0): ");
+    const pauseDuration = parseInt(pauseDurationInput) || 0; // Mặc định là 0 phút nếu không nhập
 
     // Khởi tạo DriveAPI với tham số mới
     if (isDownloadMode) {
       driveAPI = new DriveDesktopAPI(defaultPath, maxConcurrent);
     } else {
-      driveAPI = new DriveAPI(false, maxConcurrent, maxBackground);
+      driveAPI = new DriveAPI(false, maxConcurrent, maxBackground, pauseDuration);
     }
     await driveAPI.authenticate();
 

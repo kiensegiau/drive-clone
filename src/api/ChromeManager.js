@@ -39,12 +39,13 @@ class ChromeManager {
     if (!ChromeManager[key]) {
       ChromeManager[key] = new ChromeManager();
     }
+    ChromeManager[key].type = type;
     return ChromeManager[key];
   }
 
   async getBrowser(preferredProfile = null) {
     try {
-      const prefix = this.constructor[key].includes('pdf') ? 'pdf_' : 'video_';
+      const prefix = this.type === 'pdf' ? 'pdf_' : 'video_';
       const profileId = preferredProfile || `${prefix}profile_${this.currentProfile}`;
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 

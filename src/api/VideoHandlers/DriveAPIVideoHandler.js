@@ -23,7 +23,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     targetDrive,
     downloadOnly = false,
     maxConcurrent = 2,
-    maxBackground = 4
+    maxBackground = 4,
+    pauseDuration = 0
   ) {
     super();
     this.MAX_RETRIES = 5;
@@ -81,7 +82,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.uploadCount = 0;
     this.lastPauseTime = Date.now();
     this.UPLOAD_BATCH_SIZE = 5; // Số lượng video upload trước khi nghỉ
-    this.PAUSE_DURATION = 5 * 60 * 1000; // 5 phút = 300000ms
+    this.PAUSE_DURATION = pauseDuration * 60 * 1000; // Chuyển đổi phút sang milliseconds
 
     console.log(`\n⚙️ Cấu hình VideoHandler:
       - Số Chrome đồng thời: ${this.MAX_CONCURRENT_DOWNLOADS}

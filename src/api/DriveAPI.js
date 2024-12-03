@@ -15,13 +15,14 @@ const {
 } = require('../utils/pathUtils');
 
 class DriveAPI {
-  constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10) {
+  constructor(downloadOnly = false, maxConcurrent = 3, maxBackground = 10, pauseDuration = 5) {
     const configPath = getConfigPath();
     const auth = require('../config/auth');
     
     this.downloadOnly = downloadOnly;
     this.maxConcurrent = maxConcurrent;
     this.maxBackground = maxBackground;
+    this.pauseDuration = pauseDuration * 60 * 1000; // Chuyển đổi phút sang milliseconds
     this.credentials = auth.credentials;
     this.SCOPES = auth.SCOPES;
     
