@@ -223,57 +223,63 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     );
     console.log(`\n💾 Tối đa ${this.MAX_BACKGROUND_DOWNLOADS} files tải ngầm`);
 
-    // Tạo mảng promises để xử lý đồng thời nhiều video
     const processNextBatch = async () => {
+      // Kiểm tra nếu không còn file trong queue
       if (this.queue.length === 0) {
-        console.log("\n✅ Đã xử lý xong tất cả files");
-        return;
+        if (this.activeDownloads.size === 0 && this.activeChrome.size === 0) {
+          console.log("\n✅ Đã xử lý xong tất cả files");
+          return;
+        }
+        // Chờ các downloads hiện tại hoàn thành
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return processNextBatch();
       }
 
-      // Tính số slot còn trống có thể xử lý
-      const availableChromeSlots = this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size;
+      // Tính toán số lượng slots có sẵn
       const availableDownloadSlots = this.MAX_BACKGROUND_DOWNLOADS - this.activeDownloads.size;
-      const slotsToProcess = Math.min(
-        availableChromeSlots,
+      const availableChromeSlots = this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size;
+
+      // Xử lý nhiều file cùng lúc nếu có thể
+      const promises = [];
+      const maxToProcess = Math.min(
         availableDownloadSlots,
+        availableChromeSlots,
         this.queue.length
       );
 
-      if (slotsToProcess > 0) {
-        // Lấy và xử lý nhiều video cùng lúc theo số slot trống
-        const batch = this.queue.splice(0, slotsToProcess);
-        const promises = batch.map(async (video) => {
-          const retryCount = this.videoRetries.get(video.fileName) || 0;
-          console.log(
-            `\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`
-          );
+      for (let i = 0; i < maxToProcess; i++) {
+        const video = this.queue.shift();
+        if (!video) break;
 
-          if (retryCount < 3) {
-            this.videoRetries.set(video.fileName, retryCount + 1);
-            try {
-              await this.processVideoDownload(video);
-            } catch (error) {
-              console.error("❌ Lỗi xử lý video:", error.message);
-              if (retryCount < 2) {
-                console.log(`⏳ Thêm lại vào queue để thử lại: ${video.fileName}`);
-                this.queue.push(video);
-              } else {
-                console.log(`❌ Đã thử ${retryCount + 1} lần, bỏ qua: ${video.fileName}`);
-              }
+        const retryCount = this.videoRetries.get(video.fileName) || 0;
+        console.log(
+          `\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`
+        );
+
+        promises.push(
+          this.processVideoDownload(video).catch(error => {
+            console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+            if (retryCount < 2) {
+              console.log(`⏳ Thêm lại vào queue để thử lại: ${video.fileName}`);
+              this.queue.push(video);
             }
-          } else {
-            console.log(`❌ Đã vượt quá số lần thử cho phép: ${video.fileName}`);
-          }
-        });
-
-        // Chờ tất cả video trong batch hoàn thành
-        await Promise.all(promises);
+          })
+        );
       }
 
-      // Kiểm tra queue sau mỗi 500ms
-      if (this.queue.length > 0) {
-        setTimeout(() => processNextBatch(), 500);
+      // Chờ batch hiện tại hoàn thành
+      await Promise.all(promises);
+
+      // Kiểm tra ngay lập tức nếu còn slot trống
+      if (this.queue.length > 0 && 
+          (this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS || 
+           this.activeChrome.size < this.MAX_CONCURRENT_DOWNLOADS)) {
+        return processNextBatch();
       }
+
+      // Nếu đã đầy slot, chờ một chút rồi kiểm tra lại
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return processNextBatch();
     };
 
     await processNextBatch();
