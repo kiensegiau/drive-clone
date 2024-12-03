@@ -18,6 +18,8 @@ class ChromeManager {
     this.isLaunching = new Set();
     this.queues = new Map();
     this.currentProfile = 0;
+    this.MAX_INSTANCES = 5;
+    this.activeInstances = new Map();
     
     try {
       this.tempDir = getTempPath();
@@ -41,6 +43,10 @@ class ChromeManager {
     }
     ChromeManager[key].type = type;
     return ChromeManager[key];
+  }
+
+  getActiveInstances() {
+    return this.activeInstances.size;
   }
 
   async getBrowser(preferredProfile = null) {
@@ -130,6 +136,7 @@ class ChromeManager {
           }
         }
 
+        this.activeInstances.set(profileId, Date.now());
         return browser;
       } catch (error) {
         this.isLaunching.delete(profileId);
@@ -140,6 +147,10 @@ class ChromeManager {
       console.error(`❌ Lỗi tổng thể trong getBrowser:`, error.message);
       throw error;
     }
+  }
+
+  releaseInstance(profileId) {
+    this.activeInstances.delete(profileId);
   }
 
   async killAllChrome() {
