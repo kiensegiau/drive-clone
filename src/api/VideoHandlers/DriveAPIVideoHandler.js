@@ -153,16 +153,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return;
     }
 
-    // Kiểm tra và chờ slot Chrome
+    // Chờ slot Chrome nếu cần
     while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
       console.log(`⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây rồi kiểm tra lại
-    }
-
-    // Kiểm tra và chờ slot download
-    while (this.activeDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
-      console.log(`⏳ Đang chờ slot tải xuống (${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS})`);
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Chờ 1 giây rồi kiểm tra lại
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
     // Thêm vào danh sách đang mở Chrome
@@ -186,8 +180,17 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         `temp_${Date.now()}_${safeFileName}`
       );
 
-      // Xóa khỏi danh sách Chrome và thêm vào downloads ngầm
+      // Xóa khỏi danh sách Chrome ngay sau khi lấy được URL
       this.activeChrome.delete(fileName);
+      console.log(`${indent}🌐 Đã giải phóng slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`);
+
+      // Chờ slot download nếu cần
+      while (this.activeDownloads.size >= this.MAX_BACKGROUND_DOWNLOADS) {
+        console.log(`⏳ Đang chờ slot tải xuống (${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS})`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Thêm vào downloads ngầm
       this.activeDownloads.add(fileName);
       console.log(
         `${indent}📥 Đang tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`
@@ -224,64 +227,51 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     console.log(`\n💾 Tối đa ${this.MAX_BACKGROUND_DOWNLOADS} files tải ngầm`);
 
     const processNextBatch = async () => {
-      // Kiểm tra nếu không còn file trong queue
-      if (this.queue.length === 0) {
-        if (this.activeDownloads.size === 0 && this.activeChrome.size === 0) {
-          console.log("\n✅ Đã xử lý xong tất cả files");
-          return;
-        }
-        // Chờ các downloads hiện tại hoàn thành
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        return processNextBatch();
+      // Nếu không còn file trong queue và không còn file đang xử lý
+      if (this.queue.length === 0 && 
+          this.activeDownloads.size === 0 && 
+          this.activeChrome.size === 0) {
+        console.log("\n✅ Đã xử lý xong tất cả files");
+        return;
       }
 
-      // Tính toán số lượng slots có sẵn
-      const availableDownloadSlots = this.MAX_BACKGROUND_DOWNLOADS - this.activeDownloads.size;
-      const availableChromeSlots = this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size;
+      // Tiếp tục xử lý nếu còn file trong queue và còn slot trống
+      while (this.queue.length > 0) {
+        // Kiểm tra slot Chrome trước
+        if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
+          break; // Tạm dừng và đợi slot Chrome
+        }
 
-      // Xử lý nhiều file cùng lúc nếu có thể
-      const promises = [];
-      const maxToProcess = Math.min(
-        availableDownloadSlots,
-        availableChromeSlots,
-        this.queue.length
-      );
-
-      for (let i = 0; i < maxToProcess; i++) {
         const video = this.queue.shift();
-        if (!video) break;
-
         const retryCount = this.videoRetries.get(video.fileName) || 0;
+        
         console.log(
           `\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`
         );
 
-        promises.push(
-          this.processVideoDownload(video).catch(error => {
-            console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
-            if (retryCount < 2) {
-              console.log(`⏳ Thêm lại vào queue để thử lại: ${video.fileName}`);
-              this.queue.push(video);
-            }
-          })
-        );
+        // Xử lý video không đợi
+        this.processVideoDownload(video).catch(error => {
+          console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+          if (retryCount < 2) {
+            console.log(`⏳ Thêm lại vào queue để thử lại: ${video.fileName}`);
+            this.videoRetries.set(video.fileName, retryCount + 1);
+            this.queue.push(video);
+          }
+        });
       }
 
-      // Chờ batch hiện tại hoàn thành
-      await Promise.all(promises);
-
-      // Kiểm tra ngay lập tức nếu còn slot trống
-      if (this.queue.length > 0 && 
-          (this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS || 
-           this.activeChrome.size < this.MAX_CONCURRENT_DOWNLOADS)) {
+      // Đợi một chút và kiểm tra lại
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Tiếp tục kiểm tra nếu còn file hoặc đang có file đang xử lý
+      if (this.queue.length > 0 || 
+          this.activeDownloads.size > 0 || 
+          this.activeChrome.size > 0) {
         return processNextBatch();
       }
-
-      // Nếu đã đầy slot, chờ một chút rồi kiểm tra lại
-      await new Promise(resolve => setTimeout(resolve, 500));
-      return processNextBatch();
     };
 
+    // Bắt đầu xử lý
     await processNextBatch();
   }
 
