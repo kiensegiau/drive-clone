@@ -22,7 +22,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     sourceDrive,
     targetDrive,
     downloadOnly = false,
-    maxConcurrent = 1,
+    maxConcurrent = 2,
     maxBackground = 4
   ) {
     super();
@@ -88,8 +88,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       - Số tải xuống đồng thời: ${this.MAX_BACKGROUND_DOWNLOADS}
     `);
 
-    // Thêm biến để theo dõi profile hiện tại
-    this.currentProfile = 'profile_0';
+    // Thay đổi cách quản lý profile
+    this.currentProfileIndex = 0;
+    this.profiles = Array.from({length: this.MAX_CONCURRENT_DOWNLOADS}, (_, i) => `profile_${i}`);
   }
 
   // Thêm method khởi tạo và dọn dẹp temp
@@ -149,33 +150,39 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const { fileId, fileName, depth, targetFolderId } = videoInfo;
     const indent = "  ".repeat(depth);
 
-    // Kiểm tra video đã tồn tại chưa
-    const exists = await this.checkVideoExists(fileName, targetFolderId);
-    if (exists) {
-      console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
-      return;
-    }
-
-    // Chờ slot Chrome nếu cần
-    while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
-      console.log(`⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`);
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-
-    // Thêm vào danh sách đang mở Chrome
-    this.activeChrome.add(fileName);
-    console.log(
-      `${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
-    );
-
     try {
-      // Luôn sử dụng cùng một profile
-      const browser = await this.chromeManager.getBrowser(this.currentProfile);
+      // Chọn profile theo round-robin
+      const profile = this.profiles[this.currentProfileIndex];
+      this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
+
+      // Chờ slot Chrome nếu cần
+      while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
+        console.log(`⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      // Thêm vào danh sách đang mở Chrome
+      this.activeChrome.add(fileName);
+      console.log(
+        `${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
+      );
+
+      // Sử dụng profile đã chọn
+      console.log(`${indent}🌐 Khởi động Chrome với profile: ${profile}`);
+      const browser = await this.chromeManager.getBrowser(profile);
+      
       const { videoUrl, headers } = await this.getVideoUrlAndHeaders(
         browser,
         fileId,
         indent
       );
+
+      // Kiểm tra video đã tồn tại chưa
+      const exists = await this.checkVideoExists(fileName, targetFolderId);
+      if (exists) {
+        console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
+        return;
+      }
 
       // Tạo tempPath
       const safeFileName = sanitizePath(fileName);
