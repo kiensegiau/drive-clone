@@ -357,19 +357,20 @@ async function main(folderUrl) {
     if (!isDownloadMode) {
       console.log("\n⚙️ Cấu hình tải xuống:");
       
-      const concurrent = await askQuestion("Số video xử lý cùng lúc (mặc định: 3): ");
+      const concurrent = await askQuestion("Số Chrome đồng thời (1-5, mặc định: 3): ");
       if (concurrent && !isNaN(concurrent)) {
-        maxConcurrent = parseInt(concurrent);
+        maxConcurrent = Math.max(1, Math.min(parseInt(concurrent), 5));
       }
 
-      const background = await askQuestion("Số file tải/upload cùng lúc (mặc định: 5): ");
+      const background = await askQuestion("Số tải xuống đồng thời (1-10, mặc định: 5): ");
       if (background && !isNaN(background)) {
-        maxBackground = parseInt(background);
+        maxBackground = Math.max(1, Math.min(parseInt(background), 10));
       }
 
-      console.log(`\n📊 Cấu hình đã chọn:`);
-      console.log(`- Số video xử lý cùng lúc: ${maxConcurrent}`);
-      console.log(`- Số file tải/upload cùng lúc: ${maxBackground}`);
+      console.log(`\n📊 Cấu hình đã chọn:
+        - Số Chrome đồng thời: ${maxConcurrent}
+        - Số tải xuống đồng thời: ${maxBackground}
+      `);
     }
 
 
