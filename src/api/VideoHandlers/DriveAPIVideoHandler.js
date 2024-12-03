@@ -87,6 +87,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       - Số Chrome đồng thời: ${this.MAX_CONCURRENT_DOWNLOADS}
       - Số tải xuống đồng thời: ${this.MAX_BACKGROUND_DOWNLOADS}
     `);
+
+    // Thêm biến để theo dõi profile hiện tại
+    this.currentProfile = 'profile_0';
   }
 
   // Thêm method khởi tạo và dọn dẹp temp
@@ -166,7 +169,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     );
 
     try {
-      const browser = await this.chromeManager.getBrowser(null);
+      // Luôn sử dụng cùng một profile
+      const browser = await this.chromeManager.getBrowser(this.currentProfile);
       const { videoUrl, headers } = await this.getVideoUrlAndHeaders(
         browser,
         fileId,
@@ -235,8 +239,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         return;
       }
 
-      // Tiếp tục xử lý nếu còn file trong queue và còn slot trống
-      while (this.queue.length > 0) {
+      // Xử lý nhiều file cùng lúc nếu có thể
+      while (this.queue.length > 0 && 
+             this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
+        
         // Kiểm tra slot Chrome trước
         if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
           break; // Tạm dừng và đợi slot Chrome
