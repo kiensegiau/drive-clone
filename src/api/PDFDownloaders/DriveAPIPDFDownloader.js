@@ -25,8 +25,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       this.tempDir = tempDir || this.tempDir;
       this.downloadDir = ensureDirectoryExists(getDownloadsPath());
 
-      console.log(`📁 Thư mục temp: ${this.tempDir}`);
-      console.log(`📁 Thư mục download: ${this.downloadDir}`);
     } catch (error) {
       console.error("❌ Lỗi khởi tạo thư mục:", error.message);
       throw error;
@@ -721,7 +719,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
   async uploadToDrive(filePath, targetFolderId, customFileName) {
     try {
-      console.log(`\n📤 [DriveAPIPDFDownloader] Bắt đầu upload...`);
+      
 
       if (!fs.existsSync(filePath)) {
         throw new Error(`File không tồn tại: ${filePath}`);
@@ -840,15 +838,11 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         batches.push(files.slice(i, i + this.BATCH_SIZE));
       }
 
-      console.log(
-        `📦 Chia thành ${batches.length} batch, mỗi batch ${this.BATCH_SIZE} files`
-      );
-
+     
       // Xử lý từng batch
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
-        console.log(`\n🔄 Xử lý batch ${i + 1}/${batches.length}...`);
-
+        
         try {
           // Tạo một query cho cả batch
           const fileQueries = batch.map((file) => {
@@ -877,9 +871,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
               });
             });
 
-            console.log(
-              `✅ Batch ${i + 1}: Tìm thấy ${response.data.files.length} files`
-            );
+            
           } else {
             console.warn(`⚠️ Batch ${i + 1}: Response không hợp lệ`);
             // Đánh dấu tất cả file trong batch này là chưa tồn tại
@@ -909,9 +901,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       );
 
       if (existingFiles.length > 0) {
-        console.log(
-          `\n📝 Tổng kết: ${existingFiles.length}/${files.length} files đã tồn tại:`
-        );
+        
         existingFiles.forEach(([fileName, result]) => {
           const size = result.fileSize
             ? `(${(result.fileSize / 1024 / 1024).toFixed(2)}MB)`
@@ -1077,9 +1067,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     };
 
     try {
-      console.log(`\n📊 Tổng số file cần xử lý: ${files.length}`);
-
-      console.log(`\n🔍 Kiểm tra khả năng tải trực tiếp...`);
+ 
       const downloadMethods = await Promise.all(
         files.map(async (file) => {
           try {
@@ -1102,29 +1090,16 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       );
       const failedChecks = downloadMethods.filter((f) => !f.downloadMethod);
 
-      console.log(`\n📊 Phân loại files:`);
-      console.log(`📥 Có thể tải API: ${apiDownloads.length}`);
-      console.log(`🔄 Cần capture: ${captureDownloads.length}`);
-
+      
       // Xử lý API downloads
       if (apiDownloads.length > 0) {
-        console.log(
-          `\n🚀 Bắt ầu tải song song ${apiDownloads.length} files...`
-        );
+       
         const BATCH_SIZE = 20;
-        console.log(
-          `📦 Chia thành ${Math.ceil(
-            apiDownloads.length / BATCH_SIZE
-          )} batch, mỗi batch ${BATCH_SIZE} files\n`
-        );
+      
 
         for (let i = 0; i < apiDownloads.length; i += BATCH_SIZE) {
           const batch = apiDownloads.slice(i, i + BATCH_SIZE);
-          console.log(
-            `🔄 Xử lý batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(
-              apiDownloads.length / BATCH_SIZE
-            )}...`
-          );
+          
 
           await Promise.all(
             batch.map(async (file) => {

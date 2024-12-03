@@ -373,16 +373,22 @@ async function main(folderUrl) {
       `);
     }
 
-    // Thêm phần hỏi thời gian dừng
-    const pauseDurationInput = await askQuestion("Nhập thời gian dừng khi upload (phút, mặc định: 0): ");
-    const pauseDuration = parseInt(pauseDurationInput) || 0; // Mặc định là 0 phút nếu không nhập
+    // Thêm phần hỏi số lượng video upload trước khi nghỉ
+    const batchSizeInput = await askQuestion("Số video upload trước khi nghỉ (1-20, mặc định: 5): ");
+    const batchSize = parseInt(batchSizeInput) || 5;
 
-    // Khởi tạo DriveAPI với tham số mới
-    if (isDownloadMode) {
-      driveAPI = new DriveDesktopAPI(defaultPath, maxConcurrent);
-    } else {
-      driveAPI = new DriveAPI(false, maxConcurrent, maxBackground, pauseDuration);
-    }
+    // Thêm phần hỏi thời gian nghỉ
+    const pauseDurationInput = await askQuestion("Thời gian nghỉ sau mỗi batch (phút, mặc định: 0): ");
+    const pauseDuration = parseInt(pauseDurationInput) || 0;
+
+    // Khởi tạo DriveAPI với đầy đủ tham số
+    driveAPI = new DriveAPI(
+      false, 
+      maxConcurrent, 
+      maxBackground, 
+      pauseDuration,
+      batchSize  // Thêm batchSize
+    );
     await driveAPI.authenticate();
 
     // Xử lý folder

@@ -22,7 +22,7 @@ class DriveAPI {
     this.downloadOnly = downloadOnly;
     this.maxConcurrent = maxConcurrent;
     this.maxBackground = maxBackground;
-    this.pauseDuration = pauseDuration * 60 * 1000; // Chuyển đổi phút sang milliseconds
+    this.pauseDuration = pauseDuration;
     this.credentials = auth.credentials;
     this.SCOPES = auth.SCOPES;
     
@@ -496,7 +496,8 @@ class DriveAPI {
                 this.targetDrive,
                 false,
                 this.maxConcurrent,
-                this.maxBackground
+                this.maxBackground,
+                this.pauseDuration
               );
 
               // Thêm files vào queue
