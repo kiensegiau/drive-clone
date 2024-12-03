@@ -151,6 +151,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
 
     try {
+      // Kiểm tra video đã tồn tại ngay từ đầu
+      const exists = await this.checkVideoExists(fileName, targetFolderId);
+      if (exists) {
+        console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
+        return;
+      }
+
       // Chọn profile theo round-robin
       const profile = this.profiles[this.currentProfileIndex];
       this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
@@ -177,13 +184,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         indent
       );
 
-      // Kiểm tra video đã tồn tại chưa
-      const exists = await this.checkVideoExists(fileName, targetFolderId);
-      if (exists) {
-        console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
-        return;
-      }
-
+      
       // Tạo tempPath
       const safeFileName = sanitizePath(fileName);
       const tempPath = path.join(
@@ -247,17 +248,18 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
 
       // Xử lý nhiều file cùng lúc nếu có thể
-      while (this.queue.length > 0 && 
-             this.activeDownloads.size < this.MAX_BACKGROUND_DOWNLOADS) {
-        
-        // Kiểm tra slot Chrome trước
-        if (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
-          break; // Tạm dừng và đợi slot Chrome
-        }
+      const maxToProcess = Math.min(
+        this.MAX_BACKGROUND_DOWNLOADS - this.activeDownloads.size, // Số slot download còn trống
+        this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size,    // Số slot Chrome còn trống
+        this.queue.length                                          // Số file còn trong queue
+      );
 
+      // Xử lý theo số lượng có thể
+      for(let i = 0; i < maxToProcess; i++) {
         const video = this.queue.shift();
-        const retryCount = this.videoRetries.get(video.fileName) || 0;
+        if (!video) break;
         
+        const retryCount = this.videoRetries.get(video.fileName) || 0;
         console.log(
           `\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`
         );
@@ -316,6 +318,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     let browser;
 
     try {
+      // Kiểm tra tồn tại trước
+      const exists = await this.checkVideoExists(fileName, targetFolderId);
+      if (exists) {
+        console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
+        return;
+      }
+
       // Tạo thư mục và file tạm
       const tempDir = path.dirname(outputPath);
       if (!fs.existsSync(tempDir)) {

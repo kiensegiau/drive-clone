@@ -24,7 +24,7 @@ class VideoHandler {
       this.processingVideo = false;
       this.TEMP_DIR = getTempPath('drive-clone-videos');
       this.cookies = null;
-      this.chromeManager = ChromeManager.getInstance();
+      this.chromeManager = ChromeManager.getInstance('video');
       this.processLogger = new ProcessLogger();
       this.queue = [];
       

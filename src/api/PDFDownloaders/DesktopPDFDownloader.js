@@ -1,4 +1,3 @@
-
 const path = require("path");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
@@ -18,7 +17,7 @@ class PDFDownloader {
     this.userAgent = null;
     this.browser = null;
     this.page = null;
-    this.chromeManager = new ChromeManager();
+    this.chromeManager = ChromeManager.getInstance('pdf');
     
     // Đảm bảo downloadOnly luôn là true cho desktop version
     this.downloadOnly = true;

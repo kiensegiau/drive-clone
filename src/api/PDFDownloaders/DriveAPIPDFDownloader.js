@@ -37,11 +37,18 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     this.userAgent = null;
     this.browser = null;
     this.page = null;
-    this.chromeManager = new ChromeManager();
+    this.chromeManager = ChromeManager.getInstance('pdf');
 
     this.MAX_CONCURRENT_CHECKS = 10;
     this.BATCH_SIZE = 20;
     this.MAX_CONCURRENT_BATCHES = 5;
+
+    // Thay đổi cách quản lý profile
+    this.currentProfileIndex = 0;
+    this.profiles = Array.from(
+      { length: this.MAX_CONCURRENT_CHECKS },
+      (_, i) => `profile_${i}`
+    );
 
     // Khởi tạo thư mục và dọn dẹp
     this.initTempDir();
@@ -1038,7 +1045,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         });
         return true;
       } catch (error) {
-        console.log(`⚠�� Lỗi điều h��ớng lần ${attempt}: ${error.message}`);
+        console.log(`⚠ Lỗi điều hớng lần ${attempt}: ${error.message}`);
         if (attempt === maxRetries) {
           throw error;
         }
@@ -1205,7 +1212,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
                     fs.unlinkSync(filePath);
                   } catch (err) {
                     console.warn(
-                      `⚠��� Không thể xóa file tạm ${filePath}: ${err.message}`
+                      `⚠ Không thể xóa file tạm ${filePath}: ${err.message}`
                     );
                   }
                 }
@@ -1346,6 +1353,29 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       return downloadedImages;
     } catch (error) {
       console.error(`\n❌ Lỗi tải ảnh:`, error.message);
+      throw error;
+    }
+  }
+
+  async processPDFDownload(pdfInfo) {
+    const { fileId, fileName, targetFolderId } = pdfInfo;
+    const indent = "  ".repeat(depth);
+
+    try {
+      // Kiểm tra PDF đã tồn tại ngay từ đầu
+      const exists = await this.checkPDFExists(fileName, targetFolderId);
+      if (exists) {
+        console.log(`${indent}⏭️ Bỏ qua PDF đã tồn tại: ${fileName}`);
+        return;
+      }
+
+      // Chọn profile theo round-robin
+      const profile = this.profiles[this.currentProfileIndex];
+      this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
+
+      // ... rest of existing processPDFDownload code ...
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
       throw error;
     }
   }

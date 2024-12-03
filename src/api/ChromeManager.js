@@ -34,16 +34,18 @@ class ChromeManager {
     }
   }
 
-  static getInstance() {
-    if (!ChromeManager.instance) {
-      ChromeManager.instance = new ChromeManager();
+  static getInstance(type = 'video') {
+    const key = `instance_${type}`;
+    if (!ChromeManager[key]) {
+      ChromeManager[key] = new ChromeManager();
     }
-    return ChromeManager.instance;
+    return ChromeManager[key];
   }
 
   async getBrowser(preferredProfile = null) {
     try {
-      const profileId = preferredProfile || `profile_${this.currentProfile}`;
+      const prefix = this.constructor[key].includes('pdf') ? 'pdf_' : 'video_';
+      const profileId = preferredProfile || `${prefix}profile_${this.currentProfile}`;
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 
       if (this.browsers.has(profileId)) {

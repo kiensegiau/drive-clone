@@ -28,7 +28,7 @@ Thumbs.db
 # Git files
 .git
 .gitignore
-
+config
 # Node modules
 node_modules
 
