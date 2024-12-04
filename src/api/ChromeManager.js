@@ -18,7 +18,7 @@ class ChromeManager {
     this.isLaunching = new Set();
     this.queues = new Map();
     this.currentProfile = 0;
-    this.MAX_INSTANCES = 5;
+    this.MAX_INSTANCES = 6;
     this.activeInstances = new Map();
     
     try {
@@ -30,6 +30,16 @@ class ChromeManager {
       
       this.profilesDir = path.join(getConfigPath(), 'chrome-profiles');
       ensureDirectoryExists(this.profilesDir);
+      
+      this.pdfProfilesDir = path.join(this.profilesDir, 'pdf');
+      this.videoProfilesDir = path.join(this.profilesDir, 'video');
+      ensureDirectoryExists(this.pdfProfilesDir);
+      ensureDirectoryExists(this.videoProfilesDir);
+      
+      for (let i = 0; i < this.maxInstances; i++) {
+        ensureDirectoryExists(path.join(this.pdfProfilesDir, `profile_${i}`));
+        ensureDirectoryExists(path.join(this.videoProfilesDir, `profile_${i}`));
+      }
     } catch (error) {
       console.error('❌ Lỗi khởi tạo ChromeManager:', error.message);
       throw error;
@@ -81,8 +91,9 @@ class ChromeManager {
       this.isLaunching.add(profileId);
 
       try {
+        const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
         const userDataDir = ensureDirectoryExists(
-          path.join(this.profilesDir, sanitizePath(`profile_${profileId}`))
+          path.join(baseDir, sanitizePath(`profile_${this.currentProfile}`))
         );
 
         console.log(`🌐 Khởi động Chrome với profile: ${profileId}`);
