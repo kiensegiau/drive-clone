@@ -22,24 +22,45 @@ class ChromeManager {
     this.activeInstances = new Map();
     
     try {
+      // 1. Tạo thư mục temp
       this.tempDir = getTempPath();
       if (!this.tempDir) {
         throw new Error('Không thể khởi tạo thư mục temp');
       }
+      console.log('📁 Tạo thư mục temp:', this.tempDir);
       ensureDirectoryExists(this.tempDir);
       
+      // 2. Tạo thư mục gốc cho chrome profiles
       this.profilesDir = path.join(getConfigPath(), 'chrome-profiles');
+      console.log('📁 Tạo thư mục chrome profiles:', this.profilesDir);
       ensureDirectoryExists(this.profilesDir);
       
+      // 3. Tạo thư mục cho PDF và Video profiles
       this.pdfProfilesDir = path.join(this.profilesDir, 'pdf');
       this.videoProfilesDir = path.join(this.profilesDir, 'video');
+      
+      console.log('📁 Tạo thư mục PDF profiles:', this.pdfProfilesDir);
       ensureDirectoryExists(this.pdfProfilesDir);
+      
+      console.log('📁 Tạo thư mục Video profiles:', this.videoProfilesDir);
       ensureDirectoryExists(this.videoProfilesDir);
       
+      // 4. Tạo các profile con
+      console.log('📁 Tạo các profile con...');
       for (let i = 0; i < this.maxInstances; i++) {
-        ensureDirectoryExists(path.join(this.pdfProfilesDir, `profile_${i}`));
-        ensureDirectoryExists(path.join(this.videoProfilesDir, `profile_${i}`));
+        // Tạo profile cho PDF
+        const pdfProfile = path.join(this.pdfProfilesDir, `profile_${i}`);
+        ensureDirectoryExists(pdfProfile);
+        console.log(`✅ Đã tạo PDF profile ${i}: ${pdfProfile}`);
+        
+        // Tạo profile cho Video
+        const videoProfile = path.join(this.videoProfilesDir, `profile_${i}`);
+        ensureDirectoryExists(videoProfile);
+        console.log(`✅ Đã tạo Video profile ${i}: ${videoProfile}`);
       }
+      
+      console.log('✅ Đã khởi tạo xong tất cả thư mục profile');
+      
     } catch (error) {
       console.error('❌ Lỗi khởi tạo ChromeManager:', error.message);
       throw error;
@@ -64,6 +85,10 @@ class ChromeManager {
       const prefix = this.type === 'pdf' ? 'pdf_' : 'video_';
       const profileIndex = this.currentProfile;
       const profileId = preferredProfile || `${prefix}profile_${profileIndex}`;
+      
+      // Đảm bảo profile tồn tại
+      const userDataDir = await this.ensureProfileExists(profileId);
+      
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 
       if (this.browsers.has(profileId)) {
@@ -92,11 +117,6 @@ class ChromeManager {
       this.isLaunching.add(profileId);
 
       try {
-        const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
-        const userDataDir = ensureDirectoryExists(
-          path.join(baseDir, `profile_${profileIndex}`)
-        );
-
         console.log(`🌐 Khởi động Chrome với profile: ${profileId} (${userDataDir})`);
         const debuggingPort = 9222 + profileIndex;
 
@@ -246,6 +266,24 @@ class ChromeManager {
   getProfilePath(profileIndex) {
     const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
     return path.join(baseDir, `profile_${profileIndex}`);
+  }
+
+  async ensureProfileExists(profileId) {
+    try {
+        const profileIndex = parseInt(profileId.split('_').pop());
+        const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
+        const profilePath = path.join(baseDir, `profile_${profileIndex}`);
+        
+        if (!fs.existsSync(profilePath)) {
+            console.log(` Tạo mới profile ${profileId} tại: ${profilePath}`);
+            ensureDirectoryExists(profilePath);
+        }
+        
+        return profilePath;
+    } catch (error) {
+        console.error(`❌ Lỗi khi kiểm tra/tạo profile ${profileId}:`, error.message);
+        throw error;
+    }
   }
 }
 
