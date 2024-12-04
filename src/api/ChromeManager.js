@@ -62,7 +62,8 @@ class ChromeManager {
   async getBrowser(preferredProfile = null) {
     try {
       const prefix = this.type === 'pdf' ? 'pdf_' : 'video_';
-      const profileId = preferredProfile || `${prefix}profile_${this.currentProfile}`;
+      const profileIndex = this.currentProfile;
+      const profileId = preferredProfile || `${prefix}profile_${profileIndex}`;
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 
       if (this.browsers.has(profileId)) {
@@ -93,11 +94,11 @@ class ChromeManager {
       try {
         const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
         const userDataDir = ensureDirectoryExists(
-          path.join(baseDir, sanitizePath(`profile_${this.currentProfile}`))
+          path.join(baseDir, `profile_${profileIndex}`)
         );
 
-        console.log(`🌐 Khởi động Chrome với profile: ${profileId}`);
-        const debuggingPort = 9222 + parseInt(profileId.split('_')[1] || 0);
+        console.log(`🌐 Khởi động Chrome với profile: ${profileId} (${userDataDir})`);
+        const debuggingPort = 9222 + profileIndex;
 
         const browser = await puppeteer.launch({
           headless: false,
@@ -236,6 +237,15 @@ class ChromeManager {
         console.error('⚠️ Lỗi khi đóng Chrome:', error.message);
       }
     }
+  }
+
+  resetCurrentProfile() {
+    this.currentProfile = 0;
+  }
+
+  getProfilePath(profileIndex) {
+    const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
+    return path.join(baseDir, `profile_${profileIndex}`);
   }
 }
 

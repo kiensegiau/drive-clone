@@ -36,6 +36,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     this.browser = null;
     this.page = null;
     this.chromeManager = ChromeManager.getInstance('pdf');
+    this.chromeManager.resetCurrentProfile();
 
     this.MAX_CONCURRENT_CHECKS = 10;
     this.BATCH_SIZE = 20;
@@ -408,7 +409,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       await fs.promises.mkdir(tempDir, { recursive: true });
 
       console.log(`🌐 [DriveAPIPDFDownloader] Lấy browser instance...`);
-      browser = await this.chromeManager.getBrowser();
+      browser = await this.chromeManager.getBrowser('pdf_profile_0');
       console.log(`✅ [DriveAPIPDFDownloader] Đã có browser instance`);
 
       console.log(`📑 [DriveAPIPDFDownloader] Tạo tab mới...`);
