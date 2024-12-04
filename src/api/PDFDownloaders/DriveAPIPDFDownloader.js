@@ -46,7 +46,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     this.currentProfileIndex = 0;
     this.profiles = Array.from(
       { length: this.MAX_CONCURRENT_CHECKS },
-      (_, i) => `profile_${i}`
+      (_, i) => `pdf_profile_${i}`
     );
 
     // Khởi tạo thư mục và dọn dẹp
@@ -306,11 +306,13 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async downloadImage(url, pageNum, cookies, userAgent) {
-    // Tạo tên file an toàn cho ảnh tạm
-    const imageName = sanitizePath(
-      `page_${String(pageNum).padStart(3, "0")}.png`
+    // Tạo sessionId duy nhất cho mỗi phiên tải
+    const sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    const imagePath = path.join(
+      this.tempDir, 
+      'images',
+      `page_${sessionId}_${String(pageNum).padStart(3, '0')}.png`
     );
-    const imagePath = path.join(this.tempDir, imageName);
 
     try {
       if (!cookies || !userAgent) {
@@ -348,6 +350,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           }
         }
       }
+
       throw lastError;
     } catch (error) {
       await safeUnlink(imagePath);
@@ -858,7 +861,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       }
 
      
-      // Xử lý từng batch
+      // Xử l�� từng batch
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         
@@ -1352,25 +1355,20 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async processPDFDownload(pdfInfo) {
-    const { fileId, fileName, targetFolderId } = pdfInfo;
+    const { fileId, fileName, depth, targetFolderId } = pdfInfo;
     const indent = "  ".repeat(depth);
 
     try {
-      // Kiểm tra PDF đã tồn tại ngay từ đầu
-      const exists = await this.checkPDFExists(fileName, targetFolderId);
-      if (exists) {
-        console.log(`${indent}⏭️ Bỏ qua PDF đã tồn tại: ${fileName}`);
-        return;
-      }
+        // Chọn profile theo round-robin với prefix pdf
+        const profile = this.profiles[this.currentProfileIndex];
+        this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
 
-      // Chọn profile theo round-robin
-      const profile = this.profiles[this.currentProfileIndex];
-      this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
-
-      // ... rest of existing processPDFDownload code ...
+        console.log(`${indent}🌐 Khởi động Chrome với PDF profile: ${profile}`);
+        const browser = await this.chromeManager.getBrowser(profile);
+        // ... rest of the code ...
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
-      throw error;
+        console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
+        throw error;
     }
   }
 }

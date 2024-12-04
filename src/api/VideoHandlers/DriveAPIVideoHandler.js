@@ -65,7 +65,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     }
 
     this.cookies = null;
-    this.chromeManager = ChromeManager.getInstance();
+    this.chromeManager = ChromeManager.getInstance('video');
+    this.chromeManager.resetCurrentProfile();
     this.processLogger = new ProcessLogger();
     this.queue = [];
     this.pendingDownloads = [];
@@ -92,7 +93,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     this.currentProfileIndex = 0;
     this.profiles = Array.from(
       { length: this.MAX_CONCURRENT_DOWNLOADS },
-      (_, i) => `profile_${i}`
+      (_, i) => `video_profile_${i}`
     );
   }
 
@@ -148,35 +149,47 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
 
     try {
-      // Kiểm tra video đã tồn tại ngay từ đầu
+      // Thêm kiểm tra video tồn tại ngay từ đầu
       const exists = await this.checkVideoExists(fileName, targetFolderId);
       if (exists) {
         console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
         return;
       }
 
-      // Chọn profile theo round-robin
+      // Chọn profile theo round-robin với prefix video
       const profile = this.profiles[this.currentProfileIndex];
-      this.currentProfileIndex =
-        (this.currentProfileIndex + 1) % this.profiles.length;
+      this.currentProfileIndex = (this.currentProfileIndex + 1) % this.profiles.length;
 
-      // Chờ slot Chrome nếu cần
+      // Chờ slot Chrome nếu cần F
       while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
-        console.log(
-          `⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`
-        );
+        console.log(`${indent}⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`);
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
       // Thêm vào danh sách đang mở Chrome
       this.activeChrome.add(fileName);
-      console.log(
-        `${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
-      );
+      console.log(`${indent} Chrome đang mở (Video): ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`);
 
-      // Sử dụng profile đã chọn
-      console.log(`${indent}🌐 Khởi động Chrome với profile: ${profile}`);
-      const browser = await this.chromeManager.getBrowser(profile);
+      // Khởi động Chrome với profile đã chọn và thử lại nếu lỗi
+      let browser = null;
+      let retries = 3;
+
+      while (retries > 0) {
+        try {
+          console.log(`${indent}🌐 Khởi động Chrome với Video profile: ${profile}${retries < 3 ? ` (Lần thử ${4-retries}/3)` : ''}`);
+          browser = await this.chromeManager.getBrowser(profile);
+          break;
+        } catch (error) {
+          retries--;
+          if (retries > 0) {
+            console.log(`${indent}⏳ Đợi 10s trước khi thử lại...`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
+            await this.chromeManager.killAllChromeProcesses();
+          } else {
+            throw error; 
+          }
+        }
+      }
 
       const { videoUrl, headers } = await this.getVideoUrlAndHeaders(
         browser,
@@ -237,27 +250,21 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   }
 
   async processQueue() {
-    console.log(
-      `\n🎬 Bắt đầu xử lý ${this.queue.length} files (${this.MAX_CONCURRENT_DOWNLOADS} Chrome song song)`
-    );
+    console.log(`\n🎬 Bắt đầu xử lý ${this.queue.length} files (${this.MAX_CONCURRENT_DOWNLOADS} Chrome song song)`);
     console.log(`\n💾 Tối đa ${this.MAX_BACKGROUND_DOWNLOADS} files tải ngầm`);
 
     const processNextBatch = async () => {
       // Nếu không còn file trong queue và không còn file đang xử lý
-      if (
-        this.queue.length === 0 &&
-        this.activeDownloads.size === 0 &&
-        this.activeChrome.size === 0
-      ) {
+      if (this.queue.length === 0 && this.activeDownloads.size === 0 && this.activeChrome.size === 0) {
         console.log("\n✅ Đã xử lý xong tất cả files");
         return;
       }
 
       // Xử lý nhiều file cùng lúc nếu có thể
       const maxToProcess = Math.min(
-        this.MAX_BACKGROUND_DOWNLOADS - this.activeDownloads.size, // Số slot download còn trống
-        this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size, // Số slot Chrome còn trống
-        this.queue.length // Số file còn trong queue
+        this.MAX_BACKGROUND_DOWNLOADS - this.activeDownloads.size,
+        this.MAX_CONCURRENT_DOWNLOADS - this.activeChrome.size,
+        this.queue.length
       );
 
       // Xử lý theo số lượng có thể
@@ -266,18 +273,31 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         if (!video) break;
 
         const retryCount = this.videoRetries.get(video.fileName) || 0;
-        console.log(
-          `\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`
-        );
+        console.log(`\n🔄 Xử lý video: ${video.fileName} (Lần thử: ${retryCount + 1})`);
 
         // Xử lý video không đợi
-        this.processVideoDownload(video).catch((error) => {
+        this.processVideoDownload(video).catch(async (error) => {
           console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+          
+          // Chỉ thử lại tối đa 2 lần
           if (retryCount < 2) {
             console.log(`⏳ Thêm lại vào queue để thử lại: ${video.fileName}`);
             this.videoRetries.set(video.fileName, retryCount + 1);
             this.queue.push(video);
+          } else {
+            // Nếu đã thử 3 lần vẫn lỗi thì ghi log và bỏ qua
+            console.log(`⚠️ Đã thử ${retryCount + 1} lần không thành công, bỏ qua file: ${video.fileName}`);
+            await this.logFailedVideo({
+              fileName: video.fileName,
+              fileId: video.fileId,
+              targetFolderId: video.targetFolderId,
+              error: error.message,
+              timestamp: new Date().toISOString()
+            });
           }
+          
+          // Đảm bảo giải phóng slot Chrome nếu còn
+          this.activeChrome.delete(video.fileName);
         });
       }
 
@@ -285,11 +305,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       // Tiếp tục kiểm tra nếu còn file hoặc đang có file đang xử lý
-      if (
-        this.queue.length > 0 ||
-        this.activeDownloads.size > 0 ||
-        this.activeChrome.size > 0
-      ) {
+      if (this.queue.length > 0 || this.activeDownloads.size > 0 || this.activeChrome.size > 0) {
         return processNextBatch();
       }
     };
@@ -511,7 +527,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                 waitUntil: ["networkidle0", "domcontentloaded"],
               }
             );
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+            await new Promise((resolve) => setTimeout(resolve, 4000));
           } catch (error) {
             reject(error);
           }
@@ -770,7 +786,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
         console.log(
-          `${indent}📤 Bắt đầu upload video (Lần ${attempt}/${MAX_RETRIES}): ${fileName}`
+          `${indent} Bắt đầu upload video (Lần ${attempt}/${MAX_RETRIES}): ${fileName}`
         );
         console.log(`${indent}📦 Kích thước: ${fileSizeMB}MB`);
 
