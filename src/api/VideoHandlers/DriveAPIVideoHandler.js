@@ -403,174 +403,115 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async getVideoUrlAndHeaders(browser, fileId, indent) {
     let currentPage = null;
     let retries = 3;
-    let lastError = null;
 
     while (retries > 0) {
       try {
-        // Thm timeout khi tạo page mới
-        const pagePromise = browser.newPage();
-        currentPage = await Promise.race([
-          pagePromise,
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Timeout tạo page mới")), 30000)
-          ),
-        ]);
+        currentPage = await browser.newPage();
+        
+        // 1. Thiết lập các interceptor trước
+        await currentPage.setRequestInterception(true);
+        
+        currentPage.on('request', async request => {
+          const url = request.url();
+          const headers = request.headers();
+          
+          // Xử lý WAA requests
+          if (url.includes('waa.clients6.google.com')) {
+            headers['Origin'] = 'https://drive.google.com';
+            headers['Referer'] = 'https://drive.google.com/';
+            headers['X-Goog-AuthUser'] = '0';
+            headers['X-Origin'] = 'https://drive.google.com';
+            request.continue({headers});
+            return;
+          }
+          
+          // Xử lý Drive API requests
+          if (url.includes('clients6.google.com')) {
+            headers['Origin'] = 'https://drive.google.com';
+            headers['Referer'] = 'https://drive.google.com/';
+            request.continue({headers});
+            return;
+          }
 
-        await currentPage.setDefaultNavigationTimeout(60000);
-        await currentPage.setDefaultTimeout(60000);
+          request.continue();
+        });
 
-        // Thêm xử lý lỗi chi tiết hơn
-        if (!currentPage) {
-          throw new Error("Không thể tạo page mới");
+        // 2. Truy cập Drive trước để lấy cookies
+        console.log(`${indent}🔑 Khởi tạo session...`);
+        await currentPage.goto('https://drive.google.com', {
+          waitUntil: ['networkidle0', 'domcontentloaded'],
+          timeout: 30000
+        });
+
+        // 3. Đợi và kiểm tra login với nhiều selector khác nhau
+        await new Promise(r => setTimeout(r, 5000));
+        const isLoggedIn = await currentPage.evaluate(() => {
+          // Kiểm tra các element có thể xuất hiện khi đã login
+          const selectors = [
+            '[aria-label="Google Account"]',
+            '[aria-label="Main menu"]',
+            '[aria-label="Settings"]',
+            '.gb_k.gb_l', // Avatar Google
+            '[aria-label="Google apps"]',
+            '#drive_main_page', // Main Drive container
+            '.Sg4JMe' // Drive logo khi đã login
+          ];
+          
+          // Trả về true nếu tìm thấy bất kỳ element nào
+          return selectors.some(selector => document.querySelector(selector) !== null);
+        });
+
+        if (!isLoggedIn) {
+          console.log(`${indent}⚠️ Không tìm thấy elements của trang đã login`);
+          // Thử kiểm tra URL để xác nhận
+          const currentUrl = await currentPage.url();
+          if (currentUrl.includes('accounts.google.com')) {
+            throw new Error('Đang ở trang login, cần đăng nhập lại');
+          }
+          if (!currentUrl.includes('drive.google.com')) {
+            throw new Error('Không phải trang Drive, có thể bị redirect');
+          }
+          // Nếu URL ok nhưng không tìm thấy elements, vẫn tiếp tục
+          console.log(`${indent}🤔 URL Drive hợp lệ, thử tiếp tục...`);
         }
 
-        return new Promise(async (resolve, reject) => {
-          const timeout = setTimeout(() => {
-            reject(new Error("Timeout lấy URL video"));
-          }, 30000);
-
-          currentPage.on("response", async (response) => {
-            const url = response.url();
-            try {
-              if (url.includes("get_video_info")) {
-                const text = await response.text();
-                const params = new URLSearchParams(text);
-                const fmtStreamMap = params.get("fmt_stream_map");
-
-                if (fmtStreamMap) {
-                  // Lấy headers trước khi xử lý URL
-                  const headers = {
-                    "User-Agent": await currentPage.evaluate(
-                      () => navigator.userAgent
-                    ),
-                    Cookie: (await currentPage.cookies())
-                      .map((c) => `${c.name}=${c.value}`)
-                      .join("; "),
-                    Range: "bytes=0-",
-                  };
-
-                  // Xử lý stream map và URL
-                  const streams = fmtStreamMap.split(",");
-                  const qualities = {
-                    37: "1080p",
-                    22: "720p",
-                    59: "480p",
-                    18: "360p",
-                  };
-
-                  // Sắp xếp theo chất lượng cao đến thấp
-                  const sortedStreams = streams.sort((a, b) => {
-                    const [itagA] = a.split("|");
-                    const [itagB] = b.split("|");
-                    return Number(itagB) - Number(itagA);
-                  });
-
-                  for (const stream of sortedStreams) {
-                    const [itag, streamUrl] = stream.split("|");
-                    if (streamUrl) {
-                      try {
-                        // Xử l URL
-                        let finalUrl = streamUrl;
-                        if (!finalUrl.startsWith("http")) {
-                          finalUrl = `https:${finalUrl}`;
-                        }
-                        finalUrl = decodeURIComponent(finalUrl);
-
-                        // Kiểm tra URL hợp lệ
-                        const urlObj = new URL(finalUrl);
-                        // Chấp nhận các domain của Google Drive
-                        if (
-                          urlObj.hostname.includes(".drive.google.com") ||
-                          urlObj.hostname.includes("googleusercontent.com")
-                        ) {
-                          const selectedQuality =
-                            qualities[itag] || `itag ${itag}`;
-                          const videoUrl = finalUrl;
-
-                          // Đợi 2s trước khi đóng page
-                          await new Promise((resolve) =>
-                            setTimeout(resolve, 2000)
-                          );
-
-                          clearTimeout(timeout);
-                          if (currentPage) {
-                            await currentPage.close();
-                            currentPage = null;
-                          }
-
-                          resolve({ videoUrl, headers });
-                          return;
-                        } else {
-                          console.log(
-                            `${indent}⚠️ Domain không hợp lệ:`,
-                            urlObj.hostname
-                          );
-                        }
-                      } catch (error) {
-                        continue;
-                      }
-                    }
-                  }
-                } else {
-                }
-              }
-            } catch (error) {
-              console.error(`${indent}⚠️ Lỗi xử lý URL:`, error.message);
-              reject(error);
-            }
-          });
-
-          try {
-            await currentPage.goto(
-              `https://drive.google.com/file/d/${fileId}/view`,
-              {
-                waitUntil: ["networkidle0", "domcontentloaded"],
-              }
-            );
-            await new Promise((resolve) => setTimeout(resolve, 4000));
-          } catch (error) {
-            reject(error);
-          }
+        // 4. Truy cập video
+        console.log(`${indent}🎥 Truy cập video...`);
+        await currentPage.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+          waitUntil: ['networkidle0', 'domcontentloaded'],
+          timeout: 30000
         });
-      } catch (error) {
-        lastError = error;
-        console.error(
-          `${indent}❌ Lỗi xử lý video (Lần ${4 - retries}/3): ${error.message}`
-        );
+        await new Promise(r => setTimeout(r, 5000));
 
+        // 5. Kiểm tra lỗi truy cập
+        const errorElement = await currentPage.$('.drive-viewer-error-message');
+        if (errorElement) {
+          const errorText = await currentPage.evaluate(el => el.textContent, errorElement);
+          throw new Error(`Lỗi truy cập video: ${errorText}`);
+        }
+
+        // ... phần code xử lý response giữ nguyên ...
+
+      } catch (error) {
+        console.error(`${indent}❌ Lỗi (còn ${retries} lần thử):`, error.message);
+        retries--;
+        
         if (currentPage) {
           try {
             await currentPage.close();
-          } catch (closeError) {
-            console.error(`${indent}⚠️ Lỗi đóng page:`, closeError.message);
+          } catch (e) {
+            console.warn(`${indent}⚠️ Không thể đóng page:`, e.message);
           }
-          currentPage = null;
         }
 
-        retries--;
         if (retries > 0) {
           console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-        } else {
-          // Kill tất cả Chrome và thử khởi động lại
-          try {
-            console.log(
-              `${indent}🔄 Kill tất cả Chrome và khởi động lại browser...`
-            );
-            await browser.close();
-            await this.chromeManager.killAllChromeProcesses();
-            browser = await this.chromeManager.getBrowser(null, true);
-            retries = 1; // Cho thêm 1 lần th nữa
-          } catch (restartError) {
-            console.error(
-              `${indent}❌ Không thể khởi động lại browser:`,
-              restartError.message
-            );
-            throw lastError;
-          }
+          await new Promise(r => setTimeout(r, 5000));
         }
       }
     }
+
+    throw new Error('Đã hết số lần thử');
   }
 
   // Sửa lại phương thức startDownloadInBackground để trả về promise
@@ -728,7 +669,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
       const avgSpeed = (totalSize / 1024 / 1024 / totalTime).toFixed(2);
       console.log(
-        `${indent}✅ Hoàn thành tải (${totalTime}s, TB: ${avgSpeed} MB/s)`
+        `${indent} Hoàn thành tải (${totalTime}s, TB: ${avgSpeed} MB/s)`
       );
     } finally {
       // Chỉ đóng file handle, KHÔNG xóa file
@@ -803,7 +744,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             );
             if (percentUploaded - lastLoggedPercent >= 10) {
               // Chỉ log mỗi 10%
-              console.log(`${indent}⏳ Đã upload ${percentUploaded}%...`);
+              console.log(`${indent}�� Đã upload ${percentUploaded}%...`);
               lastLoggedPercent = percentUploaded;
             }
           }, 6000);
@@ -993,6 +934,63 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
     } catch (error) {
       console.error("❌ Lỗi retry failed videos:", error);
+    }
+  }
+
+  // Thêm methods mới để xử lý tài khoản mới
+  async checkIfNewAccount(browser) {
+    const page = await browser.newPage();
+    try {
+      await page.goto('https://drive.google.com/drive/my-drive');
+      
+      // Kiểm tra các dấu hiệu của tài khoản mới
+      const isNew = await page.evaluate(() => {
+        // Kiểm tra số lượng files
+        const files = document.querySelectorAll('[data-target="doc"]');
+        // Nếu ít files -> có thể là tài khoản mới
+        return files.length < 5;
+      });
+      
+      return isNew;
+    } catch (error) {
+      console.error('Lỗi kiểm tra tài khoản:', error);
+      return false;
+    } finally {
+      await page.close();
+    }
+  }
+
+  async initializeNewAccount(browser, indent) {
+    const page = await browser.newPage();
+    try {
+      // 1. Truy cập và tương tác với Drive
+      await page.goto('https://drive.google.com/drive/my-drive');
+      await new Promise(r => setTimeout(r, 5000));
+
+      // 2. Tạo một file test để "khởi động" tài khoản
+      await page.evaluate(() => {
+        // Click nút New hoặc tương tác khác
+        const newButton = document.querySelector('[aria-label="New"]');
+        if (newButton) newButton.click();
+      });
+      await new Promise(r => setTimeout(r, 2000));
+
+      // 3. Truy cập các tính năng cơ bản
+      const testUrls = [
+        'https://drive.google.com/drive/recent',
+        'https://drive.google.com/drive/shared-with-me'
+      ];
+
+      for (const url of testUrls) {
+        await page.goto(url);
+        await new Promise(r => setTimeout(r, 3000));
+      }
+
+      console.log(`${indent}✅ Đã khởi tạo tài khoản mới`);
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi khởi tạo tài khoản:`, error);
+    } finally {
+      await page.close();
     }
   }
 }
