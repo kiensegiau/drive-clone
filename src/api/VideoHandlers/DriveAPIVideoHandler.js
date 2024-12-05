@@ -428,10 +428,19 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                   console.log(`\n${indent}🎥 Progressive Transcodes (Video + Audio):`);
                   progressiveTranscodes.forEach(transcode => {
                     console.log(`${indent}----------------------------------------`);
-                    console.log(`${indent}📊 Chất lượng: ${transcode.itag === 22 ? '720p' : '360p'}`);
+                    // Xác định chất lượng dựa trên itag
+                    let quality;
+                    switch(transcode.itag) {
+                      case 37: quality = '1080p'; break;
+                      case 22: quality = '720p'; break;
+                      case 18: quality = '360p'; break;
+                      default: quality = 'Unknown'; break;
+                    }
+                    console.log(`${indent}📊 Chất lượng: ${quality}`);
                     console.log(`${indent}📏 Độ phân giải: ${transcode.transcodeMetadata.width}x${transcode.transcodeMetadata.height}`);
                     console.log(`${indent}⏱️ Thời lượng: ${transcode.transcodeMetadata.approxDuration}`);
                     console.log(`${indent}📦 Dung lượng: ${Math.round(transcode.transcodeMetadata.contentLength / 1024 / 1024 * 100) / 100} MB`);
+                    console.log(`${indent}🔗 Itag: ${transcode.itag}`);
                     console.log(`${indent}🔗 URL: ${transcode.url}`);
                   });
                 }
@@ -445,6 +454,16 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                     const isAudio = transcode.transcodeMetadata.mimeType.includes('audio');
                     console.log(`${indent}📊 Loại: ${isAudio ? 'Audio' : 'Video'}`);
                     if (!isAudio) {
+                      // Xác định chất lượng video adaptive
+                      let quality;
+                      switch(transcode.itag) {
+                        case 137: quality = '1080p'; break;
+                        case 136: quality = '720p'; break;
+                        case 135: quality = '480p'; break;
+                        case 134: quality = '360p'; break;
+                        default: quality = 'Unknown'; break;
+                      }
+                      console.log(`${indent}📊 Chất lượng: ${quality}`);
                       console.log(`${indent}📏 Độ phân giải: ${transcode.transcodeMetadata.width}x${transcode.transcodeMetadata.height}`);
                     }
                     console.log(`${indent}⏱️ Thời lượng: ${transcode.transcodeMetadata.approxDuration}`);
@@ -454,15 +473,19 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                   });
                 }
 
-                // Trả về URL chất lượng cao nhất như trước
-                const hd = progressiveTranscodes.find(t => t.itag === 22);
-                const sd = progressiveTranscodes.find(t => t.itag === 18);
-                const videoUrl = hd?.url || sd?.url;
+                // Trả về URL chất lượng cao nhất
+                const fhd = progressiveTranscodes.find(t => t.itag === 37); // 1080p
+                const hd = progressiveTranscodes.find(t => t.itag === 22);  // 720p
+                const sd = progressiveTranscodes.find(t => t.itag === 18);  // 360p
+                
+                const videoUrl = fhd?.url || hd?.url || sd?.url;
+                const metadata = fhd || hd || sd;
+                
                 if (videoUrl) {
                   return {
                     url: videoUrl,
-                    quality: hd ? '720p' : '360p',
-                    metadata: hd || sd
+                    quality: fhd ? '1080p' : (hd ? '720p' : '360p'),
+                    metadata: metadata
                   };
                 }
               }
@@ -525,20 +548,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           return selectors.some(selector => document.querySelector(selector) !== null);
         });
 
-        if (!isLoggedIn) {
-          console.log(`${indent}⚠️ Không tìm thấy elements của trang đã login`);
-          // Thử kiểm tra URL để xác nhận
-          const currentUrl = await currentPage.url();
-          if (currentUrl.includes('accounts.google.com')) {
-            throw new Error('Đang ở trang login, cần đng nhập lại');
-          }
-          if (!currentUrl.includes('drive.google.com')) {
-            throw new Error('Không phải trang Drive, có thể bị redirect');
-          }
-          // Nếu URL ok nhưng không tìm thấy elements, vẫn tiếp tục
-          console.log(`${indent}🤔 URL Drive hợp lệ, thử tiếp tục...`);
-        }
-
+        
         // 4. Truy cập video
         console.log(`${indent}🎥 Truy cập video...`);
         await currentPage.goto(`https://drive.google.com/file/d/${fileId}/view`, {
