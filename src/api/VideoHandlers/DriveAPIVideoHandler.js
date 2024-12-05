@@ -441,15 +441,12 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                 const jsonData = JSON.parse(responseData);
 
                 if (jsonData?.mediaStreamingData?.formatStreamingData) {
-                  console.log(`${indent}📝 Đang xử lý response data...`);
+                  
                   const progressiveTranscodes =
                     jsonData.mediaStreamingData.formatStreamingData
                       .progressiveTranscodes || [];
 
-                  console.log(
-                    `${indent}📊 Số lượng transcodes:`,
-                    progressiveTranscodes.length
-                  );
+                 
 
                   // Tìm URL chất lượng cao nhất
                   const fhd = progressiveTranscodes.find((t) => t.itag === 37);
