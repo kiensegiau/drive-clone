@@ -586,7 +586,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       await this.downloadWithChunks(
         videoUrl,
         outputPath,
-        downloadHeaders, // Sử dụng headers đã đư��c kết hợp
+        downloadHeaders, // Sử dụng headers đã đưc kết hợp
         fileName,
         depth
       );
@@ -829,17 +829,20 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
         // Thay đổi phần set permissions sau khi upload thành công
         try {
-          // Sau đó cập nhật file để vô hiệu hóa tải xuống
+          // Sau đó cập nhật file để vô hiệu hóa các quyền
           await this.targetDrive.files.update({
             fileId: response.data.id,
             requestBody: {
               copyRequiresWriterPermission: true,
               viewersCanCopyContent: false,
+              writersCanShare: false,
+              sharingUser: null,
+              permissionIds: []
             },
             supportsAllDrives: true,
           });
 
-          console.log(`${indent}🔒 Đã cấu hình quyền chỉ xem cho: ${fileName}`);
+          console.log(`${indent}🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${fileName}`);
         } catch (permError) {
           console.error(`${indent}⚠️ Lỗi cấu hình quyền:`, permError.message);
         }
