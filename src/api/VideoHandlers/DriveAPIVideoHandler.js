@@ -403,11 +403,75 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async getVideoUrlAndHeaders(browser, fileId, indent) {
     let currentPage = null;
     let retries = 3;
+    const responsesLog = [];
 
     while (retries > 0) {
       try {
         currentPage = await browser.newPage();
         
+        // Log tất cả responses không lọc URL
+        currentPage.on('response', async response => {
+          try {
+            const url = response.url();
+            const headers = response.headers();
+            const contentType = headers['content-type'] || '';
+
+            if (contentType.includes('application/json')) {
+              const responseData = await response.json();
+              
+              if (responseData?.mediaStreamingData?.formatStreamingData) {
+                console.log(`\n${indent} Danh sách các phiên bản video tìm thấy:`);
+                
+                // Log Progressive Transcodes (video + audio)
+                const progressiveTranscodes = responseData.mediaStreamingData.formatStreamingData.progressiveTranscodes || [];
+                if (progressiveTranscodes.length > 0) {
+                  console.log(`\n${indent}🎥 Progressive Transcodes (Video + Audio):`);
+                  progressiveTranscodes.forEach(transcode => {
+                    console.log(`${indent}----------------------------------------`);
+                    console.log(`${indent}📊 Chất lượng: ${transcode.itag === 22 ? '720p' : '360p'}`);
+                    console.log(`${indent}📏 Độ phân giải: ${transcode.transcodeMetadata.width}x${transcode.transcodeMetadata.height}`);
+                    console.log(`${indent}⏱️ Thời lượng: ${transcode.transcodeMetadata.approxDuration}`);
+                    console.log(`${indent}📦 Dung lượng: ${Math.round(transcode.transcodeMetadata.contentLength / 1024 / 1024 * 100) / 100} MB`);
+                    console.log(`${indent}🔗 URL: ${transcode.url}`);
+                  });
+                }
+
+                // Log Adaptive Transcodes (video và audio riêng)
+                const adaptiveTranscodes = responseData.mediaStreamingData.formatStreamingData.adaptiveTranscodes || [];
+                if (adaptiveTranscodes.length > 0) {
+                  console.log(`\n${indent}🎬 Adaptive Transcodes (Video/Audio riêng biệt):`);
+                  adaptiveTranscodes.forEach(transcode => {
+                    console.log(`${indent}----------------------------------------`);
+                    const isAudio = transcode.transcodeMetadata.mimeType.includes('audio');
+                    console.log(`${indent}📊 Loại: ${isAudio ? 'Audio' : 'Video'}`);
+                    if (!isAudio) {
+                      console.log(`${indent}📏 Độ phân giải: ${transcode.transcodeMetadata.width}x${transcode.transcodeMetadata.height}`);
+                    }
+                    console.log(`${indent}⏱️ Thời lượng: ${transcode.transcodeMetadata.approxDuration}`);
+                    console.log(`${indent}📦 Dung lượng: ${Math.round(transcode.transcodeMetadata.contentLength / 1024 / 1024 * 100) / 100} MB`);
+                    console.log(`${indent}🎯 Itag: ${transcode.itag}`);
+                    console.log(`${indent}🔗 URL: ${transcode.url}`);
+                  });
+                }
+
+                // Trả về URL chất lượng cao nhất như trước
+                const hd = progressiveTranscodes.find(t => t.itag === 22);
+                const sd = progressiveTranscodes.find(t => t.itag === 18);
+                const videoUrl = hd?.url || sd?.url;
+                if (videoUrl) {
+                  return {
+                    url: videoUrl,
+                    quality: hd ? '720p' : '360p',
+                    metadata: hd || sd
+                  };
+                }
+              }
+            }
+          } catch (error) {
+            console.warn(`${indent}⚠️ Lỗi xử lý response:`, error.message);
+          }
+        });
+
         // 1. Thiết lập các interceptor trước
         await currentPage.setRequestInterception(true);
         
@@ -466,7 +530,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           // Thử kiểm tra URL để xác nhận
           const currentUrl = await currentPage.url();
           if (currentUrl.includes('accounts.google.com')) {
-            throw new Error('Đang ở trang login, cần đăng nhập lại');
+            throw new Error('Đang ở trang login, cần đng nhập lại');
           }
           if (!currentUrl.includes('drive.google.com')) {
             throw new Error('Không phải trang Drive, có thể bị redirect');
@@ -490,7 +554,40 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           throw new Error(`Lỗi truy cập video: ${errorText}`);
         }
 
-        // ... phần code xử lý response giữ nguyên ...
+        // Lưu responses với thông tin chi tiết hơn
+        const logPath = path.join(this.TEMP_DIR, 'responses.json');
+        try {
+          let existingLog = [];
+          if (fs.existsSync(logPath)) {
+            existingLog = JSON.parse(await fs.promises.readFile(logPath, 'utf8'));
+          }
+          
+          existingLog.push({
+            fileId,
+            videoUrl: videoUrl, // Thêm URL video nếu có
+            timestamp: new Date().toISOString(),
+            userAgent: await currentPage.evaluate(() => navigator.userAgent),
+            cookies: await currentPage.cookies(),
+            responses: responsesLog
+          });
+
+          await fs.promises.writeFile(logPath, JSON.stringify(existingLog, null, 2));
+          console.log(`${indent}📝 Đã lưu ${responsesLog.length} responses vào log`);
+        } catch (error) {
+          console.error(`${indent}❌ Lỗi lưu response log:`, error.message);
+          // Thử lưu vào file backup nếu lỗi
+          try {
+            const backupPath = path.join(this.TEMP_DIR, `responses_backup_${Date.now()}.json`);
+            await fs.promises.writeFile(backupPath, JSON.stringify({
+              fileId,
+              timestamp: new Date().toISOString(),
+              responses: responsesLog
+            }, null, 2));
+            console.log(`${indent}📝 Đã lưu backup log tại: ${backupPath}`);
+          } catch (backupError) {
+            console.error(`${indent}❌ Lỗi lưu backup:`, backupError.message);
+          }
+        }
 
       } catch (error) {
         console.error(`${indent}❌ Lỗi (còn ${retries} lần thử):`, error.message);
@@ -623,7 +720,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         );
       }, 5000);
 
-      // Tải chunks (bỏ log từng nhóm)
+      // Ti chunks (bỏ log từng nhóm)
       const chunks = [];
       for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
         const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
@@ -729,7 +826,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         console.log(
           `${indent} Bắt đầu upload video (Lần ${attempt}/${MAX_RETRIES}): ${fileName}`
         );
-        console.log(`${indent}📦 Kích thước: ${fileSizeMB}MB`);
+        console.log(`${indent}📦 Kích thớc: ${fileSizeMB}MB`);
 
         // Tạo promise với timeout
         const uploadPromise = new Promise(async (resolve, reject) => {
@@ -744,7 +841,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             );
             if (percentUploaded - lastLoggedPercent >= 10) {
               // Chỉ log mỗi 10%
-              console.log(`${indent}�� Đã upload ${percentUploaded}%...`);
+              console.log(`${indent} Đã upload ${percentUploaded}%...`);
               lastLoggedPercent = percentUploaded;
             }
           }, 6000);
@@ -929,7 +1026,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         // Xóa file log cũ
         await fs.promises.unlink(logPath);
 
-        // Xử lý lại queue
+        // X lý lại queue
         await this.processQueue();
       }
     } catch (error) {
