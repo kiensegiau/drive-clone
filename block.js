@@ -288,7 +288,7 @@ class VideoQualityChecker {
   // Thêm phương thức mới để khóa quyền truy cập
   async lockFileAccess(fileId) {
     try {
-      // Bước 1: Xóa tất cả permissions hiện tại (trừ owner)
+      // Xóa tất cả permissions hiện tại (trừ owner)
       const permissions = await this.withRetry(async () => {
         return this.drive.permissions.list({
           fileId: fileId,
@@ -309,51 +309,16 @@ class VideoQualityChecker {
         }
       }
 
-      // Bước 2: Tạo permission mới với role reader
+      // Cập nhật cài đặt file trực tiếp qua Drive API
       await this.withRetry(async () => {
-        await this.drive.permissions.create({
+        await this.drive.files.update({
           fileId: fileId,
           requestBody: {
-            role: 'reader',
-            type: 'anyone'
+            writersCanShare: false,
+            copyRequiresWriterPermission: true,
+            viewersCanCopyContent: false
           },
           supportsAllDrives: true
-        });
-      });
-
-      // Bước 3: Sử dụng API trực tiếp để cập nhật sharing settings
-      await this.withRetry(async () => {
-        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`;
-        const headers = {
-          'Authorization': `Bearer ${this.oauth2Client.credentials.access_token}`,
-          'Content-Type': 'application/json'
-        };
-        const body = {
-          // Vô hiệu hóa cả hai quyền
-          'capabilities': {
-            'canEdit': false,
-            'canShare': false,
-            'canChangeViewersCanCopyContent': false,
-            'canMoveItemIntoTeamDrive': false,
-            'canReadRevisions': false,
-            'canRemoveChildren': false
-          },
-          'viewersCanCopyContent': false,
-          'copyRequiresWriterPermission': true,
-          'writersCanShare': false,
-          'permissions': [
-            {
-              'type': 'anyone',
-              'role': 'reader',
-              'allowFileDiscovery': false
-            }
-          ]
-        };
-
-        await fetch(url, {
-          method: 'PATCH',
-          headers: headers,
-          body: JSON.stringify(body)
         });
       });
 
@@ -389,7 +354,7 @@ class VideoQualityChecker {
       });
 
       const items = response.data.files;
-      console.log(`${indent}📊 Tìm thấy ${items.length} items trong folder`);
+      console.log(`${indent} Tìm thấy ${items.length} items trong folder`);
       
       let stats = {
         totalFiles: 0,
