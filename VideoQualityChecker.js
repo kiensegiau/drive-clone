@@ -11,7 +11,6 @@ class VideoQualityChecker {
     this.PARALLEL_COPIES = 10;      
     this.COPY_DELAY = 900000;       
     this.RETRY_DELAY = 120000;      
-    this.MAX_DAILY_VIDEOS = 5000;    
     
     this.videoCount = 0;
   }
@@ -77,14 +76,12 @@ class VideoQualityChecker {
         await this.copyFullFolder(folder.id, newFolder.data.id, false);
       }
 
-      // Copy videos với giới hạn
-      for(let i = 0; i < videos.length; i += this.BATCH_SIZE) {
-        if(this.videoCount >= this.MAX_DAILY_VIDEOS) {
-          console.log('⚠️ Đã đạt giới hạn video ngày, tạm dừng xử lý video');
-          break;
-        }
-        const batch = videos.slice(i, i + this.BATCH_SIZE);
+      // Copy videos liên tục
+      let videoIndex = 0;
+      while (videoIndex < videos.length) {
+        const batch = videos.slice(videoIndex, videoIndex + this.BATCH_SIZE);
         await this.processBatch(batch, targetFolderId, true);
+        videoIndex += this.BATCH_SIZE;
       }
 
       // Copy files khác không giới hạn
@@ -100,23 +97,14 @@ class VideoQualityChecker {
   }
 
   async processBatch(batch, targetFolderId, isVideo) {
-    for(let j = 0; j < batch.length; j += this.PARALLEL_COPIES) {
-      const parallelBatch = batch.slice(j, j + this.PARALLEL_COPIES);
-      
-      await Promise.all(parallelBatch.map(async file => {
-        try {
-          await this.copyWithRetry(file.id, targetFolderId, file.name);
-          if(isVideo) this.videoCount++;
-          console.log(`✅ Đã copy ${isVideo ? 'video' : 'file'}: ${file.name}`);
-        } catch(error) {
-          console.error(`❌ Lỗi copy ${file.name}:`, error.message);
-        }
-      }));
-
-      // Chỉ delay giữa các nhóm video
-      if(isVideo && j + this.PARALLEL_COPIES < batch.length) {
-        console.log('⏳ Đợi 2 phút trước nhóm video tiếp theo...');
-        await this.delay(this.RETRY_DELAY); // 120000ms = 2 phút
+    // Copy từng file một
+    for(const file of batch) {
+      try {
+        await this.copyWithRetry(file.id, targetFolderId, file.name);
+        if(isVideo) this.videoCount++;
+        console.log(`✅ Đã copy ${isVideo ? 'video' : 'file'}: ${file.name}`);
+      } catch(error) {
+        console.error(`❌ Lỗi copy ${file.name}:`, error.message);
       }
     }
 
@@ -137,8 +125,11 @@ class VideoQualityChecker {
     return response.data.files;
   }
 
-  async copyWithRetry(fileId, targetFolderId, fileName, retries = 3) {
-    for (let attempt = 1; attempt <= retries; attempt++) {
+  async copyWithRetry(fileId, targetFolderId, fileName, retries = Infinity) {
+    let attempt = 1;
+    let currentDelay = this.RETRY_DELAY; // Bắt đầu với 2 phút (120000ms)
+    
+    while (true) {
       try {
         await this.drive.files.copy({
           fileId: fileId,
@@ -150,9 +141,13 @@ class VideoQualityChecker {
         });
         return;
       } catch (error) {
-        if (attempt === retries) throw error;
-        console.log(`⚠️ Lần thử ${attempt} thất bại, thử lại sau 5 phút...`);
-        await this.delay(this.RETRY_DELAY);
+        console.log(`⚠️ Lần thử ${attempt} thất bại: ${error.message}`);
+        console.log(`⏳ Đợi ${currentDelay/60000} phút trước khi thử lại...`);
+        await this.delay(currentDelay);
+        
+        // Tăng thời gian delay gấp đôi cho lần sau
+        currentDelay *= 2;
+        attempt++;
       }
     }
   }
