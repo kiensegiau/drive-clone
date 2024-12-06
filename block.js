@@ -234,7 +234,7 @@ class VideoQualityChecker {
 
       fileName = sourceFile.data.name;
 
-      // Kiểm tra file đã tồn tại
+      // Ki���m tra file đã tồn tại
       const existingFile = await this.checkFileExists(
         fileName,
         destinationFolderId,
@@ -259,6 +259,11 @@ class VideoQualityChecker {
       });
 
       console.log(`${indent}✅ Đã sao chép "${fileName}"`);
+      
+      // Thêm bước khóa file sau khi copy
+      console.log(`${indent}🔒 Đang khóa quyền truy cập cho "${fileName}"`);
+      await this.lockFileAccess(copiedFile.data.id);
+
       return copiedFile.data;
 
     } catch (error) {
