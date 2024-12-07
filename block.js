@@ -148,73 +148,97 @@ class VideoQualityChecker {
   async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      // Lấy thông tin folder nguồn
-      let sourceFolder = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: sourceFolderId,
-          fields: "name",
-          supportsAllDrives: true,
+        // Lấy thông tin folder nguồn
+        let sourceFolder = await this.withRetry(async () => {
+            return this.drive.files.get({
+                fileId: sourceFolderId,
+                fields: "name",
+                supportsAllDrives: true,
+            });
         });
-      });
 
-      // Kiểm tra folder đã tồn tại
-      let existingFolder = await this.checkFileExists(
-        sourceFolder.data.name,
-        destinationFolderId,
-        "application/vnd.google-apps.folder"
-      );
+        let targetFolderId = destinationFolderId;
+        
+        // Chỉ tạo folder mới nếu depth > 0 (là subfolder)
+        if (depth > 0) {
+            // Kiểm tra folder đã tồn tại
+            let existingFolder = await this.checkFileExists(
+                sourceFolder.data.name,
+                destinationFolderId,
+                "application/vnd.google-apps.folder"
+            );
 
-      let newFolder;
-      if (existingFolder) {
-        console.log(`${indent}📂 Folder "${sourceFolder.data.name}" đã tồn tại, sử dụng folder hiện có`);
-        newFolder = { data: existingFolder };
-      } else {
-        newFolder = await this.withRetry(async () => {
-          return this.drive.files.create({
-            requestBody: {
-              name: sourceFolder.data.name,
-              mimeType: "application/vnd.google-apps.folder",
-              parents: [destinationFolderId],
-            },
-            supportsAllDrives: true,
-          });
+            if (existingFolder) {
+                console.log(`${indent}📂 Folder "${sourceFolder.data.name}" đã tồn tại, kiểm tra nội dung...`);
+                targetFolderId = existingFolder.id;
+            } else {
+                const newFolder = await this.withRetry(async () => {
+                    return this.drive.files.create({
+                        requestBody: {
+                            name: sourceFolder.data.name,
+                            mimeType: "application/vnd.google-apps.folder",
+                            parents: [destinationFolderId],
+                        },
+                        supportsAllDrives: true,
+                    });
+                });
+                console.log(`${indent}📂 Đã tạo folder mới "${sourceFolder.data.name}"`);
+                targetFolderId = newFolder.data.id;
+            }
+        }
+
+        // Lấy danh sách files và folders con
+        const sourceResponse = await this.withRetry(async () => {
+            return this.drive.files.list({
+                q: `'${sourceFolderId}' in parents and trashed = false`,
+                fields: "files(id, name, mimeType)",
+                pageSize: 100,
+                supportsAllDrives: true,
+                includeItemsFromAllDrives: true,
+            });
         });
-        console.log(`${indent}📂 Đã tạo folder mới "${sourceFolder.data.name}"`);
-      }
 
-      // Lấy danh sách files và folders con
-      const response = await this.withRetry(async () => {
-        return this.drive.files.list({
-          q: `'${sourceFolderId}' in parents and trashed = false`,
-          fields: "files(id, name, mimeType)",
-          pageSize: 100,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
+        // Lấy danh sách files và folders đã tồn tại trong thư mục đích
+        const destResponse = await this.withRetry(async () => {
+            return this.drive.files.list({
+                q: `'${targetFolderId}' in parents and trashed = false`,
+                fields: "files(id, name, mimeType)",
+                pageSize: 100,
+                supportsAllDrives: true,
+                includeItemsFromAllDrives: true,
+            });
         });
-      });
 
-      const items = response.data.files;
-      const files = items.filter(item => item.mimeType !== "application/vnd.google-apps.folder");
-      const folders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
+        const sourceItems = sourceResponse.data.files;
+        const destItems = destResponse.data.files;
 
-      // Copy files theo batch
-      for (let i = 0; i < files.length; i += this.COPY_BATCH_SIZE) {
-        const batch = files.slice(i, i + this.COPY_BATCH_SIZE);
-        const copyPromises = batch.map(file => this.copyFile(file.id, newFolder.data.id, depth + 1));
-        await Promise.allSettled(copyPromises);
-        await this.delay(500);
-      }
+        // Tạo map các file/folder đã tồn tại theo tên
+        const existingItemsMap = new Map(
+            destItems.map(item => [item.name, item])
+        );
 
-      // Copy folders đệ quy
-      for (const folder of folders) {
-        await this.copyFolder(folder.id, newFolder.data.id, depth + 1);
-        await this.delay(10);
-      }
+        // Xử lý từng item trong folder nguồn
+        for (const sourceItem of sourceItems) {
+            const existingItem = existingItemsMap.get(sourceItem.name);
 
-      return newFolder.data;
+            if (sourceItem.mimeType === "application/vnd.google-apps.folder") {
+                // Nếu là folder, đệ quy vào trong
+                await this.copyFolder(sourceItem.id, targetFolderId, depth + 1);
+            } else {
+                // Nếu là file và chưa tồn tại, copy
+                if (!existingItem) {
+                    await this.copyFile(sourceItem.id, targetFolderId, depth + 1);
+                } else {
+                    console.log(`${indent}⏩ File "${sourceItem.name}" đã tồn tại, bỏ qua`);
+                }
+            }
+            await this.delay(100);
+        }
+
+        return { id: targetFolderId };
     } catch (error) {
-      console.error(`${indent}⚠️ Lỗi:`, error.message);
-      return null;
+        console.error(`${indent}⚠️ Lỗi:`, error.message);
+        return null;
     }
   }
 
@@ -234,7 +258,7 @@ class VideoQualityChecker {
 
       fileName = sourceFile.data.name;
 
-      // Ki���m tra file đã tồn tại
+      // Kiểm tra file đã tồn tại
       const existingFile = await this.checkFileExists(
         fileName,
         destinationFolderId,
@@ -434,6 +458,37 @@ if (require.main === module) {
         throw new Error('Không thể lấy folder ID từ URL');
     }
 
+    // Hàm tạo tên folder với timestamp
+    function generateOperationFolderName(operation) {
+        const date = new Date();
+        const timestamp = `${date.getFullYear()}${(date.getMonth()+1).toString().padStart(2,'0')}${date.getDate().toString().padStart(2,'0')}_${date.getHours().toString().padStart(2,'0')}${date.getMinutes().toString().padStart(2,'0')}`;
+        return `${operation}_${timestamp}`;
+    }
+
+    async function ensureDriveCloneFolder(checker) {
+        const driveCloneFolderName = 'drive-clone';
+        const existingFolder = await checker.checkFileExists(
+            driveCloneFolderName,
+            'root',
+            'application/vnd.google-apps.folder'
+        );
+
+        if (existingFolder) {
+            console.log('📁 Đã tìm thấy thư mục drive-clone');
+            return existingFolder;
+        }
+
+        const newFolder = await checker.drive.files.create({
+            requestBody: {
+                name: driveCloneFolderName,
+                mimeType: 'application/vnd.google-apps.folder'
+            },
+            fields: 'id'
+        });
+        console.log('📁 Đã tạo thư mục drive-clone mới');
+        return newFolder.data;
+    }
+
     async function main() {
         try {
             console.log('\n=== GOOGLE DRIVE TOOL ===');
@@ -452,42 +507,76 @@ if (require.main === module) {
                 });
             });
 
-            // Lấy URL từ command line argument
             const folderUrl = process.argv[2];
             if (!folderUrl) {
                 throw new Error('Vui lòng cung cấp URL folder Google Drive\nVí dụ: node VideoQualityChecker.js "folder_id_or_url"');
             }
 
-            // Lấy folder ID từ URL
             const sourceFolderId = getFolderIdFromUrl(folderUrl);
             console.log('📂 Source Folder ID:', sourceFolderId);
 
-            // Khởi tạo checker
             const checker = new VideoQualityChecker();
-            
-            // Xác thực
-            console.log('🔑 Đang xác thực...');
             await checker.authenticate();
-            
+
+            // Đảm bảo có thư mục drive-clone
+            const driveCloneFolder = await ensureDriveCloneFolder(checker);
+
             if (mode === '1') {
-                // Chế độ copy
-                console.log('📁 Đang tạo folder đích...');
-                const rootFolder = await checker.drive.files.create({
-                    requestBody: {
-                        name: 'Drive Clone ' + new Date().toISOString().split('T')[0],
-                        mimeType: 'application/vnd.google-apps.folder'
-                    },
-                    fields: 'id'
+                // Lấy tên folder gốc
+                const sourceFolder = await checker.drive.files.get({
+                    fileId: sourceFolderId,
+                    fields: "name",
+                    supportsAllDrives: true
                 });
                 
-                console.log('🚀 Bt đầu sao chép...');
-                await checker.copyFolder(sourceFolderId, rootFolder.data.id);
-                console.log('✅ Hoàn thành sao chép!');
+                // Kiểm tra folder đã tồn tại trong drive-clone
+                const existingFolder = await checker.checkFileExists(
+                    sourceFolder.data.name,
+                    driveCloneFolder.id,
+                    'application/vnd.google-apps.folder'
+                );
+
+                let targetFolderId;
+                if (existingFolder) {
+                    console.log(`📁 Folder "${sourceFolder.data.name}" đã tồn tại, tiếp tục kiểm tra nội dung...`);
+                    targetFolderId = existingFolder.id;
+                } else {
+                    // Tạo folder mới với tên giống folder gốc
+                    const newFolder = await checker.drive.files.create({
+                        requestBody: {
+                            name: sourceFolder.data.name,
+                            mimeType: 'application/vnd.google-apps.folder',
+                            parents: [driveCloneFolder.id]
+                        },
+                        fields: 'id'
+                    });
+                    targetFolderId = newFolder.id;
+                    console.log(`📁 Đã tạo folder mới "${sourceFolder.data.name}"`);
+                }
+                
+                console.log('🚀 Bắt đầu sao chép và kiểm tra nội dung...');
+                await checker.copyFolder(sourceFolderId, targetFolderId);
+                console.log('✅ Hoàn thành!');
             } 
             else if (mode === '2') {
                 // Chế độ khóa quyền truy cập
+                const lockFolderName = generateOperationFolderName('Lock');
+                console.log(`📁 Đang tạo thư mục ${lockFolderName}...`);
+                
+                const newLockFolder = await checker.drive.files.create({
+                    requestBody: {
+                        name: lockFolderName,
+                        mimeType: 'application/vnd.google-apps.folder',
+                        parents: [driveCloneFolder.id]
+                    },
+                    fields: 'id'
+                });
+
                 console.log('🔒 Bắt đầu khóa quyền truy cập...');
-                await checker.lockFolder(sourceFolderId);
+                // Copy folder trước khi khóa
+                await checker.copyFolder(sourceFolderId, newLockFolder.data.id);
+                // Sau đó khóa folder mới
+                await checker.lockFolder(newLockFolder.data.id);
                 console.log('✅ Hoàn thành khóa quyền truy cập!');
             }
             else {
