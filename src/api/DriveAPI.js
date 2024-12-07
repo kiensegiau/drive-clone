@@ -401,6 +401,7 @@ class DriveAPI {
           const pdfFiles = [];
           const videoFiles = [];
           const folders = [];
+          const otherFiles = [];
 
           for (const file of response.data.files) {
             if (file.mimeType === 'application/vnd.google-apps.folder') {
@@ -424,6 +425,15 @@ class DriveAPI {
                 mimeType: file.mimeType,
                 targetFolderId: this.currentTargetFolderId,
                 depth: 0
+              });
+            } else {
+              otherFiles.push({
+                id: file.id,
+                fileId: file.id,
+                name: file.name,
+                size: file.size,
+                mimeType: file.mimeType,
+                targetFolderId: this.currentTargetFolderId
               });
             }
           }
@@ -517,6 +527,52 @@ class DriveAPI {
             } catch (videoError) {
               console.error(`❌ Lỗi xử lý video files:`, videoError.message);
               errors.push({type: 'video', error: videoError.message});
+              hasErrors = true;
+            }
+          }
+
+          // Thêm xử lý cho các file khác
+          if (otherFiles.length > 0) {
+            try {
+              console.log(`\n📦 Xử lý ${otherFiles.length} file khác...`);
+              for (const file of otherFiles) {
+                try {
+                  console.log(`📄 Đang tải file: ${file.name}`);
+                  const response = await this.sourceDrive.files.get({
+                    fileId: file.id,
+                    alt: 'media',
+                    supportsAllDrives: true
+                  }, {
+                    responseType: 'stream'
+                  });
+
+                  const uploadResponse = await this.targetDrive.files.create({
+                    requestBody: {
+                      name: file.name,
+                      parents: [this.currentTargetFolderId],
+                      mimeType: file.mimeType
+                    },
+                    media: {
+                      mimeType: file.mimeType,
+                      body: response.data
+                    },
+                    fields: 'id, name',
+                    supportsAllDrives: true
+                  });
+
+                  console.log(`✅ Đã tải xong: ${uploadResponse.data.name}`);
+                  this.stats.filesProcessed++;
+
+                } catch (fileError) {
+                  console.error(`❌ Lỗi tải file "${file.name}":`, fileError.message);
+                  errors.push({type: 'other_file', name: file.name, error: fileError.message});
+                  hasErrors = true;
+                  continue;
+                }
+              }
+            } catch (otherFilesError) {
+              console.error(`❌ Lỗi xử lý các file khác:`, otherFilesError.message);
+              errors.push({type: 'other_files', error: otherFilesError.message});
               hasErrors = true;
             }
           }
