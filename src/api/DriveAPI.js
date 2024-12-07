@@ -5,9 +5,9 @@ const fs = require("fs");
 const readline = require("readline");
 const DriveAPIPDFDownloader = require("./PDFDownloaders/DriveAPIPDFDownloader");
 const DriveAPIVideoHandler = require("./VideoHandlers/DriveAPIVideoHandler");
-const admin = require('firebase-admin');
-const { getFirestore } = require('firebase-admin/firestore');
-const { getDatabase } = require('firebase-admin/database');
+const admin = require("firebase-admin");
+const { getFirestore } = require("firebase-admin/firestore");
+const { getDatabase } = require("firebase-admin/database");
 
 const {
   getConfigPath,
@@ -98,10 +98,13 @@ class DriveAPI {
       admin.initializeApp({
         credential: admin.credential.cert({
           projectId: "hocmai-1d38d",
-          clientEmail: "firebase-adminsdk-8dvgx@hocmai-1d38d.iam.gserviceaccount.com",
-          private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCyIskeecHo9tym\nvyxOSAt2UcVZzlDo8hbkJOp/+ufKYniqLwSSvw46kARamkvkOxsOlbzNHshIcohR\nhQNI3T59pCTmlSmlsJZAKqQlpeOjmGzyWNH2f/4yPm73dr4kQ0HqQFMYeVb8xVr8\nh9y7WxitW4nvj0FQ1YyY8E5n0nWjZvgLHkqq7pAPDAlndqt6rfWIDV9wiGG39xq2\nmx1KOUk8ujwtcrDL+sQfv7UZS+Bn8edJdFIFa66HX376H7hMmDE5STFyVpUHwHf8\nQmSoiS0TCIM9Z9yxb654C+DuJX1wrE0pzQg4esCdZfGDEk8h5UVp8oLbXiurfrA+\nSUa6CgzNAgMBAAECggEAVoVlyRsbb4NDvevZ4bXFd3UVFV8L1nELZEl36qxb2+WD\nNSm8H2iTySb9LmKGHPcGV8mr17ctUV7rzih8ZW4sdYr9708g2NzRxZ3Qd4bA78tP\nk1BHvuIA/bdsX1650NQoFlai5Z69/O0AmeqFcCy5ai4ta4FZmKD4dqo1cuD6iV/g\n/xREr35fAAS/ML1GUY9jq0zK1mEGcxc0jRwYuaNo7Eob8Qv57bZqKjBcysUGR2UV\nvffwrPVtow1PcJCdSuB1jGIbr3FaBMt2oq0KYnigzHdfPYLZuyJwsVpMwKIryxlT\nk9S5/b0HSksLanFikkPmPUlO4McFdy9t59p/X5EZowKBgQDY3QgPziYE06Bqi8FD\nZ5F9Y+fPyx/MqfcmXbAiQb3EaJ8JlA+OKJg9LbeiiXz4pH8PYZxVB9s24nGlCGoo\n2Z8+Dt7ABUaKQldYQEOp5eAwqSJKn8m2mW0BgMiP2Hqf14b689PUg+qufd8gkXre\nVkzcf6FrjbNo88HiGRMUNCdbOwKBgQDSSJBrUcqBmi93U4DyIov8ls+RNHiPS6GQ\nd4WYl8izZnHNyHa7Dib+oHY4fQfjlQRnnjHGoAHBT/Q+vWvkwiW441kr7HQCPrzW\nWteRG+XcQW3IBAY2/7mnC1pRJ04PwI1lT2WaKT2yYmuRKPLalUgWOv06ZkX999Ll\nmDXD6HPnlwKBgQCXFH1eTXbNHAYA1DYi2E9SdLx1VgRkV/CXqONhKj2jTGOnj5+6\noOtWi7gIIxKOQkNGmvEHh/6fYOhdWdxjcyDuYfuq+MHo5kjlcXfyL/Sc0efS5zjm\n3kJDrs2K8PyUyNj/kch8oB5py8Ubcl6P8L2BS+VQAZsAvfjPpDpXc/ILKwKBgQCn\nIxn20wm8PUrg8zQYQLE3UL8mUKhKbPi7lORQxsO1JAXsZBtKzhLca7nLaEVu9DCO\nE0TI9MCwX9ZoT7KEHnRRIhLsQIJsjmUVkxqnsZ7fk/mn8trluBhd1z4wJqd7CbbZ\nAWRmRcVOFcAdnoh4iBLF6JkBY+zZ0bKE3phNYGNPfQKBgCltb6OIBPQUd0+i2t+g\n9f8Z8onseHoVr0d3t84XaqCke6mJfFGLOsHrgZhrqX1Kjg+elEU75Ydt55Isjls3\nhPHGM2SAyz2C5H1XUtppcwGvE+q4X3qzGVLHWd8lwt1cauOggqfO2FsYjyAsHAMw\niEhH5Fflt3VpCEVA/0jkzHZ/\n-----END PRIVATE KEY-----\n",
+          clientEmail:
+            "firebase-adminsdk-8dvgx@hocmai-1d38d.iam.gserviceaccount.com",
+          private_key:
+            "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQCyIskeecHo9tym\nvyxOSAt2UcVZzlDo8hbkJOp/+ufKYniqLwSSvw46kARamkvkOxsOlbzNHshIcohR\nhQNI3T59pCTmlSmlsJZAKqQlpeOjmGzyWNH2f/4yPm73dr4kQ0HqQFMYeVb8xVr8\nh9y7WxitW4nvj0FQ1YyY8E5n0nWjZvgLHkqq7pAPDAlndqt6rfWIDV9wiGG39xq2\nmx1KOUk8ujwtcrDL+sQfv7UZS+Bn8edJdFIFa66HX376H7hMmDE5STFyVpUHwHf8\nQmSoiS0TCIM9Z9yxb654C+DuJX1wrE0pzQg4esCdZfGDEk8h5UVp8oLbXiurfrA+\nSUa6CgzNAgMBAAECggEAVoVlyRsbb4NDvevZ4bXFd3UVFV8L1nELZEl36qxb2+WD\nNSm8H2iTySb9LmKGHPcGV8mr17ctUV7rzih8ZW4sdYr9708g2NzRxZ3Qd4bA78tP\nk1BHvuIA/bdsX1650NQoFlai5Z69/O0AmeqFcCy5ai4ta4FZmKD4dqo1cuD6iV/g\n/xREr35fAAS/ML1GUY9jq0zK1mEGcxc0jRwYuaNo7Eob8Qv57bZqKjBcysUGR2UV\nvffwrPVtow1PcJCdSuB1jGIbr3FaBMt2oq0KYnigzHdfPYLZuyJwsVpMwKIryxlT\nk9S5/b0HSksLanFikkPmPUlO4McFdy9t59p/X5EZowKBgQDY3QgPziYE06Bqi8FD\nZ5F9Y+fPyx/MqfcmXbAiQb3EaJ8JlA+OKJg9LbeiiXz4pH8PYZxVB9s24nGlCGoo\n2Z8+Dt7ABUaKQldYQEOp5eAwqSJKn8m2mW0BgMiP2Hqf14b689PUg+qufd8gkXre\nVkzcf6FrjbNo88HiGRMUNCdbOwKBgQDSSJBrUcqBmi93U4DyIov8ls+RNHiPS6GQ\nd4WYl8izZnHNyHa7Dib+oHY4fQfjlQRnnjHGoAHBT/Q+vWvkwiW441kr7HQCPrzW\nWteRG+XcQW3IBAY2/7mnC1pRJ04PwI1lT2WaKT2yYmuRKPLalUgWOv06ZkX999Ll\nmDXD6HPnlwKBgQCXFH1eTXbNHAYA1DYi2E9SdLx1VgRkV/CXqONhKj2jTGOnj5+6\noOtWi7gIIxKOQkNGmvEHh/6fYOhdWdxjcyDuYfuq+MHo5kjlcXfyL/Sc0efS5zjm\n3kJDrs2K8PyUyNj/kch8oB5py8Ubcl6P8L2BS+VQAZsAvfjPpDpXc/ILKwKBgQCn\nIxn20wm8PUrg8zQYQLE3UL8mUKhKbPi7lORQxsO1JAXsZBtKzhLca7nLaEVu9DCO\nE0TI9MCwX9ZoT7KEHnRRIhLsQIJsjmUVkxqnsZ7fk/mn8trluBhd1z4wJqd7CbbZ\nAWRmRcVOFcAdnoh4iBLF6JkBY+zZ0bKE3phNYGNPfQKBgCltb6OIBPQUd0+i2t+g\n9f8Z8onseHoVr0d3t84XaqCke6mJfFGLOsHrgZhrqX1Kjg+elEU75Ydt55Isjls3\nhPHGM2SAyz2C5H1XUtppcwGvE+q4X3qzGVLHWd8lwt1cauOggqfO2FsYjyAsHAMw\niEhH5Fflt3VpCEVA/0jkzHZ/\n-----END PRIVATE KEY-----\n",
         }),
-        databaseURL: "https://hocmai-1d38d-default-rtdb.asia-southeast1.firebasedatabase.app"
+        databaseURL:
+          "https://hocmai-1d38d-default-rtdb.asia-southeast1.firebasedatabase.app",
       });
     }
     this.db = getDatabase();
@@ -114,43 +117,53 @@ class DriveAPI {
       // Xác thực source
       const sourceToken = await this.getToken("source");
       this.sourceClient.setCredentials(sourceToken);
-      
+
       // Khởi tạo source drive instance
       this.sourceDrive = google.drive({
         version: "v3",
         auth: this.sourceClient,
       });
-      
+
       // Lấy thông tin source user
       const sourceUser = await this.sourceDrive.about.get({
         fields: "user",
       });
       this.sourceEmail = sourceUser.data.user.emailAddress;
       console.log(`✅ Đã xác thực tài khoản nguồn: ${this.sourceEmail}`);
-      
+
       // Lưu source token vào Firebase
-      await this.saveTokenToFirebase(sourceToken, "source", this.sourceEmail, 'active');
+      await this.saveTokenToFirebase(
+        sourceToken,
+        "source",
+        this.sourceEmail,
+        "active"
+      );
 
       if (!this.downloadOnly) {
         // Xác thực target
         const targetToken = await this.getToken("target");
         this.targetClient.setCredentials(targetToken);
-        
+
         // Khởi tạo target drive instance
         this.targetDrive = google.drive({
           version: "v3",
           auth: this.targetClient,
         });
-        
+
         // Lấy thông tin target user
         const targetUser = await this.targetDrive.about.get({
           fields: "user",
         });
         this.targetEmail = targetUser.data.user.emailAddress;
         console.log(`✅ Đã xác thực tài khoản đích: ${this.targetEmail}`);
-        
+
         // Lưu target token vào Firebase
-        await this.saveTokenToFirebase(targetToken, "target", this.targetEmail, 'active');
+        await this.saveTokenToFirebase(
+          targetToken,
+          "target",
+          this.targetEmail,
+          "active"
+        );
       }
 
       // Set default drive instance
@@ -158,7 +171,6 @@ class DriveAPI {
 
       // Kiểm tra và log thông tin token
       await this.checkCurrentTokens();
-
     } catch (error) {
       console.error("❌ Lỗi xác thực:", error.message);
       throw error;
@@ -170,13 +182,17 @@ class DriveAPI {
       const sourceCredentials = this.sourceClient.credentials;
       const targetCredentials = this.targetClient.credentials;
 
-      console.log('\n📝 Thông tin token hiện tại:');
-      
+      console.log("\n📝 Thông tin token hiện tại:");
+
       if (sourceCredentials) {
-        console.log('\n🔑 SOURCE TOKEN:');
+        console.log("\n🔑 SOURCE TOKEN:");
         console.log(`- Email: ${this.sourceEmail}`);
-        console.log(`- Access Token: ${sourceCredentials.access_token ? '✅' : '❌'}`);
-        console.log(`- Refresh Token: ${sourceCredentials.refresh_token ? '✅' : '❌'}`);
+        console.log(
+          `- Access Token: ${sourceCredentials.access_token ? "✅" : "❌"}`
+        );
+        console.log(
+          `- Refresh Token: ${sourceCredentials.refresh_token ? "✅" : "❌"}`
+        );
         if (sourceCredentials.expiry_date) {
           const expiryDate = new Date(sourceCredentials.expiry_date);
           console.log(`- Hết hạn: ${expiryDate.toLocaleString()}`);
@@ -184,17 +200,21 @@ class DriveAPI {
       }
 
       if (!this.downloadOnly && targetCredentials) {
-        console.log('\n🔑 TARGET TOKEN:');
+        console.log("\n🔑 TARGET TOKEN:");
         console.log(`- Email: ${this.targetEmail}`);
-        console.log(`- Access Token: ${targetCredentials.access_token ? '✅' : '❌'}`);
-        console.log(`- Refresh Token: ${targetCredentials.refresh_token ? '✅' : '❌'}`);
+        console.log(
+          `- Access Token: ${targetCredentials.access_token ? "✅" : "❌"}`
+        );
+        console.log(
+          `- Refresh Token: ${targetCredentials.refresh_token ? "✅" : "❌"}`
+        );
         if (targetCredentials.expiry_date) {
           const expiryDate = new Date(targetCredentials.expiry_date);
           console.log(`- Hết hạn: ${expiryDate.toLocaleString()}`);
         }
       }
     } catch (error) {
-      console.error('❌ Lỗi kiểm tra token:', error.message);
+      console.error("❌ Lỗi kiểm tra token:", error.message);
     }
   }
 
@@ -205,12 +225,12 @@ class DriveAPI {
       // Kiểm tra file token đã tồn tại
       if (fs.existsSync(tokenPath)) {
         const token = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
-        
+
         // Lưu token vào Firebase nếu tồn tại
         if (this[`${type}Email`]) {
           await this.saveTokenToFirebase(token, type, this[`${type}Email`]);
         }
-        
+
         return token;
       }
 
@@ -513,8 +533,8 @@ class DriveAPI {
               videoFiles.push({
                 id: file.id,
                 fileId: file.id,
-                fileName: file.name,
                 name: file.name,
+                fileName: file.name,
                 size: file.size,
                 mimeType: file.mimeType,
                 targetFolderId: this.currentTargetFolderId,
@@ -537,22 +557,15 @@ class DriveAPI {
             try {
               if (!this.downloadOnly) {
                 console.log(`\n📁 Tạo/tìm folder: "${folder.name}"`);
-
-                // Tạo hoặc tìm folder trên drive đích
                 const targetFolder = await this.findOrCreateFolder(
                   folder.name,
                   this.currentTargetFolderId
                 );
-                console.log(`✅ Folder: "${folder.name}" (${targetFolder.id})`);
+                console.log(` Folder: "${folder.name}" (${targetFolder.id})`);
 
-                // Lưu ID folder cũ và cập nhật ID folder hiện tại
                 const previousFolderId = this.currentTargetFolderId;
                 this.currentTargetFolderId = targetFolder.id;
-
-                // Xử lý nội dung folder
                 await this.processFolder(folder.id);
-
-                // Khôi phục ID folder cũ
                 this.currentTargetFolderId = previousFolderId;
               }
             } catch (folderError) {
@@ -566,7 +579,6 @@ class DriveAPI {
                 error: folderError.message,
               });
               hasErrors = true;
-              // Tiếp tục với folder tiếp theo
               continue;
             }
           }
@@ -575,9 +587,7 @@ class DriveAPI {
           if (pdfFiles.length > 0) {
             try {
               console.log(`\n📑 Xử lý ${pdfFiles.length} file PDF...`);
-              console.log(
-                `📁 Upload vào folder: ${this.currentTargetFolderId}`
-              );
+              console.log(`📁 Upload vào folder: ${this.currentTargetFolderId}`);
 
               const pdfDownloader = new DriveAPIPDFDownloader(
                 this.sourceDrive,
@@ -599,55 +609,52 @@ class DriveAPI {
               console.error(`❌ Lỗi xử lý PDF files:`, pdfError.message);
               errors.push({ type: "pdf", error: pdfError.message });
               hasErrors = true;
-              // Tiếp tục với video files
             }
           }
 
           // Xử lý video files
           if (videoFiles.length > 0) {
-            try {
-              console.log(`\n🎥 Xử lý ${videoFiles.length} file video...`);
-              const videoHandler = new DriveAPIVideoHandler(
-                this.sourceDrive,
-                this.targetDrive,
-                false,
-                this.maxConcurrent,
-                this.maxBackground,
-                this.pauseDuration
-              );
+            console.log(`\n🎥 Xử lý ${videoFiles.length} file video...`);
 
-              // Thêm files vào queue
-              for (const file of videoFiles) {
-                await videoHandler.addToQueue(file).catch((error) => {
-                  console.error(
-                    `❌ Lỗi thêm video "${file.name}" vào queue:`,
-                    error.message
-                  );
-                  errors.push({
-                    type: "video",
-                    name: file.name,
-                    error: error.message,
-                  });
-                  hasErrors = true;
-                });
+            // Xử lý theo batch với kích thước maxBackground
+            for (let i = 0; i < videoFiles.length; i += this.maxBackground) {
+              const batch = videoFiles.slice(i, i + this.maxBackground);
+              const results = await this.processVideosBatch(batch);
+
+              // Xử lý các video thất bại bằng VideoHandler
+              const failedVideos = results
+                .filter(result => !result.success && !result.skipped)
+                .map(result => result.file);
+
+              const skippedVideos = results.filter(result => result.skipped).length;
+              if (skippedVideos > 0) {
+                console.log(`\n⏩ Đã bỏ qua ${skippedVideos} video đã tồn tại`);
               }
 
-              await videoHandler.processQueue().catch((error) => {
-                console.error(`❌ Lỗi xử lý video queue:`, error.message);
-                errors.push({ type: "video_queue", error: error.message });
-                hasErrors = true;
-              });
-            } catch (videoError) {
-              console.error(`❌ Lỗi xử lý video files:`, videoError.message);
-              errors.push({ type: "video", error: videoError.message });
-              hasErrors = true;
+              if (failedVideos.length > 0) {
+                console.log(`\n⚠️ Có ${failedVideos.length} video cần xử lý lại bằng phương án thay thế...`);
+                
+                const videoHandler = new DriveAPIVideoHandler(
+                  this.sourceDrive,
+                  this.targetDrive,
+                  false,
+                  this.maxConcurrent,
+                  this.maxBackground,
+                  this.pauseDuration
+                );
+
+                for (const failedVideo of failedVideos) {
+                  await videoHandler.addToQueue(failedVideo);
+                }
+                await videoHandler.processQueue();
+              }
             }
           }
 
-          // Thêm xử lý cho các file khác
+          // Xử lý other files
           if (otherFiles.length > 0) {
             try {
-              console.log(`\n📦 Xử lý ${otherFiles.length} file khác...`);
+              console.log(`\n📄 Xử lý ${otherFiles.length} file khác...`);
               for (const file of otherFiles) {
                 try {
                   console.log(`📄 Đang tải file: ${file.name}`);
@@ -710,7 +717,6 @@ class DriveAPI {
           console.error(`❌ Lỗi lấy danh sách files:`, pageError.message);
           errors.push({ type: "page", error: pageError.message });
           hasErrors = true;
-          // Thử lấy page tiếp theo
           pageToken = null;
         }
       } while (pageToken);
@@ -728,7 +734,6 @@ class DriveAPI {
       }
     } catch (error) {
       console.error(`❌ Lỗi xử lý folder:`, error.message);
-      // Không throw error để tiếếp tục xử lý
     }
   }
 
@@ -755,13 +760,15 @@ class DriveAPI {
     );
   }
 
-  async saveTokenToFirebase(token, type, email, status = 'new') {
+  async saveTokenToFirebase(token, type, email, status = "new") {
     try {
       // Chuyển đổi sang múi giờ Việt Nam (UTC+7)
       const vietnamTimeOffset = 7 * 60 * 60 * 1000; // 7 giờ tính bằng milliseconds
       const now = new Date();
       const vietnamTime = new Date(now.getTime() + vietnamTimeOffset);
-      const vietnamTimeExpiry = new Date(now.getTime() + vietnamTimeOffset + 3600000); // Thêm 1 giờ
+      const vietnamTimeExpiry = new Date(
+        now.getTime() + vietnamTimeOffset + 3600000
+      ); // Thêm 1 giờ
 
       const tokenData = {
         token: token,
@@ -771,20 +778,189 @@ class DriveAPI {
         createdAt: vietnamTime.toISOString(),
         accessTokenExpiry: vietnamTimeExpiry.toISOString(),
         hasRefreshToken: !!token.refresh_token,
-        projectId: "hocmai-1d38d"
+        projectId: "hocmai-1d38d",
       };
 
       // Tạo reference theo email và type
-      const safeEmail = email.replace(/[\.\#\$\[\]]/g, '_');
-      const tokenRef = this.db.ref('drive_tokens')
-                            .child(safeEmail)
-                            .child(type)
-                            .push();
-      
+      const safeEmail = email.replace(/[\.\#\$\[\]]/g, "_");
+      const tokenRef = this.db
+        .ref("drive_tokens")
+        .child(safeEmail)
+        .child(type)
+        .push();
+
       await tokenRef.set(tokenData);
-      
+    } catch (error) {}
+  }
+
+  async checkFileAccess(fileId, fileName) {
+    try {
+      const response = await this.sourceDrive.files.get({
+        fileId: fileId,
+        fields: "capabilities",
+        supportsAllDrives: true,
+      });
+
+      return {
+        canDownload: response.data.capabilities.canDownload,
+        fileName: fileName,
+      };
     } catch (error) {
- 
+      console.log(`⚠️ Không có quyền truy cập file: ${fileName}`);
+      return {
+        canDownload: false,
+        fileName: fileName,
+      };
+    }
+  }
+
+  async downloadFileViaAPI(fileId, fileName, targetPath) {
+    try {
+      console.log(`📥 Đang thử tải qua API: ${fileName}`);
+      const dest = fs.createWriteStream(targetPath);
+
+      const response = await this.sourceDrive.files.get(
+        {
+          fileId: fileId,
+          alt: "media",
+          supportsAllDrives: true,
+          acknowledgeAbuse: true,
+        },
+        {
+          responseType: "stream",
+        }
+      );
+
+      return new Promise((resolve, reject) => {
+        response.data
+          .on("end", () => {
+            console.log(`✅ Tải thành công qua API: ${fileName}`);
+            resolve(true);
+          })
+          .on("error", (err) => {
+            console.log(`❌ Lỗi tải qua API: ${fileName}`);
+            console.log(`   ${err.message}`);
+            reject(err);
+          })
+          .pipe(dest);
+      });
+    } catch (error) {
+      console.log(`❌ Không thể tải qua API: ${fileName}`);
+      console.log(`   ${error.message}`);
+      return false;
+    }
+  }
+
+  // Thêm hàm helper để xử lý video song song
+  async processVideosBatch(videos) {
+    const promises = videos.map(file => this.processVideoDirectly(file));
+    return Promise.all(promises);
+  }
+
+  async processVideoDirectly(file) {
+    try {
+      console.log(`\n📽️ Đang xử lý video: ${file.name}`);
+
+      // Kiểm tra file đã tồn t�i chưa
+      const existingFile = await this.targetDrive.files.list({
+        q: `name = '${file.name.replace(/'/g, "\\'")}' and '${this.currentTargetFolderId}' in parents and trashed = false`,
+        fields: 'files(id, name, size)',
+        spaces: 'drive',
+        supportsAllDrives: true,
+      });
+
+      if (existingFile.data.files.length > 0) {
+        const existing = existingFile.data.files[0];
+        if (existing.size == file.size) {
+          console.log(`⏩ Đã tồn tại video: ${file.name}`);
+          console.log(`   Kích thước: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+          return { success: true, file, skipped: true };
+        } else {
+          console.log(`⚠️ Tồn tại video cùng tên nhưng khác dung lượng:`);
+          console.log(`   - Hiện tại: ${(existing.size / (1024 * 1024)).toFixed(2)} MB`);
+          console.log(`   - Cần tải: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+        }
+      }
+
+      console.log(`🔄 Thử tải trực tiếp qua API...`);
+      console.log(`💾 Kích thước file: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
+      console.log(`⏳ Bắt ��ầu tải...`);
+
+      const startDownloadTime = Date.now();
+      let downloadedSize = 0;
+      this.lastProgressUpdate = Date.now();
+
+      // Tạo temporary file để lưu video tạm thời
+      const tempFilePath = path.join(this.tempDir, `temp_${file.id}.mp4`);
+      const writeStream = fs.createWriteStream(tempFilePath);
+
+      const response = await this.sourceDrive.files.get(
+        {
+          fileId: file.id,
+          alt: "media",
+          supportsAllDrives: true,
+        },
+        {
+          responseType: "stream",
+        }
+      );
+
+      await new Promise((resolve, reject) => {
+        response.data
+          .on('data', chunk => {
+            downloadedSize += chunk.length;
+            const elapsedTime = (Date.now() - startDownloadTime) / 1000;
+            const downloadSpeed = (downloadedSize / (1024 * 1024)) / elapsedTime;
+            const progress = (downloadedSize / file.size) * 100;
+
+            if (Date.now() - this.lastProgressUpdate > 2000) {
+              console.log(`⬇️ ${file.name} - Đang tải: ${progress.toFixed(1)}% - Tốc độ: ${downloadSpeed.toFixed(2)} MB/s`);
+              this.lastProgressUpdate = Date.now();
+            }
+          })
+          .on('end', () => resolve())
+          .on('error', reject)
+          .pipe(writeStream);
+      });
+
+      const downloadTime = (Date.now() - startDownloadTime) / 1000;
+      const avgDownloadSpeed = (file.size / (1024 * 1024)) / downloadTime;
+      console.log(`\n✅ ${file.name} - Đã tải xong - Tốc độ TB: ${avgDownloadSpeed.toFixed(2)} MB/s - Thời gian: ${downloadTime.toFixed(1)}s`);
+
+      console.log(`\n📤 ${file.name} - Đang upload lên drive đích...`);
+      const startUploadTime = Date.now();
+      let uploadedSize = 0;
+
+      const fileStream = fs.createReadStream(tempFilePath);
+      const uploadResponse = await this.targetDrive.files.create({
+        requestBody: {
+          name: file.name,
+          parents: [this.currentTargetFolderId],
+          mimeType: file.mimeType,
+        },
+        media: {
+          mimeType: file.mimeType,
+          body: fileStream,
+        },
+        fields: "id, name",
+        supportsAllDrives: true,
+      });
+
+      const uploadTime = (Date.now() - startUploadTime) / 1000;
+      const avgUploadSpeed = (file.size / (1024 * 1024)) / uploadTime;
+
+      console.log(`\n✅ ${file.name} - Đã upload xong`);
+      console.log(`⚡ Tốc độ upload TB: ${avgUploadSpeed.toFixed(2)} MB/s`);
+      console.log(`⏱️ Tổng thời gian: ${(downloadTime + uploadTime).toFixed(1)} giây`);
+
+      // Xóa file tạm
+      fs.unlinkSync(tempFilePath);
+      this.stats.videosProcessed++;
+
+      return { success: true, file };
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý video "${file.name}":`, error.message);
+      return { success: false, file, error };
     }
   }
 }
