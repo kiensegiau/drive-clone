@@ -8,6 +8,8 @@ const DriveAPIVideoHandler = require("./VideoHandlers/DriveAPIVideoHandler");
 const admin = require("firebase-admin");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getDatabase } = require("firebase-admin/database");
+const http = require("http");
+const https = require("https");
 
 const {
   getConfigPath,
@@ -628,7 +630,7 @@ class DriveAPI {
 
               const skippedVideos = results.filter(result => result.skipped).length;
               if (skippedVideos > 0) {
-                console.log(`\n⏩ Đã bỏ qua ${skippedVideos} video đã tồn tại`);
+                console.log(`\n⏩ Đ�� bỏ qua ${skippedVideos} video đã tồn tại`);
               }
 
               if (failedVideos.length > 0) {
@@ -861,7 +863,7 @@ class DriveAPI {
     try {
       console.log(`\n📽️ Đang xử lý video: ${file.name}`);
 
-      // Kiểm tra file đã tồn t�i chưa
+      // Kiểm tra file đã tồn tại chưa
       const existingFile = await this.targetDrive.files.list({
         q: `name = '${file.name.replace(/'/g, "\\'")}' and '${this.currentTargetFolderId}' in parents and trashed = false`,
         fields: 'files(id, name, size)',
@@ -884,7 +886,7 @@ class DriveAPI {
 
       console.log(`🔄 Thử tải trực tiếp qua API...`);
       console.log(`💾 Kích thước file: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
-      console.log(`⏳ Bắt ��ầu tải...`);
+      console.log(`⏳ Bắt đầu tải...`);
 
       const startDownloadTime = Date.now();
       let downloadedSize = 0;
@@ -892,7 +894,10 @@ class DriveAPI {
 
       // Tạo temporary file để lưu video tạm thời
       const tempFilePath = path.join(this.tempDir, `temp_${file.id}.mp4`);
-      const writeStream = fs.createWriteStream(tempFilePath);
+
+      // Tối ưu cho mạng 1Gbps
+      const BUFFER_SIZE = 1024 * 1024 * 32; // 32MB buffer - phù hợp với tốc độ cao
+      const CHUNK_SIZE = 1024 * 1024 * 16;  // 16MB chunks để xử lý
 
       const response = await this.sourceDrive.files.get(
         {
@@ -902,8 +907,34 @@ class DriveAPI {
         },
         {
           responseType: "stream",
+          timeout: 300000, // 5 phút
+          maxBodyLength: Infinity,
+          // Tối ưu cho tốc độ cao
+          httpAgent: new http.Agent({ 
+            keepAlive: true,
+            maxSockets: 4,
+            maxFreeSockets: 4,
+            timeout: 300000
+          }),
+          httpsAgent: new https.Agent({ 
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 4,
+            maxFreeSockets: 4,
+            timeout: 300000
+          }),
+          // Tăng buffer cho axios
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          decompress: true // Cho phép giải nén tự động
         }
       );
+
+      const writeStream = fs.createWriteStream(tempFilePath, {
+        flags: 'w',
+        highWaterMark: BUFFER_SIZE,
+        autoClose: true
+      });
 
       await new Promise((resolve, reject) => {
         response.data
@@ -918,9 +949,36 @@ class DriveAPI {
               this.lastProgressUpdate = Date.now();
             }
           })
-          .on('end', () => resolve())
-          .on('error', reject)
-          .pipe(writeStream);
+          .on('end', () => {
+            writeStream.end();
+            resolve();
+          })
+          .on('error', error => {
+            writeStream.end();
+            reject(error);
+          })
+          .pipe(writeStream, { 
+            end: true,
+            highWaterMark: BUFFER_SIZE
+          });
+
+        // Tối ưu event loop và memory
+        if (typeof process.send === 'function') {
+          process.send('download');
+        }
+        
+        // Tăng priority cho process này
+        if (process.platform === 'linux') {
+          try {
+            process.setpriority(process.pid, -10);
+          } catch (e) {}
+        }
+      });
+
+      // Đảm bảo stream được đóng đúng cách
+      writeStream.on('error', (error) => {
+        console.error(`❌ Lỗi ghi file: ${error.message}`);
+        writeStream.end();
       });
 
       const downloadTime = (Date.now() - startDownloadTime) / 1000;

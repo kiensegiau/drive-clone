@@ -40,6 +40,7 @@ class VideoQualityChecker {
     this.INITIAL_DELAY = 1000;
     this.MAX_DELAY = 64000;
     this.QUOTA_RESET_TIME = 60000;
+    this.TIMEOUT = 30000;
   }
 
   // Khởi tạo và lấy token
@@ -115,32 +116,50 @@ class VideoQualityChecker {
     let quotaRetryCount = 0;
 
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
-      try {
-        if (isQuotaError) {
-          const waitTime = quotaWaitTime * Math.pow(2, quotaRetryCount);
-          console.log(`⏳ Đang đợi ${waitTime/1000}s để reset quota (lần ${quotaRetryCount + 1})...`);
-          await this.delay(waitTime);
-          isQuotaError = false;
-          quotaRetryCount++;
-        }
+        try {
+            if (isQuotaError) {
+                const waitTime = quotaWaitTime * Math.pow(2, quotaRetryCount);
+                console.log(`⏳ Đang đợi ${waitTime/1000}s để reset quota (lần ${quotaRetryCount + 1})...`);
+                await this.delay(waitTime);
+                isQuotaError = false;
+                quotaRetryCount++;
+            }
 
-        const result = await operation();
-        return result;
+            // Thêm timeout cho operation
+            const timeoutPromise = new Promise((_, reject) => {
+                setTimeout(() => reject(new Error('Operation timeout')), this.TIMEOUT);
+            });
 
-      } catch (error) {
-        if (error.code === 429 || error.message.includes('quota')) {
-          isQuotaError = true;
-          continue;
-        }
+            const result = await Promise.race([
+                operation(),
+                timeoutPromise
+            ]);
 
-        console.log(`🔍 Lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
-        await this.delay(delay);
-        delay = Math.min(delay * 2, this.MAX_DELAY);
-        
-        if (attempt === this.MAX_RETRIES - 1) {
-          throw error;
+            return result;
+
+        } catch (error) {
+            const isTimeout = error.message.includes('ETIMEDOUT') || error.message.includes('Operation timeout');
+            const isNetworkError = error.code === 'ECONNRESET' || error.code === 'ECONNREFUSED';
+
+            if (error.code === 429 || error.message.includes('quota')) {
+                isQuotaError = true;
+                continue;
+            }
+
+            if (isTimeout || isNetworkError) {
+                console.log(`🔄 Lỗi kết nối (lần ${attempt + 1}/${this.MAX_RETRIES}): ${error.message}`);
+                console.log(`⏳ Đợi ${delay/1000}s trước khi thử lại...`);
+            } else {
+                console.log(`🔍 Lỗi API (lần ${attempt + 1}/${this.MAX_RETRIES}):`, error.message);
+            }
+
+            await this.delay(delay);
+            delay = Math.min(delay * 2, this.MAX_DELAY);
+            
+            if (attempt === this.MAX_RETRIES - 1) {
+                throw error;
+            }
         }
-      }
     }
   }
 
@@ -317,43 +336,20 @@ class VideoQualityChecker {
   // Thêm phương thức mới để khóa quyền truy cập
   async lockFileAccess(fileId) {
     try {
-      // Xóa tất cả permissions hiện tại (trừ owner)
-      const permissions = await this.withRetry(async () => {
-        return this.drive.permissions.list({
-          fileId: fileId,
-          fields: 'permissions(id,role,type,emailAddress)',
-          supportsAllDrives: true
-        });
-      });
-
-      for (const permission of permissions.data.permissions) {
-        if (permission.role !== 'owner') {
-          await this.withRetry(async () => {
-            await this.drive.permissions.delete({
-              fileId: fileId,
-              permissionId: permission.id,
-              supportsAllDrives: true
+        // Cập nhật trực tiếp settings mà không cần xóa permissions cũ
+        await this.withRetry(async () => {
+            await this.drive.files.update({
+                fileId: fileId,
+                requestBody: {
+                    writersCanShare: false,
+                    copyRequiresWriterPermission: true,
+                    viewersCanCopyContent: false
+                },
+                supportsAllDrives: true
             });
-          });
-        }
-      }
-
-      // Cập nhật cài đặt file trực tiếp qua Drive API
-      await this.withRetry(async () => {
-        await this.drive.files.update({
-          fileId: fileId,
-          requestBody: {
-            writersCanShare: false,
-            copyRequiresWriterPermission: true,
-            viewersCanCopyContent: false
-          },
-          supportsAllDrives: true
         });
-      });
-
-      console.log(`🔒 Đã khóa quyền truy cập file ${fileId}`);
     } catch (error) {
-      console.error(`❌ Lỗi khóa file ${fileId}:`, error.message);
+        console.error(`❌ Lỗi khóa file ${fileId}:`, error.message);
     }
   }
 
@@ -361,72 +357,73 @@ class VideoQualityChecker {
   async lockFolder(folderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      console.log(`\n${indent}🔍 Đang quét folder ID: ${folderId}`);
-
-      const folderInfo = await this.withRetry(async () => {
-        return this.drive.files.get({
-          fileId: folderId,
-          fields: "name,owners",
-          supportsAllDrives: true
+        const response = await this.withRetry(async () => {
+            return this.drive.files.list({
+                q: `'${folderId}' in parents and trashed = false`,
+                fields: "files(id, name, mimeType)",
+                pageSize: 1000,
+                supportsAllDrives: true,
+                includeItemsFromAllDrives: true,
+            });
         });
-      });
-      console.log(`${indent}📂 Tên folder: "${folderInfo.data.name}"`);
 
-      const response = await this.withRetry(async () => {
-        return this.drive.files.list({
-          q: `'${folderId}' in parents and trashed = false`,
-          fields: "files(id, name, mimeType, size, owners)",
-          pageSize: 100,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-        });
-      });
+        const items = response.data.files;
+        console.log(`${indent}📂 Đang xử lý ${items.length} items...`);
 
-      const items = response.data.files;
-      console.log(`${indent} Tìm thấy ${items.length} items trong folder`);
-      
-      let stats = {
-        totalFiles: 0,
-        totalFolders: 0,
-        processedFiles: 0,
-        processedFolders: 0,
-        errors: 0
-      };
+        // Tách files và folders
+        const files = items.filter(item => item.mimeType !== "application/vnd.google-apps.folder");
+        const folders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
 
-      for (const item of items) {
-        try {
-          if (item.mimeType === "application/vnd.google-apps.folder") {
-            stats.totalFolders++;
-            console.log(`\n${indent}📁 Đang xử lý folder: "${item.name}"`);
-            await this.lockFolder(item.id, depth + 1);
-            stats.processedFolders++;
-          } else {
-            stats.totalFiles++;
-            console.log(`${indent}📄 Đang khóa file: "${item.name}"`);
-            const owner = item.owners ? item.owners[0].emailAddress : 'Unknown';
-            console.log(`${indent}   - Owner: ${owner}`);
-            console.log(`${indent}   - Size: ${this.formatFileSize(item.size)}`);
-            
-            await this.lockFileAccess(item.id);
-            stats.processedFiles++;
-            console.log(`${indent}✅ Đã khóa file: "${item.name}"`);
-          }
-        } catch (error) {
-          stats.errors++;
-          console.error(`${indent}❌ Lỗi xử lý "${item.name}":`, error.message);
+        // Xử lý song song các files
+        const batchSize = 3;
+        let processedFiles = 0;
+        let skippedFiles = 0;
+
+        for (let i = 0; i < files.length; i += batchSize) {
+            const batch = files.slice(i, i + batchSize);
+            try {
+                console.log(`${indent}🔄 Batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(files.length/batchSize)} (${batch.length} files)`);
+                
+                await Promise.all(batch.map(async (file) => {
+                    try {
+                        await this.withRetry(async () => {
+                            await this.lockFileAccess(file.id);
+                            processedFiles++;
+                            console.log(`${indent}✅ Đã khóa: ${file.name}`);
+                        });
+                    } catch (error) {
+                        skippedFiles++;
+                        console.log(`${indent}⏩ Bỏ qua file "${file.name}"`);
+                    }
+                }));
+
+                // Delay nhỏ giữa các batch
+                if (i + batchSize < files.length) {
+                    await this.delay(this.REQUEST_DELAY);
+                }
+
+            } catch (error) {
+                // Bỏ qua lỗi batch và tiếp tục batch tiếp theo
+                console.log(`${indent}⏩ Bỏ qua batch do lỗi, tiếp tục...`);
+                await this.delay(this.REQUEST_DELAY);
+            }
         }
-        await this.delay(100);
-      }
 
-      console.log(`\n${indent}📊 Thống kê folder "${folderInfo.data.name}":`);
-      console.log(`${indent}   - Tổng số folder: ${stats.totalFolders}`);
-      console.log(`${indent}   - Folder đã xử lý: ${stats.processedFolders}`);
-      console.log(`${indent}   - Tổng số file: ${stats.totalFiles}`);
-      console.log(`${indent}   - File đã xử lý: ${stats.processedFiles}`);
-      console.log(`${indent}   - Số lỗi: ${stats.errors}`);
+        // Xử lý tuần tự các folders
+        for (const folder of folders) {
+            try {
+                console.log(`${indent}📁 Folder: ${folder.name}`);
+                await this.lockFolder(folder.id, depth + 1);
+            } catch (error) {
+                console.log(`${indent}⏩ Bỏ qua folder "${folder.name}"`);
+            }
+            await this.delay(this.REQUEST_DELAY);
+        }
+
+        console.log(`${indent}✅ Hoàn thành: ${processedFiles} thành công, ${skippedFiles} bỏ qua`);
 
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
+        console.log(`${indent}⏩ Bỏ qua folder do lỗi: ${error.message}`);
     }
   }
 
@@ -559,24 +556,9 @@ if (require.main === module) {
                 console.log('✅ Hoàn thành!');
             } 
             else if (mode === '2') {
-                // Chế độ khóa quyền truy cập
-                const lockFolderName = generateOperationFolderName('Lock');
-                console.log(`📁 Đang tạo thư mục ${lockFolderName}...`);
-                
-                const newLockFolder = await checker.drive.files.create({
-                    requestBody: {
-                        name: lockFolderName,
-                        mimeType: 'application/vnd.google-apps.folder',
-                        parents: [driveCloneFolder.id]
-                    },
-                    fields: 'id'
-                });
-
+                // Khóa trực tiếp folder gốc
                 console.log('🔒 Bắt đầu khóa quyền truy cập...');
-                // Copy folder trước khi khóa
-                await checker.copyFolder(sourceFolderId, newLockFolder.data.id);
-                // Sau đó khóa folder mới
-                await checker.lockFolder(newLockFolder.data.id);
+                await checker.lockFolder(sourceFolderId);
                 console.log('✅ Hoàn thành khóa quyền truy cập!');
             }
             else {
