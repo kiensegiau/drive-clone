@@ -232,8 +232,29 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
+      
+      // Đảm bảo giải phóng slot Chrome
       this.activeChrome.delete(fileName);
-      throw error;
+      
+      // Thêm vào danh sách retry nếu chưa thử quá nhiều lần
+      const retryCount = this.videoRetries.get(fileName) || 0;
+      if (retryCount < 2) {
+        console.log(`⏳ Thêm lại vào queue để thử lại: ${fileName}`);
+        this.videoRetries.set(fileName, retryCount + 1);
+        this.queue.push(videoInfo);
+      } else {
+        console.log(`⚠️ Đã thử ${retryCount + 1} lần không thành công, bỏ qua file: ${fileName}`);
+        await this.logFailedVideo({
+          fileName: fileName,
+          fileId: fileId,
+          targetFolderId: targetFolderId,
+          error: error.message,
+          timestamp: new Date().toISOString(),
+        }).catch(err => console.error('Lỗi ghi log:', err.message));
+      }
+      
+      // Quan trọng: KHÔNG throw error để code tiếp tục chạy
+      return;
     }
   }
 

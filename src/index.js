@@ -54,7 +54,7 @@ process.on('SIGINT', async () => {
 
 process.on('uncaughtException', async (error) => {
   console.error('\n❌ Lỗi không xử lý được:', error);
-  await cleanup();
+ 
   process.exit(1);
 });
 
@@ -262,6 +262,35 @@ async function removeKey() {
   }
 }
 
+async function listDriveFolders(driveAPI) {
+  try {
+    console.log("\n📂 Đang tải danh sách folder...");
+    const folders = await driveAPI.listAccessibleFolders();
+    
+    if (!folders || folders.length === 0) {
+      console.log("❌ Không tìm thấy folder nào");
+      return null;
+    }
+
+    console.log("\nDanh sách folder có thể truy cập:");
+    folders.forEach((folder, index) => {
+      console.log(`${index + 1}. ${folder.name} (${folder.id})`);
+    });
+
+    const choice = await askQuestion("\nChọn folder (nhập số thứ tự): ");
+    const index = parseInt(choice) - 1;
+
+    if (index >= 0 && index < folders.length) {
+      return folders[index].id;
+    } else {
+      throw new Error("Lựa chọn không hợp lệ");
+    }
+  } catch (error) {
+    console.error("❌ Lỗi khi lấy danh sách folder:", error.message);
+    return null;
+  }
+}
+
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
@@ -291,8 +320,21 @@ async function main(folderUrl) {
     }
 
     // Validate input
-    if (!folderUrl) {
-      throw new Error("Vui lòng cung cấp URL folder Google Drive");
+    let sourceFolderId = null;
+    if (folderUrl) {
+      sourceFolderId = extractFolderId(folderUrl);
+      if (!sourceFolderId) {
+        throw new Error("URL folder không hợp lệ");
+      }
+    } else {
+      // Khởi tạo DriveAPI sớm hơn để lấy danh sách folder
+      driveAPI = new DriveAPI(false, 3, 5, 0, 5);
+      await driveAPI.authenticate();
+      
+      sourceFolderId = await listDriveFolders(driveAPI);
+      if (!sourceFolderId) {
+        throw new Error("Không thể lấy folder ID");
+      }
     }
 
     // Chọn mode
@@ -392,11 +434,6 @@ async function main(folderUrl) {
     await driveAPI.authenticate();
 
     // Xử lý folder
-    const sourceFolderId = extractFolderId(folderUrl);
-    if (!sourceFolderId) {
-      throw new Error("URL folder không hợp lệ");
-    }
-
     console.log(`🔑 Folder ID: ${sourceFolderId}`);
     
     // Tracking thời gian
