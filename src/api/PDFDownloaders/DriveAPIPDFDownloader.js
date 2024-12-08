@@ -753,11 +753,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       }
 
       const fileName = customFileName || path.basename(filePath);
-      console.log(
-        `📁 Upload với tên: ${fileName} (${(fileSize / 1024 / 1024).toFixed(
-          2
-        )}MB)`
-      );
+      
 
       const fileMetadata = {
         name: fileName,
@@ -851,7 +847,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
   async checkExistingFiles(files, targetFolderId) {
     try {
-      console.log(`\n🔍 Kiểm tra ${files.length} PDF files...`);
+    
       const results = new Map();
 
       // Chia files thành các batch nhỏ hơn

@@ -434,6 +434,258 @@ class VideoQualityChecker {
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return `${(bytes / Math.pow(1024, i)).toFixed(2)} ${sizes[i]}`;
   }
+
+  // Thêm phương thức để xóa files trùng lặp
+  async removeDuplicates(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder...`);
+      
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, createdTime)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(item => item.mimeType !== "application/vnd.google-apps.folder");
+      const folders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
+
+      // Xử lý tên file trước khi nhóm
+      const normalizedFiles = files.map(file => {
+        let normalizedName = file.name;
+        // Xóa "Bản sao của" và các biến thể của nó
+        normalizedName = normalizedName.replace(/^Bản sao của\s+/i, '');
+        normalizedName = normalizedName.replace(/^Copy of\s+/i, '');
+        normalizedName = normalizedName.replace(/\s*\(\d+\)$/, ''); // Xóa (1), (2), etc. ở cuối
+        
+        return {
+          ...file,
+          originalName: file.name,
+          normalizedName: normalizedName
+        };
+      });
+
+      // Map để lưu trữ files theo tên chuẩn hóa
+      const fileMap = new Map();
+      normalizedFiles.forEach(file => {
+        if (!fileMap.has(file.normalizedName)) {
+          fileMap.set(file.normalizedName, []);
+        }
+        fileMap.get(file.normalizedName).push(file);
+      });
+
+      let totalDuplicates = 0;
+      let deletedCount = 0;
+
+      // Xử lý từng nhóm file
+      for (const [normalizedName, duplicates] of fileMap) {
+        if (duplicates.length > 1) {
+          totalDuplicates += duplicates.length - 1;
+          console.log(`${indent}📄 Tìm thấy ${duplicates.length} files "${normalizedName}"`);
+          console.log(`${indent}   Các tên gốc:`);
+          duplicates.forEach(file => {
+            console.log(`${indent}   - ${file.originalName}`);
+          });
+          
+          // Sắp xếp theo thời gian tạo, giữ lại file cũ nhất
+          duplicates.sort((a, b) => new Date(a.createdTime) - new Date(b.createdTime));
+          
+          // Nếu file đầu tiên có "Bản sao của", đổi tên nó
+          if (duplicates[0].originalName !== duplicates[0].normalizedName) {
+            try {
+              await this.withRetry(async () => {
+                await this.drive.files.update({
+                  fileId: duplicates[0].id,
+                  requestBody: {
+                    name: duplicates[0].normalizedName
+                  },
+                  supportsAllDrives: true
+                });
+              });
+              console.log(`${indent}✅ Đã đổi tên file gốc thành: ${duplicates[0].normalizedName}`);
+            } catch (error) {
+              console.log(`${indent}❌ Không thể đổi tên file: ${error.message}`);
+            }
+          }
+          
+          // Xóa các bản sao
+          for (let i = 1; i < duplicates.length; i++) {
+            try {
+              await this.withRetry(async () => {
+                await this.drive.files.delete({
+                  fileId: duplicates[i].id,
+                  supportsAllDrives: true
+                });
+              });
+              deletedCount++;
+              console.log(`${indent}✅ Đã xóa: ${duplicates[i].originalName}`);
+            } catch (error) {
+              console.log(`${indent}❌ Không thể xóa file: ${error.message}`);
+            }
+            await this.delay(this.REQUEST_DELAY);
+          }
+        }
+      }
+
+      console.log(`${indent}📊 Tổng kết: ${totalDuplicates} files trùng lặp, đã xóa ${deletedCount} files`);
+
+      // Đệ quy vào các thư mục con
+      for (const folder of folders) {
+        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+        await this.removeDuplicates(folder.id, depth + 1);
+      }
+
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
+
+  // Thêm phương thức kiểm tra chất lượng video
+  async checkVideoQuality(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder...`);
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, size, videoMediaMetadata)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const videos = items.filter(item => item.mimeType.includes('video/'));
+      const folders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
+
+      // Thống kê chi tiết theo độ phân giải
+      let stats = {
+        total: 0,
+        resolution: {
+          '1080p+': 0,    // 1080p trở lên
+          '720p': 0,      // 720p-1080p
+          '480p': 0,      // 480p-720p
+          '360p': 0,      // 360p-480p
+          'lower': 0      // Dưới 360p
+        },
+        quality: {
+          high: 0,        // Chất lượng cao
+          medium: 0,      // Chất lượng khá
+          low: 0          // Chất lượng thấp
+        }
+      };
+
+      // Kiểm tra từng video
+      for (const video of videos) {
+        stats.total++;
+        try {
+          const videoDetails = await this.withRetry(async () => {
+            return this.drive.files.get({
+              fileId: video.id,
+              fields: "videoMediaMetadata,size",
+              supportsAllDrives: true,
+            });
+          });
+
+          const metadata = videoDetails.data.videoMediaMetadata;
+          const size = parseInt(videoDetails.data.size);
+          
+          const durationSeconds = parseInt(metadata.durationMillis) / 1000;
+          const bitrate = (size * 8) / durationSeconds;
+          const bitrateInMbps = bitrate / 1000000;
+
+          let quality = "Không xác định";
+          let qualityEmoji = "❓";
+          
+          if (metadata.width && metadata.height) {
+            const resolution = metadata.height;
+            const width = metadata.width;
+            
+            // Phân loại độ phân giải
+            if (resolution >= 1080 || width >= 1920) {
+              stats.resolution['1080p+']++;
+              quality = "Cao";
+              qualityEmoji = "✨";
+              stats.quality.high++;
+            } else if (resolution >= 720 || width >= 1280) {
+              stats.resolution['720p']++;
+              quality = "Khá";
+              qualityEmoji = "✅";
+              stats.quality.medium++;
+            } else if (resolution >= 480) {
+              stats.resolution['480p']++;
+              quality = "Trung bình";
+              qualityEmoji = "📱";
+              stats.quality.medium++;
+            } else if (resolution >= 360) {
+              stats.resolution['360p']++;
+              quality = "Thấp";
+              qualityEmoji = "⚠️";
+              stats.quality.low++;
+            } else {
+              stats.resolution['lower']++;
+              quality = "Rất thấp";
+              qualityEmoji = "❌";
+              stats.quality.low++;
+            }
+
+            // Thêm thông tin bitrate vào mô tả chất lượng
+            let bitrateQuality = "";
+            if (bitrateInMbps >= 4) {
+              bitrateQuality = "- Bitrate cao";
+            } else if (bitrateInMbps >= 1) {
+              bitrateQuality = "- Bitrate trung bình";
+            } else {
+              bitrateQuality = "- Bitrate thấp";
+            }
+
+            console.log(`${indent}${qualityEmoji} ${video.name}`);
+            console.log(`${indent}   - Độ phân giải: ${width}x${resolution} (${quality})`);
+            console.log(`${indent}   - Thời lượng: ${(durationSeconds/60).toFixed(2)} phút`);
+            console.log(`${indent}   - Bitrate: ${bitrateInMbps.toFixed(2)} Mbps ${bitrateQuality}`);
+            console.log(`${indent}   - Dung lượng: ${this.formatFileSize(size)}`);
+            console.log(`${indent}   ---------------`);
+          }
+
+        } catch (error) {
+          console.log(`${indent}❌ Lỗi khi kiểm tra video "${video.name}": ${error.message}`);
+        }
+        await this.delay(this.REQUEST_DELAY);
+      }
+
+      // Hiển thị thống kê chi tiết
+      if (stats.total > 0) {
+        console.log(`\n${indent}📊 Thống kê folder:`);
+        console.log(`${indent}   - Tổng số video: ${stats.total}`);
+        console.log(`\n${indent}   📏 Phân loại độ phân giải:`);
+        console.log(`${indent}      • 1080p trở lên: ${stats.resolution['1080p+']} (${((stats.resolution['1080p+']/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • 720p-1080p: ${stats.resolution['720p']} (${((stats.resolution['720p']/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • 480p-720p: ${stats.resolution['480p']} (${((stats.resolution['480p']/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • 360p-480p: ${stats.resolution['360p']} (${((stats.resolution['360p']/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • Dưới 360p: ${stats.resolution['lower']} (${((stats.resolution['lower']/stats.total)*100).toFixed(1)}%)`);
+        console.log(`\n${indent}   🎯 Phân loại chất lượng:`);
+        console.log(`${indent}      • Chất lượng cao: ${stats.quality.high} (${((stats.quality.high/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • Chất lượng khá: ${stats.quality.medium} (${((stats.quality.medium/stats.total)*100).toFixed(1)}%)`);
+        console.log(`${indent}      • Chất lượng thấp: ${stats.quality.low} (${((stats.quality.low/stats.total)*100).toFixed(1)}%)`);
+      }
+
+      // Đệ quy vào các thư mục con
+      for (const folder of folders) {
+        console.log(`\n${indent}📁 Đang kiểm tra folder: ${folder.name}`);
+        await this.checkVideoQuality(folder.id, depth + 1);
+      }
+
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
 }
 
 module.exports = VideoQualityChecker;
@@ -491,6 +743,8 @@ if (require.main === module) {
             console.log('\n=== GOOGLE DRIVE TOOL ===');
             console.log('1. Copy folder');
             console.log('2. Khóa quyền truy cập folder');
+            console.log('3. Xóa files trùng lặp trong folder');
+            console.log('4. Kiểm tra chất lượng video');
             
             const rl = readline.createInterface({
                 input: process.stdin,
@@ -498,7 +752,7 @@ if (require.main === module) {
             });
 
             const mode = await new Promise((resolve) => {
-                rl.question('\nChọn chế độ (1 hoặc 2): ', (answer) => {
+                rl.question('\nChọn chế độ (1-4): ', (answer) => {
                     rl.close();
                     resolve(answer.trim());
                 });
@@ -561,8 +815,18 @@ if (require.main === module) {
                 await checker.lockFolder(sourceFolderId);
                 console.log('✅ Hoàn thành khóa quyền truy cập!');
             }
+            else if (mode === '3') {
+                console.log('🔍 Bắt đầu quét và xóa files trùng lặp...');
+                await checker.removeDuplicates(sourceFolderId);
+                console.log('✅ Hoàn thành xóa files trùng lặp!');
+            }
+            else if (mode === '4') {
+                console.log('🎥 Bắt đầu kiểm tra chất lượng video...');
+                await checker.checkVideoQuality(sourceFolderId);
+                console.log('✅ Hoàn thành kiểm tra!');
+            }
             else {
-                throw new Error('Chế độ không hợp lệ. Vui lòng chọn 1 hoặc 2.');
+                throw new Error('Chế độ không hợp lệ. Vui lòng chọn từ 1-4.');
             }
             
         } catch (error) {
