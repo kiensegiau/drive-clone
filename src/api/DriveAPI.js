@@ -630,7 +630,7 @@ class DriveAPI {
 
               const skippedVideos = results.filter(result => result.skipped).length;
               if (skippedVideos > 0) {
-                console.log(`\n⏩ Đã bỏ qua ${skippedVideos} video đã tồn tại`);
+                console.log(`\n��� Đ bỏ qua ${skippedVideos} video đã tồn tại`);
               }
 
               if (failedVideos.length > 0) {
@@ -703,7 +703,7 @@ class DriveAPI {
               }
             } catch (otherFilesError) {
               console.error(
-                `❌ Lỗi xử lý các file khác:`,
+                `❌ L���i xử lý các file khác:`,
                 otherFilesError.message
               );
               errors.push({
@@ -1024,15 +1024,30 @@ class DriveAPI {
 
   async listAccessibleFolders() {
     try {
-      const response = await this.drive.files.list({
-        q: "mimeType='application/vnd.google-apps.folder' and trashed=false",
+      console.log("\n📂 Đang tải danh sách folder từ tài khoản source...");
+      return await this.listFoldersInParent('root');
+    } catch (error) {
+      console.error("❌ Lỗi khi lấy danh sách folder:", error.message);
+      return [];
+    }
+  }
+
+  async listFoldersInParent(parentId) {
+    try {
+      const response = await this.sourceDrive.files.list({
+        q: `mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`,
         fields: 'files(id, name)',
-        orderBy: 'name'
+        orderBy: 'name',
+        pageSize: 1000,
+        spaces: 'drive',
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true
       });
 
-      return response.data.files;
+      const folders = response.data.files || [];
+      return folders;
     } catch (error) {
-      console.error("❌ Lỗi khi lấy danh sách folder:", error);
+      console.error("❌ Lỗi khi lấy danh sách folder:", error.message);
       return [];
     }
   }

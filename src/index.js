@@ -264,29 +264,76 @@ async function removeKey() {
 
 async function listDriveFolders(driveAPI) {
   try {
-    console.log("\n📂 Đang tải danh sách folder...");
-    const folders = await driveAPI.listAccessibleFolders();
+    let currentFolderId = 'root';
+    let folderPath = [];
     
-    if (!folders || folders.length === 0) {
-      console.log("❌ Không tìm thấy folder nào");
-      return null;
-    }
+    while (true) {
+      const folders = await driveAPI.listFoldersInParent(currentFolderId);
+      
+      if (!folders || folders.length === 0) {
+        console.log("\n📂 Folder này trống");
+        if (folderPath.length > 0) {
+          // Quay lại folder trước đó
+          currentFolderId = folderPath[folderPath.length - 1].id;
+          folderPath.pop();
+          continue;
+        }
+        return null;
+      }
 
-    console.log("\nDanh sách folder có thể truy cập:");
-    folders.forEach((folder, index) => {
-      console.log(`${index + 1}. ${folder.name} (${folder.id})`);
-    });
+      // Hiển thị đường dẫn hiện tại
+      if (folderPath.length > 0) {
+        console.log("\n📂 Đường dẫn hiện tại:");
+        console.log(folderPath.map(f => f.name).join(" > "));
+      }
 
-    const choice = await askQuestion("\nChọn folder (nhập số thứ tự): ");
-    const index = parseInt(choice) - 1;
+      console.log("\nDanh sách folder:");
+      folders.forEach((folder, index) => {
+        console.log(`${(index + 1).toString().padStart(2, '0')}. ${folder.name}`);
+      });
 
-    if (index >= 0 && index < folders.length) {
-      return folders[index].id;
-    } else {
-      throw new Error("Lựa chọn không hợp lệ");
+      const options = [
+        "",
+        "Tùy chọn:",
+        "- Nhập số thứ tự để mở folder",
+        "- Nhập 'b' để quay lại folder trước",
+        "- Nhập 's' để chọn folder hiện tại",
+        "- Nhập 'q' để thoát",
+        ""
+      ].join("\n");
+
+      const choice = await askQuestion(options);
+
+      if (choice.toLowerCase() === 'q') {
+        return null;
+      }
+
+      if (choice.toLowerCase() === 'b') {
+        if (folderPath.length > 0) {
+          currentFolderId = folderPath[folderPath.length - 1].id;
+          folderPath.pop();
+        } else {
+          console.log("\n⚠️ Đã ở thư mục gốc");
+        }
+        continue;
+      }
+
+      if (choice.toLowerCase() === 's') {
+        console.log(`\n✅ Đã chọn folder hiện tại: ${currentFolderId}`);
+        return currentFolderId;
+      }
+
+      const index = parseInt(choice) - 1;
+      if (index >= 0 && index < folders.length) {
+        const selectedFolder = folders[index];
+        folderPath.push({ id: currentFolderId, name: selectedFolder.name });
+        currentFolderId = selectedFolder.id;
+      } else {
+        console.log("\n❌ Lựa chọn không hợp lệ, vui lòng thử lại");
+      }
     }
   } catch (error) {
-    console.error("❌ Lỗi khi lấy danh sách folder:", error.message);
+    console.error("❌ Lỗi khi lấy danh sách folder:", error);
     return null;
   }
 }
@@ -327,7 +374,7 @@ async function main(folderUrl) {
         throw new Error("URL folder không hợp lệ");
       }
     } else {
-      // Khởi tạo DriveAPI sớm hơn để lấy danh sách folder
+      // Kh��i tạo DriveAPI sớm hơn để lấy danh sách folder
       driveAPI = new DriveAPI(false, 3, 5, 0, 5);
       await driveAPI.authenticate();
       
