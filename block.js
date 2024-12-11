@@ -33,9 +33,9 @@ class VideoQualityChecker {
     );
 
     // Các cấu hình delay để tránh quá tải API
-    this.REQUEST_DELAY = 10;
+    this.REQUEST_DELAY = 2;
     this.QUOTA_DELAY = 1000;
-    this.MAX_RETRIES = 10;
+    this.MAX_RETRIES = 1;
     this.COPY_BATCH_SIZE = 10;
     this.INITIAL_DELAY = 1000;
     this.MAX_DELAY = 64000;
@@ -336,7 +336,7 @@ class VideoQualityChecker {
   // Thêm phương thức mới để khóa quyền truy cập
   async lockFileAccess(fileId) {
     try {
-        // Cập nhật trực tiếp settings mà không cần xóa permissions cũ
+        // Cập nhật trực ti��p settings mà không cần xóa permissions cũ
         await this.withRetry(async () => {
             await this.drive.files.update({
                 fileId: fileId,
@@ -565,21 +565,23 @@ class VideoQualityChecker {
       const videos = items.filter(item => item.mimeType.includes('video/'));
       const folders = items.filter(item => item.mimeType === "application/vnd.google-apps.folder");
 
-      // Thống kê chi tiết theo độ phân giải
+      // Thống kê chi tiết theo độ phân giải 
       let stats = {
-        total: 0,
+        total: videos.length,
         resolution: {
-          '1080p+': 0,    // 1080p trở lên
-          '720p': 0,      // 720p-1080p
-          '480p': 0,      // 480p-720p
-          '360p': 0,      // 360p-480p
-          'lower': 0      // Dưới 360p
+          '1080p+': 0,    
+          '720p': 0,      
+          '480p': 0,      
+          '360p': 0,      
+          'lower': 0      
         },
         quality: {
-          high: 0,        // Chất lượng cao
-          medium: 0,      // Chất lượng khá
-          low: 0          // Chất lượng thấp
-        }
+          high: 0,        
+          medium: 0,      
+          low: 0,
+          unknown: 0      // Thêm trường unknown để đếm các video không xác định được
+        },
+        totalProcessed: 0  // Thêm trường để đếm tổng số video đã xử lý
       };
 
       // Kiểm tra từng video
@@ -664,16 +666,26 @@ class VideoQualityChecker {
       if (stats.total > 0) {
         console.log(`\n${indent}📊 Thống kê folder:`);
         console.log(`${indent}   - Tổng số video: ${stats.total}`);
+        console.log(`${indent}   - Số video đã xử lý: ${stats.totalProcessed}`);
+        
         console.log(`\n${indent}   📏 Phân loại độ phân giải:`);
-        console.log(`${indent}      • 1080p trở lên: ${stats.resolution['1080p+']} (${((stats.resolution['1080p+']/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • 720p-1080p: ${stats.resolution['720p']} (${((stats.resolution['720p']/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • 480p-720p: ${stats.resolution['480p']} (${((stats.resolution['480p']/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • 360p-480p: ${stats.resolution['360p']} (${((stats.resolution['360p']/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • Dưới 360p: ${stats.resolution['lower']} (${((stats.resolution['lower']/stats.total)*100).toFixed(1)}%)`);
+        Object.entries(stats.resolution).forEach(([key, value]) => {
+          const percentage = ((value/stats.totalProcessed)*100).toFixed(1);
+          console.log(`${indent}      • ${key}: ${value}/${stats.totalProcessed} (${percentage}%)`);
+        });
+
         console.log(`\n${indent}   🎯 Phân loại chất lượng:`);
-        console.log(`${indent}      • Chất lượng cao: ${stats.quality.high} (${((stats.quality.high/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • Chất lượng khá: ${stats.quality.medium} (${((stats.quality.medium/stats.total)*100).toFixed(1)}%)`);
-        console.log(`${indent}      • Chất lượng thấp: ${stats.quality.low} (${((stats.quality.low/stats.total)*100).toFixed(1)}%)`);
+        const totalQuality = stats.quality.high + stats.quality.medium + stats.quality.low + stats.quality.unknown;
+        Object.entries(stats.quality).forEach(([key, value]) => {
+          const percentage = ((value/stats.totalProcessed)*100).toFixed(1);
+          const qualityLabel = {
+            'high': 'Chất lượng cao',
+            'medium': 'Chất lượng khá',
+            'low': 'Chất lượng thấp',
+            'unknown': 'Không xác định'
+          }[key];
+          console.log(`${indent}      • ${qualityLabel}: ${value}/${stats.totalProcessed} (${percentage}%)`);
+        });
       }
 
       // Đệ quy vào các thư mục con

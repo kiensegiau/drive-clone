@@ -372,22 +372,47 @@ class DriveAPI {
       // Bắt đầu xử lý
       console.log(`\n🎯 Bắt đầu tải folder: ${folderInfo.data.name}`);
 
-      // Tạo hoặc tìm folder gốc "video-drive-clone"
-      console.log(`🔍 Đang tìm folder: "video-drive-clone"`);
-      const rootFolder = await this.findOrCreateFolder("video-drive-clone");
-      console.log(`✅ Folder gốc: "video-drive-clone" (${rootFolder.id})`);
+      // Tìm folder gốc "video-drive-clone" trước
+      console.log(`\n🔍 Đang tìm folder gốc: "video-drive-clone"`);
+      const existingRootFolders = await this.targetDrive.files.list({
+        q: `name = 'video-drive-clone' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+        supportsAllDrives: true,
+      });
 
-      // Tạo folder con với tên folder nguồn
-      console.log(`\n📁 Tạo/tìm folder: "${folderInfo.data.name}"`);
-      const sourceNameFolder = await this.findOrCreateFolder(
-        folderInfo.data.name,
-        rootFolder.id
-      );
-      console.log(
-        `✅ Folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`
-      );
+      let rootFolder;
+      if (existingRootFolders.data.files.length > 0) {
+        rootFolder = existingRootFolders.data.files[0];
+        console.log(`✅ Đã tìm thấy folder gốc: "video-drive-clone" (${rootFolder.id})`);
+      } else {
+        console.log(`📁 Tạo mới folder gốc: "video-drive-clone"`);
+        rootFolder = await this.findOrCreateFolder("video-drive-clone");
+        console.log(`✅ Đã tạo folder gốc: "video-drive-clone" (${rootFolder.id})`);
+      }
 
-      // Set folder hiện tại là folder con mới tạo
+      // Tìm hoặc tạo folder con với tên folder nguồn trong video-drive-clone
+      console.log(`\n🔍 Đang tìm folder: "${folderInfo.data.name}"`);
+      const existingSourceFolders = await this.targetDrive.files.list({
+        q: `name = '${folderInfo.data.name.replace(/'/g, "\\'")}' and '${rootFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+        supportsAllDrives: true,
+      });
+
+      let sourceNameFolder;
+      if (existingSourceFolders.data.files.length > 0) {
+        sourceNameFolder = existingSourceFolders.data.files[0];
+        console.log(`✅ Đã tìm thấy folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+      } else {
+        console.log(`📁 Tạo mới folder: "${folderInfo.data.name}"`);
+        sourceNameFolder = await this.findOrCreateFolder(
+          folderInfo.data.name,
+          rootFolder.id
+        );
+        console.log(`✅ Đã tạo folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+      }
+
       this.currentTargetFolderId = sourceNameFolder.id;
 
       // Kiểm tra quyền truy cập
