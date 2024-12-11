@@ -1004,6 +1004,8 @@ class VideoHandler {
       }
 
       const safeFileName = sanitizePath(fileName);
+      // Tạo đường dẫn đầy đủ với phần mở rộng file
+      const fullTargetPath = path.join(targetPath, safeFileName);
       const tempPath = path.join(this.TEMP_DIR, `temp_${Date.now()}_${safeFileName}`);
       tempFiles.push(tempPath);
 
@@ -1015,7 +1017,7 @@ class VideoHandler {
           fileId,
           fileName,
           null,
-          targetPath  // Truyền targetPath làm targetFolderId
+          targetPath
         );
       } catch (downloadError) {
         console.error(`❌ Lỗi tải video ${fileName}:`, downloadError.message);
@@ -1023,12 +1025,21 @@ class VideoHandler {
       }
 
       if (fs.existsSync(tempPath)) {
-        console.log(`📦 Di chuyển video vào thư mục đích: ${targetPath}`);
+        console.log(`📦 Di chuyển video vào thư mục đích: ${fullTargetPath}`);
 
         try {
-          // Thử copy thay vì rename
-          await fs.promises.copyFile(tempPath, targetPath);
-          await fs.promises.unlink(tempPath); // Xóa file tạm sau khi copy
+          // Tạo thư mục đích nếu chưa tồn tại
+          await fs.promises.mkdir(path.dirname(fullTargetPath), { recursive: true });
+          
+          // Thử rename trước
+          try {
+            await fs.promises.rename(tempPath, fullTargetPath);
+          } catch (renameError) {
+            // Nếu rename thất bại, thử copy và xóa
+            await fs.promises.copyFile(tempPath, fullTargetPath);
+            await fs.promises.unlink(tempPath);
+          }
+          
           console.log(`✅ Đã di chuyển xong video`);
         } catch (moveError) {
           console.error(`❌ Lỗi di chuyển file:`, moveError.message);
@@ -1234,7 +1245,7 @@ class VideoHandler {
       if (exists) {
         console.log(`${indent}⏭️ Bỏ qua video đã tồn tại: ${fileName}`);
       } else {
-        console.log(`${indent}✨ Video chưa tồn t��i, sẽ tải: ${fileName}`);
+        console.log(`${indent}✨ Video chưa tồn tại, sẽ tải: ${fileName}`);
       }
       return exists;
 
