@@ -476,34 +476,53 @@ async  ensureDirectoryExists(dirPath) {
 
       if (videoFiles.length > 0) {
         console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
-        const videoHandler = new VideoHandler(this.oauth2Client, this.maxConcurrent);
+        const videoHandler = new VideoHandler(this.oauth2Client);
         
         for (const file of videoFiles) {
-          try {
-            videoHandler.addToQueue({
-              fileId: file.id,
-              fileName: file.name,
-              targetPath: currentFolderPath,
-              depth
-            });
-          } catch (error) {
-            console.error(`${indent}❌ Lỗi thêm video ${file.name} vào queue:`, error.message);
-            continue;
+          const videoPath = path.join(currentFolderPath, sanitizePath(file.name));
+          
+          // Kiểm tra video đã tồn tại chưa
+          if (fs.existsSync(videoPath)) {
+            const stats = fs.statSync(videoPath);
+            if (stats.size > 0) {
+              console.log(`${indent}⏩ Video đã tồn tại, bỏ qua: ${file.name}`);
+              continue;
+            } else {
+              // Nếu file rỗng thì xóa để tải lại
+              fs.unlinkSync(videoPath);
+            }
           }
+
+          videoHandler.addToQueue({
+            fileId: file.id,
+            fileName: file.name,
+            targetPath: currentFolderPath,
+            depth
+          });
         }
         
-        try {
-          await videoHandler.processQueue();
-        } catch (error) {
-          console.error(`${indent}❌ L���i xử lý queue videos:`, error.message);
-        }
+        await videoHandler.processQueue();
       }
 
       if (pdfFiles.length > 0) {
         console.log(`${indent}📑 Xử lý ${pdfFiles.length} PDF files...`);
         const pdfDownloader = new PDFDownloader(this);
         
-        const pdfPromises = pdfFiles.map(file => {
+        const pdfPromises = pdfFiles.map(async file => {
+          const pdfPath = path.join(currentFolderPath, sanitizePath(file.name));
+          
+          // Kiểm tra PDF đã tồn tại chưa
+          if (fs.existsSync(pdfPath)) {
+            const stats = fs.statSync(pdfPath);
+            if (stats.size > 0) {
+              console.log(`${indent}⏩ PDF đã tồn tại, bỏ qua: ${file.name}`);
+              return null;
+            } else {
+              // Nếu file rỗng thì xóa để tải lại
+              fs.unlinkSync(pdfPath);
+            }
+          }
+
           return pdfDownloader.downloadPDF(
             file.id, 
             file.name,
@@ -558,6 +577,17 @@ async  ensureDirectoryExists(dirPath) {
   async downloadFile(fileId, outputPath) {
     const MAX_RETRIES = 3;
     let retryCount = 0;
+
+    // Kiểm tra lại một lần nữa trước khi tải
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      if (stats.size > 0) {
+        console.log(`⏩ Đã tồn tại, bỏ qua: ${path.basename(outputPath)}`);
+        return outputPath;
+      } else {
+        fs.unlinkSync(outputPath);
+      }
+    }
 
     while (retryCount < MAX_RETRIES) {
       try {
@@ -681,6 +711,36 @@ async  ensureDirectoryExists(dirPath) {
           : "N/A"
       }`
     );
+  }
+
+  async processFile(file, targetPath, depth = 0) {
+    const indent = "  ".repeat(depth);
+    const outputPath = path.join(targetPath, sanitizePath(file.name));
+
+    // Kiểm tra file tồn tại trước khi tải
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      if (stats.size > 0) {
+        console.log(`${indent}⏩ Đã tồn tại, bỏ qua: ${file.name}`);
+        return;
+      } else {
+        // Nếu file rỗng thì xóa và tải lại
+        fs.unlinkSync(outputPath);
+      }
+    }
+
+    try {
+      // Tạo thư mục đích nếu chưa có
+      const targetDir = path.dirname(outputPath);
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+
+      console.log(`${indent}📥 Tải file: ${file.name}`);
+      await this.downloadFile(file.id, outputPath);
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi xử lý file ${file.name}:`, error.message);
+    }
   }
 }
 

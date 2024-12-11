@@ -124,15 +124,14 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     try {
       const response = await this.targetDrive.files.list({
         q: `name = '${fileName}' and '${targetFolderId}' in parents and trashed = false`,
-        fields: "files(id, name, size)",
+        fields: "files(id, name)",
         pageSize: 1,
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });
 
       if (response.data.files && response.data.files.length > 0) {
-        const file = response.data.files[0];
-
+        console.log(`\n⏭️ Bỏ qua video trùng tên: ${fileName}`);
         return true;
       }
 
@@ -268,7 +267,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     console.log(`\n💾 Tối đa ${this.MAX_BACKGROUND_DOWNLOADS} files tải ngầm`);
 
     const processNextBatch = async () => {
-      // Nếu không còn file trong queue và không còn file đang xử lý
+      // Nếu không còn file trong queue và không còn file đang xử l��
       if (this.queue.length === 0 && this.activeDownloads.size === 0 && this.activeChrome.size === 0) {
         console.log("\n✅ Đã xử lý xong tất cả files");
         return;
@@ -456,7 +455,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                       };
 
                       console.log(
-                        `${indent}✅ Tìm thấy URL video chất lượng: ${result.quality}`
+                        `${indent}�� Tìm thấy URL video chất lượng: ${result.quality}`
                       );
                      
                       resolve(result);

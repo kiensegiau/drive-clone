@@ -116,73 +116,87 @@ class ChromeManager {
 
       this.isLaunching.add(profileId);
 
-      try {
-        console.log(`🌐 Khởi động Chrome với profile: ${profileId} (${userDataDir})`);
-        const debuggingPort = 9222 + profileIndex;
+      let retries = 3;
+      let lastError = null;
 
-        const browser = await puppeteer.launch({
-          headless: false,
-          channel: "chrome",
-          executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-          args: [
-            "--start-maximized",
-            `--user-data-dir=${userDataDir}`,
-            "--enable-extensions",
-            `--remote-debugging-port=${debuggingPort}`,
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-web-security",
-            "--disable-features=IsolateOrigins,site-per-process",
-            "--disable-site-isolation-trials",
-            "--disable-features=BlockInsecurePrivateNetworkRequests",
-            "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-popup-blocking",
-            "--disable-notifications",
-            "--disable-infobars",
-            "--disable-translate",
-            "--allow-running-insecure-content",
-            "--disable-sync",
-            "--password-store=basic"
-          ],
-          defaultViewport: null,
-          ignoreDefaultArgs: [
-            "--enable-automation",
-            "--enable-blink-features=IdleDetection"
-          ]
-        });
+      while (retries > 0) {
+        try {
+          console.log(`🌐 Khởi động Chrome với profile: ${profileId} (${userDataDir})`);
+          const debuggingPort = 9222 + profileIndex;
 
-        browser.on('disconnected', () => {
-          try {
-            this.browsers.delete(profileId);
-            this.isLaunching.delete(profileId);
-          } catch (error) {
-            console.error(`❌ Lỗi xử lý disconnect:`, error.message);
-          }
-        });
+          const browser = await puppeteer.launch({
+            headless: false,
+            channel: "chrome",
+            executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            args: [
+              "--start-maximized",
+              `--user-data-dir=${userDataDir}`,
+              "--enable-extensions",
+              `--remote-debugging-port=${debuggingPort}`,
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-web-security",
+              "--disable-features=IsolateOrigins,site-per-process",
+              "--disable-site-isolation-trials",
+              "--disable-features=BlockInsecurePrivateNetworkRequests",
+              "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure",
+              "--no-first-run",
+              "--no-default-browser-check",
+              "--disable-popup-blocking",
+              "--disable-notifications",
+              "--disable-infobars",
+              "--disable-translate",
+              "--allow-running-insecure-content",
+              "--disable-sync",
+              "--password-store=basic"
+            ],
+            defaultViewport: null,
+            ignoreDefaultArgs: [
+              "--enable-automation",
+              "--enable-blink-features=IdleDetection"
+            ]
+          });
 
-        this.browsers.set(profileId, browser);
-        this.isLaunching.delete(profileId);
-
-        if (this.queues.has(profileId)) {
-          try {
-            while (this.queues.get(profileId).length > 0) {
-              const resolve = this.queues.get(profileId).shift();
-              resolve(browser);
+          browser.on('disconnected', () => {
+            try {
+              this.browsers.delete(profileId);
+              this.isLaunching.delete(profileId);
+            } catch (error) {
+              console.error(`❌ Lỗi xử lý disconnect:`, error.message);
             }
-          } catch (error) {
-            console.error(`❌ Lỗi xử lý queue sau launch:`, error.message);
+          });
+
+          this.browsers.set(profileId, browser);
+          this.isLaunching.delete(profileId);
+
+          if (this.queues.has(profileId)) {
+            try {
+              while (this.queues.get(profileId).length > 0) {
+                const resolve = this.queues.get(profileId).shift();
+                resolve(browser);
+              }
+            } catch (error) {
+              console.error(`❌ Lỗi xử lý queue sau launch:`, error.message);
+            }
+          }
+
+          this.activeInstances.set(profileId, Date.now());
+          return browser;
+
+        } catch (error) {
+          console.error(`❌ Lỗi khởi động browser (còn ${retries-1} lần thử):`, error.message);
+          lastError = error;
+          retries--;
+          if (retries > 0) {
+            console.log(`🔄 Thử lại sau 5 giây...`);
+            await new Promise(resolve => setTimeout(resolve, 5000));
           }
         }
-
-        this.activeInstances.set(profileId, Date.now());
-        return browser;
-      } catch (error) {
-        this.isLaunching.delete(profileId);
-        console.error(`❌ Lỗi khởi động browser:`, error.message);
-        throw error;
       }
+
+      this.isLaunching.delete(profileId);
+      throw new Error(lastError.message);
+
     } catch (error) {
       console.error(`❌ Lỗi tổng thể trong getBrowser:`, error.message);
       throw error;
