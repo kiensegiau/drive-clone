@@ -473,6 +473,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                       { timeout: 300000 } // 5 phút
                     );
                     console.log(`${indent}✅ Đã đăng nhập xong`);
+                    // Đợi thêm 1 phút sau khi đăng nhập
+                    console.log(`${indent}⏳ Đợi thêm 1 phút để đảm bảo đăng nhập hoàn tất...`);
+                    await new Promise(resolve => setTimeout(resolve, 100000));
                     
                     // Reload trang sau khi đăng nhập
                     await currentPage.reload({ waitUntil: ["networkidle0", "domcontentloaded"] });
