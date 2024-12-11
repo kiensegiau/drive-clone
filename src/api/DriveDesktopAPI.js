@@ -446,15 +446,18 @@ async  ensureDirectoryExists(dirPath) {
 
   async processFolder(sourceFolderId, targetPath, depth = 0) {
     const indent = "  ".repeat(depth);
+    
     try {
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
 
-      const currentFolderPath = depth === 0 
-        ? targetPath 
-        : path.resolve(path.join(targetPath, sanitizePath(folderName)));
-      
-      if (!fs.existsSync(currentFolderPath)) {
+      const parentFolderName = path.basename(targetPath);
+      const currentFolderPath = parentFolderName === folderName 
+        ? targetPath // Nếu tên trùng thì dùng thư mục cha
+        : path.join(targetPath, sanitizePath(folderName)); // Nếu khác tên thì tạo thư mục con
+
+      if (parentFolderName !== folderName && !fs.existsSync(currentFolderPath)) {
+        console.log(`${indent}📁 Tạo thư mục: ${folderName}`);
         fs.mkdirSync(currentFolderPath, { recursive: true });
       }
 
@@ -468,12 +471,14 @@ async  ensureDirectoryExists(dirPath) {
       const files = response.data.files;
       const { videoFiles, pdfFiles, otherFiles, folders } = this.categorizeFiles(files);
 
+      // Log thống kê
       console.log(`${indent}📊 Tổng số files: ${files.length}`);
       console.log(`${indent}  - Videos: ${videoFiles.length}`);
       console.log(`${indent}  - PDFs: ${pdfFiles.length}`);
       console.log(`${indent}  - Others: ${otherFiles.length}`);
       console.log(`${indent}  - Folders: ${folders.length}`);
 
+      // Xử lý các files trong thư mục hiện tại
       if (videoFiles.length > 0) {
         console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
         const videoHandler = new VideoHandler(this.oauth2Client);
@@ -536,16 +541,7 @@ async  ensureDirectoryExists(dirPath) {
         await Promise.all(pdfPromises);
       }
 
-      for (const file of otherFiles) {
-        try {
-          const outputPath = path.join(currentFolderPath, sanitizePath(file.name));
-          await this.downloadFile(file.id, outputPath);
-        } catch (error) {
-          console.error(`${indent}❌ Lỗi tải file ${file.name}:`, error.message);
-          continue;
-        }
-      }
-
+      // Xử lý các folder con
       for (const folder of folders) {
         try {
           await this.processFolder(folder.id, currentFolderPath, depth + 1);
