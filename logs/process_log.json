@@ -1,0 +1,22 @@
+{
+  "sessions": [
+    {
+      "id": "1731574073321",
+      "startTime": "2024-11-14T08:47:53.321Z",
+      "endTime": null,
+      "totalFiles": 0,
+      "processedFiles": 0,
+      "errors": [],
+      "logs": []
+    }
+  ],
+  "currentSession": {
+    "id": "1731574073321",
+    "startTime": "2024-11-14T08:47:53.321Z",
+    "endTime": null,
+    "totalFiles": 0,
+    "processedFiles": 0,
+    "errors": [],
+    "logs": []
+  }
+}

@@ -1,0 +1,40 @@
+# Dependencies
+/node_modules
+/src/config/chrome-profiles
+/dist
+# Output directories
+/output
+/temp
+/temp_files
+**/output
+**/temp
+*.mp4
+# IDE files
+.vscode
+.idea
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Git files
+.git
+.gitignore
+config
+# Node modules
+node_modules
+
+# Distribution files
+dist
+
+# Package cache
+.pkg-cache
+
