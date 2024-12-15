@@ -49,17 +49,27 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       // Thử tạo trong thư mục hiện tại trước
       this.TEMP_DIR = path.join(process.cwd(), "temp");
       fs.mkdirSync(this.TEMP_DIR, { recursive: true });
+      console.log(`✅ Đã tạo thư mục temp tại: ${this.TEMP_DIR}`);
+
+      // Kiểm tra quyền ghi
+      fs.accessSync(this.TEMP_DIR, fs.constants.W_OK);
+      console.log("✅ Có quyền ghi vào thư mục temp");
     } catch (error) {
       console.warn(
-        "⚠️ Không thể tạo temp trong thư mục hiện tại:",
+        "⚠️ Không thể tạo/truy cập temp trong thư mục hiện tại:",
         error.message
       );
       try {
         // Nếu không được thì tạo trong thư mục temp của hệ thống
         this.TEMP_DIR = path.join(os.tmpdir(), "drive-downloader-temp");
         fs.mkdirSync(this.TEMP_DIR, { recursive: true });
+        console.log(`✅ Đã tạo thư mục temp tại: ${this.TEMP_DIR}`);
+
+        // Kiểm tra quyền ghi
+        fs.accessSync(this.TEMP_DIR, fs.constants.W_OK);
+        console.log("✅ Có quyền ghi vào thư mục temp");
       } catch (err) {
-        console.error("❌ Không thể tạo thư mục temp:", err.message);
+        console.error("❌ Không thể tạo/truy cập thư mục temp:", err.message);
         throw err;
       }
     }
@@ -148,6 +158,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
 
     try {
+      // Lấy số lần retry từ Map hoặc mặc định là 0
+      const retryCount = this.videoRetries.get(fileName) || 0;
+
       // Kiểm tra video tồn tại
       const exists = await this.checkVideoExists(fileName, targetFolderId);
       if (exists) {
@@ -278,38 +291,37 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         .finally(() => {
           this.activeDownloads.delete(fileName);
           console.log(
-            `${indent}📥 Còn lại tải ng��m: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`
+            `${indent}📥 Còn lại tải ngầm: ${this.activeDownloads.size}/${this.MAX_BACKGROUND_DOWNLOADS}`
           );
         });
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
 
-      // Đảm bảo giải phóng slot Chrome
-      this.activeChrome.delete(fileName);
-
-      // Thêm vào danh sách retry nếu chưa thử quá nhiều lần
+      // Lấy số lần retry hiện tại
       const retryCount = this.videoRetries.get(fileName) || 0;
+
+      // Kiểm tra và thêm vào retry nếu chưa quá giới hạn
       if (retryCount < 2) {
-        console.log(`⏳ Thêm lại vào queue để thử lại: ${fileName}`);
+        console.log(`${indent}⏳ Thêm lại vào queue để thử lại: ${fileName}`);
         this.videoRetries.set(fileName, retryCount + 1);
         this.queue.push(videoInfo);
       } else {
         console.log(
-          `⚠️ Đã thử ${
+          `${indent}⚠️ Đã thử ${
             retryCount + 1
           } lần không thành công, bỏ qua file: ${fileName}`
         );
         await this.logFailedVideo({
-          fileName: fileName,
-          fileId: fileId,
-          targetFolderId: targetFolderId,
+          fileName,
+          fileId,
+          targetFolderId,
           error: error.message,
           timestamp: new Date().toISOString(),
-        }).catch((err) => console.error("Lỗi ghi log:", err.message));
+        });
       }
 
-      // Quan trọng: KHÔNG throw error để code tiếp tục chạy
-      return;
+      // Đảm bảo giải phóng slot Chrome
+      this.activeChrome.delete(fileName);
     }
   }
 
@@ -326,57 +338,12 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         const promises = currentBatch.map(async (video) => {
           try {
             console.log(`🎥 Bắt đầu tải: ${video.fileName}`);
-
-            // Thử tải qua API trước
-            try {
-              console.log(`          🔄 Thử tải qua API...`);
-              const response = await this.drive.files.get(
-                {
-                  fileId: video.fileId,
-                  alt: "media",
-                },
-                {
-                  responseType: "stream",
-                }
-              );
-
-              if (response) {
-                const tempPath = path.join(
-                  this.TEMP_DIR,
-                  `temp_${Date.now()}_${sanitizePath(video.fileName)}`
-                );
-                await this.downloadWithChunks(
-                  response.config.url,
-                  tempPath,
-                  response.config.headers,
-                  video.fileName,
-                  video.depth
-                );
-                return;
-              }
-            } catch (apiError) {
-              console.log(
-                `          ⚠️ Không thể tải qua API, chuyển sang Chrome`
-              );
-            }
-
-            // Chỉ khi API thất bại mới dùng Chrome
-            this.activeChrome.add(video.fileName);
-            console.log(
-              `          🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
-            );
-
-            await this.downloadVideoWithChunks(
-              video.url,
-              video.outputPath,
-              video.depth,
-              video.fileId,
-              video.fileName,
-              video.profileId,
-              video.targetFolderId
-            );
+            await this.processVideoDownload(video);
           } catch (error) {
             console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+
+            // Lấy số lần retry hiện tại
+            const retryCount = this.videoRetries.get(video.fileName) || 0;
 
             if (retryCount < 2) {
               console.log(
@@ -553,7 +520,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                       };
 
                       console.log(
-                        `${indent} Tìm thấy URL video chất lượng: ${result.quality}`
+                        `${indent} Tìm thấy URL video chất lợng: ${result.quality}`
                       );
 
                       resolve(result);
@@ -656,8 +623,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     throw new Error("Không tìm được URL video sau nhiều lần thử");
   }
 
-  
-  
   // Đổi tn method cũ để tránh nhầm lẫn
   async downloadWithChunks(videoUrl, outputPath, headers, fileName, depth) {
     const indent = "  ".repeat(depth);
@@ -666,6 +631,15 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const startTime = Date.now();
 
     try {
+      // Đảm bảo thư mục tồn tại trước khi tải
+      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+      console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
+
+      // Tạo file trống trước
+      fileHandle = await fs.promises.open(outputPath, "w");
+      await fileHandle.close();
+      fileHandle = await fs.promises.open(outputPath, "r+");
+
       // Kiểm tra tốc độ mạng bằng cách tải thử một chunk nhỏ
       const testChunkSize = 1 * 1024 * 1024; // 1MB để test
       const testHeaders = {
@@ -702,9 +676,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         CONCURRENT_CHUNKS = 3;
         console.log(`${indent}🐢 Phát hiện mạng chậm - Cấu hình ổn định`);
       }
-
-      // Tạo thư mục nếu chưa tồn tại
-      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
 
       // Lấy kích thước file
       let totalSize;
@@ -762,23 +733,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         chunks.push({ start, end });
       }
 
-      // Mở file với buffer lớn hơn
-      fileHandle = await fs.promises.open(outputPath, "r+");
-
-      // Tạo instance axios riêng cho downloads
-      const downloadInstance = axios.create({
-        timeout: 30000,
-        maxRedirects: 5,
-        httpAgent: new http.Agent({
-          keepAlive: true,
-          maxSockets: CONCURRENT_CHUNKS * 2,
-        }),
-        httpsAgent: new https.Agent({
-          keepAlive: true,
-          maxSockets: CONCURRENT_CHUNKS * 2,
-        }),
-      });
-
       // Tải chunks với retry tự động
       for (let i = 0; i < chunks.length; i += CONCURRENT_CHUNKS) {
         const chunkGroup = chunks.slice(i, i + CONCURRENT_CHUNKS);
@@ -792,7 +746,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                   Connection: "keep-alive",
                 };
 
-                const response = await downloadInstance.get(videoUrl, {
+                const response = await axios.get(videoUrl, {
                   headers: chunkHeaders,
                   responseType: "arraybuffer",
                   maxContentLength: CHUNK_SIZE,
@@ -1155,6 +1109,60 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.error(`${indent}❌ Lỗi khởi tạo tài khoản:`, error);
     } finally {
       await page.close();
+    }
+  }
+
+  async startDownloadInBackground(
+    url,
+    tempPath,
+    headers,
+    fileName,
+    depth,
+    targetFolderId
+  ) {
+    const indent = "  ".repeat(depth);
+    try {
+      // Đảm bảo thư mục temp tồn tại
+      await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+      console.log(
+        `${indent}📁 Đảm bảo thư mục temp tồn tại: ${path.dirname(tempPath)}`
+      );
+
+      console.log(`${indent}📥 Bắt đầu tải ngầm: ${fileName}`);
+      console.log(`${indent}💾 Đường dẫn file tạm: ${tempPath}`);
+
+      // Tải file
+      await this.downloadWithChunks(url, tempPath, headers, fileName, depth);
+
+      // Kiểm tra file đã tải về
+      if (!fs.existsSync(tempPath)) {
+        throw new Error(`File tạm không tồn tại sau khi tải: ${tempPath}`);
+      }
+
+      if (!this.downloadOnly) {
+        // Upload file sau khi tải xong
+        console.log(`${indent}⬆️ Bắt đầu upload: ${fileName}`);
+        await this.uploadVideo(tempPath, fileName, targetFolderId, depth);
+      }
+
+      // Xóa file tạm sau khi xử lý xong
+      try {
+        if (fs.existsSync(tempPath)) {
+          await fs.promises.unlink(tempPath);
+          console.log(`${indent}🧹 Đã xóa file tạm: ${fileName}`);
+        }
+      } catch (err) {
+        console.warn(`${indent}⚠️ Không thể xóa file tạm:`, err.message);
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi xử lý download/upload:`, error.message);
+      // Log thêm thông tin debug
+      console.error(`${indent}📄 Chi tiết:
+        - File: ${fileName}
+        - Đường dẫn: ${tempPath}
+        - Thư mục tồn tại: ${fs.existsSync(path.dirname(tempPath))}
+      `);
+      throw error;
     }
   }
 }
