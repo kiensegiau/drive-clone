@@ -11,6 +11,7 @@ const { getDatabase } = require("firebase-admin/database");
 const http = require("http");
 const https = require("https");
 const axios = require("axios");
+const DriveAPIDocsHandler = require("./DocsHandlers/DriveAPIDocsHandler");
 
 const {
   getConfigPath,
@@ -261,7 +262,7 @@ class DriveAPI {
     console.log(`\n2. Đăng nhập và cấp quyền cho ứng dụng`);
     console.log(`3. Sau khi redirect, copy mã từ URL (phần sau "code=")`);
     console.log(
-      `4. Paste mã ngay vào đy (mã chỉ có hiệu lực trong vài giây)\n`
+      `4. Paste mã ngay vào đy (mã chỉ c�� hiệu lực trong vài giây)\n`
     );
 
     const rl = readline.createInterface({
@@ -544,6 +545,7 @@ class DriveAPI {
           const videoFiles = [];
           const folders = [];
           const otherFiles = [];
+          const docsFiles = [];
 
           for (const file of response.data.files) {
             if (file.mimeType === "application/vnd.google-apps.folder") {
@@ -567,6 +569,15 @@ class DriveAPI {
                 mimeType: file.mimeType,
                 targetFolderId: this.currentTargetFolderId,
                 depth: 0,
+              });
+            } else if (file.mimeType === "application/vnd.google-apps.document") {
+              docsFiles.push({
+                id: file.id,
+                fileId: file.id,
+                name: file.name,
+                size: file.size,
+                mimeType: file.mimeType,
+                targetFolderId: this.currentTargetFolderId,
               });
             } else {
               otherFiles.push({
@@ -764,6 +775,29 @@ class DriveAPI {
                 type: "other_files",
                 error: otherFilesError.message,
               });
+              hasErrors = true;
+            }
+          }
+
+          // Xử lý Google Docs files
+          if (docsFiles.length > 0) {
+            try {
+              console.log(`\n📄 Xử lý ${docsFiles.length} file Google Docs...`);
+              console.log(`📁 Upload vào folder: ${this.currentTargetFolderId}`);
+
+              const docsHandler = new DriveAPIDocsHandler(
+                this.sourceDrive,
+                this.targetDrive,
+                getTempPath(),
+                this.processLogger
+              );
+
+              for (const docsFile of docsFiles) {
+                await docsHandler.processDocsFile(docsFile, this.currentTargetFolderId);
+              }
+            } catch (docsError) {
+              console.error(`❌ Lỗi xử lý Google Docs files:`, docsError.message);
+              errors.push({ type: "docs", error: docsError.message });
               hasErrors = true;
             }
           }
@@ -1100,7 +1134,7 @@ class DriveAPI {
               console.log(`   Kích thước: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
               return { success: true, file, skipped: true };
             } else {
-              console.log(`⚠️ Tồn tại video cùng tên nhưng khác dung lượng:`);
+              console.log(`⚠�� Tồn tại video cùng tên nhưng khác dung lượng:`);
               console.log(`   - Hiện tại: ${(existing.size / (1024 * 1024)).toFixed(2)} MB`);
               console.log(`   - Cần tải: ${(file.size / (1024 * 1024)).toFixed(2)} MB`);
             }
