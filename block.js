@@ -45,8 +45,8 @@ class VideoQualityChecker {
 
     // Thêm biến đếm toàn cục vào constructor
     this.totalProcessedFiles = 0;
-    this.BATCH_SIZE = 5;
-    this.BATCH_DELAY = 900000; // 15 phút
+    this.BATCH_SIZE = 10;
+    this.BATCH_DELAY = 2500000; // 15 phút
     this.reprocessedFiles = 0;
   }
 
@@ -647,33 +647,39 @@ class VideoQualityChecker {
 
           if (!metadata || !metadata.durationMillis) {
             console.log(`${indent}⚠️ Video "${video.name}" bị lỗi metadata`);
-            
+
             try {
               // Tạo bản sao mới
-              console.log(`${indent}🔄 Đang tạo bản sao của "${video.name}"...`);
+              console.log(
+                `${indent}🔄 Đang tạo bản sao của "${video.name}"...`
+              );
               const copiedFile = await this.drive.files.copy({
                 fileId: video.id,
                 requestBody: {
                   name: video.name,
-                  parents: [folderId]
+                  parents: [folderId],
                 },
-                supportsAllDrives: true
+                supportsAllDrives: true,
               });
 
               // Xóa file cũ
               console.log(`${indent}🗑️ Đang xóa file gốc...`);
               await this.drive.files.delete({
                 fileId: video.id,
-                supportsAllDrives: true
+                supportsAllDrives: true,
               });
 
               // Tăng biến đếm file cần tạo bản sao SAU KHI đã tạo và xóa thành công
               this.reprocessedFiles++;
-              console.log(`${indent}📝 Số file đã tạo bản sao: ${this.reprocessedFiles}/${this.BATCH_SIZE}`);
+              console.log(
+                `${indent}📝 Số file đã tạo bản sao: ${this.reprocessedFiles}/${this.BATCH_SIZE}`
+              );
 
               // Kiểm tra nghỉ SAU KHI đã hoàn thành việc tạo bản sao
               if (this.reprocessedFiles >= this.BATCH_SIZE) {
-                console.log(`\n${indent}⏳ Đã tạo bản sao xong ${this.BATCH_SIZE} files, nghỉ 15 phút...`);
+                console.log(
+                  `\n${indent}⏳ Đã tạo bản sao xong ${this.BATCH_SIZE} files, nghỉ 15 phút...`
+                );
                 await this.delay(this.BATCH_DELAY);
                 this.reprocessedFiles = 0; // Reset counter
                 console.log(`${indent}▶️ Tiếp tục xử lý...`);
@@ -682,9 +688,10 @@ class VideoQualityChecker {
               stats.quality.unknown++;
               this.totalProcessedFiles++;
               continue;
-
             } catch (copyError) {
-              console.log(`${indent}❌ Không thể xử lý lại file: ${copyError.message}`);
+              console.log(
+                `${indent}❌ Không thể xử lý lại file: ${copyError.message}`
+              );
               stats.quality.unknown++;
               this.totalProcessedFiles++;
               continue;
@@ -763,7 +770,9 @@ class VideoQualityChecker {
             stats.totalProcessed++;
           }
         } catch (error) {
-          console.log(`${indent}❌ Lỗi khi kiểm tra video "${video.name}": ${error.message}`);
+          console.log(
+            `${indent}❌ Lỗi khi kiểm tra video "${video.name}": ${error.message}`
+          );
           stats.quality.unknown++;
           this.totalProcessedFiles++;
           continue;
