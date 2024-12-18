@@ -7,6 +7,8 @@ const mammoth = require("mammoth");
 const GroupDocs = require("groupdocs-conversion-cloud");
 const { credentials } = require("../../config/auth");
 const { GroupDocsConversion } = require("groupdocs-conversion-cloud");
+const officegen = require("officegen");
+const cheerio = require("cheerio");
 
 class DriveAPIDocsHandler {
   constructor(sourceDrive, targetDrive, tempDir, config) {
@@ -19,11 +21,7 @@ class DriveAPIDocsHandler {
     const clientSecret = credentials.client_secret;
     const serverUrl = "https://api.groupdocs.cloud";
 
-    this.convertApi = GroupDocsConversion.ConvertApi.fromKeys(
-      clientId,
-      clientSecret,
-      serverUrl
-    );
+    
   }
 
   async processDocsFile(file, targetFolderId) {
@@ -52,7 +50,7 @@ class DriveAPIDocsHandler {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
       ) {
         const outputPath = path.join(this.tempDir, `${file.id}.pdf`);
-        await this.convertDocxToPDF(file.id, outputPath);
+        await this.convertDocsToPDF(file.id, outputPath);
 
         const pdfFile = await this.targetDrive.files.create({
           requestBody: {
@@ -68,7 +66,7 @@ class DriveAPIDocsHandler {
         });
 
         console.log(`PDF file created from DOCX: ${pdfFile.data.id}`);
-        await fsp.unlink(outputPath);
+        // await fsp.unlink(outputPath);
       }
     } catch (error) {
       console.error(`Error processing Docs/DOCX file: ${error.message}`);
@@ -80,179 +78,144 @@ class DriveAPIDocsHandler {
     let page = null;
 
     try {
-      console.log(`Bắt đầu chuyển đổi cho tài liệu Google Docs: ${fileId}`);
+        console.log(`Bắt đầu chuyển đổi tài liệu: ${fileId}`);
+        browser = await this.chromeManager.getBrowser();
+        page = await browser.newPage();
 
-      browser = await this.chromeManager.getBrowser();
-      console.log("Đã lấy được phiên bản trình duyệt");
+        // 1. Truy cập URL edit trước
+        const editUrl = `https://docs.google.com/document/d/${fileId}/edit`;
+        await page.goto(editUrl);
+        console.log(`Đã truy cập URL edit: ${editUrl}`);
 
-      page = await browser.newPage();
-      console.log("Đã mở trang mới");
+        // 2. Đợi 1 giây cho tài liệu load
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        console.log("Đã đợi 1 giây cho tài liệu load");
 
-      await page.goto(`https://docs.google.com/document/d/${fileId}/edit`);
-      console.log(
-        `Đã điều hướng đến URL của tài liệu Google Docs: https://docs.google.com/document/d/${fileId}/edit`
-      );
+        // 3. Tắt JavaScript
+        await page.setJavaScriptEnabled(false);
+        console.log("Đã tắt JavaScript");
 
-      await page.waitForSelector(".kix-appview-editor", { timeout: 30000 });
-      console.log("Trình soạn thảo đã tải xong");
+        // 4. Chuyển sang mobile view
+        const mobileUrl = `https://docs.google.com/document/d/${fileId}/mobilebasic`;
+        await page.goto(mobileUrl);
+        console.log(`Đã chuyển sang mobile view: ${mobileUrl}`);
 
-      await page.waitForTimeout(2000);
-      console.log("Đã đợi 2 giây");
-
-      let pageCount;
-      try {
-        pageCount = await page.evaluate(() => {
-          const selectors = [
-            ".kix-page-content-wrapper",
-            ".kix-page",
-            ".kix-appview-editor",
-          ];
-          for (const selector of selectors) {
-            const elements = document.querySelectorAll(selector);
-            if (elements.length > 0) {
-              console.log(
-                `Đã tìm thấy ${elements.length} phần tử với bộ chọn "${selector}"`
-              );
-              return elements.length;
-            }
-          }
-          console.log("Không tìm thấy phần tử phù hợp");
-          return 0;
+        // 5. Lấy HTML và CSS
+        const content = await page.evaluate(() => {
+            const styles = Array.from(document.querySelectorAll('style')).map(style => style.innerHTML).join('\n');
+            const html = document.querySelector('.doc-content').outerHTML;
+            return {
+                styles,
+                html
+            };
         });
-        console.log(`Số lượng trang trong tài liệu: ${pageCount}`);
-      } catch (error) {
-        console.error(`Lỗi khi lấy số lượng trang: ${error.message}`);
+
+        // 6. Tạo file HTML tạm với nội dung và style
+        const tempHtmlPath = path.join(this.tempDir, `${fileId}.html`);
+        const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+                <style>
+                    * {
+                        margin: 0;
+                        padding: 0;
+                        box-sizing: border-box;
+                    }
+                    
+                    body {
+                        font-family: 'Roboto', Arial, sans-serif;
+                        line-height: 1.6;
+                        margin: 0;
+                        padding: 0 40px;
+                        width: 100% !important;
+                    }
+                    
+                    table {
+                        border-collapse: collapse;
+                        width: 100% !important;
+                        margin: 10px 0;
+                    }
+                    
+                    td, th {
+                        border: 1px solid #ddd;
+                        padding: 8px;
+                    }
+                    
+                    h1, h2, h3, h4, h5, h6 {
+                        margin: 15px 0;
+                        font-weight: 500;
+                    }
+                    
+                    p {
+                        margin: 10px 0;
+                    }
+                    
+                    /* Override Google Docs styles */
+                    .doc-content {
+                        width: 100% !important;
+                        max-width: none !important;
+                        margin: 0 !important;
+                        padding: 20px 0 !important;
+                    }
+                    
+                    /* Override any container classes */
+                    [class*="container"] {
+                        width: 100% !important;
+                        max-width: none !important;
+                        margin: 0 !important;
+                        padding: 0 !important;
+                    }
+                    
+                    ${content.styles}
+                </style>
+            </head>
+            <body>
+                ${content.html}
+            </body>
+            </html>
+        `;
+        
+        await fs.promises.writeFile(tempHtmlPath, htmlContent);
+        console.log(`Đã tạo file HTML tạm: ${tempHtmlPath}`);
+
+        // 7. Mở file HTML và chuyển sang PDF
+        await page.goto(`file://${tempHtmlPath}`);
+        
+        // Đợi fonts load
+        await page.waitForTimeout(1000);
+        
+        // Điều chỉnh viewport khi tạo PDF
+        await page.setViewport({
+            width: 1200,  // Tăng chiều rộng viewport
+            height: 800
+        });
+
+        await page.pdf({
+            path: outputPath,
+            format: 'A4',
+            margin: {
+                top: '20mm',
+                right: '20mm',
+                bottom: '20mm',
+                left: '20mm'
+            },
+            printBackground: true,
+            scale: 1.0  // Đảm bảo không bị thu nhỏ
+        });
+        console.log(`Đã tạo file PDF: ${outputPath}`);
+
+        // 8. Xóa file HTML tạm
+        await fs.promises.unlink(tempHtmlPath);
+
+    } catch (error) {
+        console.error("Lỗi chuyển đổi sang PDF:", error);
         throw error;
-      }
-
-      const imagePaths = [];
-      for (let i = 0; i < pageCount; i++) {
-        console.log(`Đang xử lý trang ${i + 1}`);
-
-        await page.evaluate((pageIndex) => {
-          const pages = document.getElementsByClassName("kix-page");
-          if (pageIndex < pages.length) {
-            pages[pageIndex].scrollIntoView();
-          } else {
-            console.warn(`Chỉ mục trang ${pageIndex} vượt quá giới hạn`);
-          }
-        }, i);
-        console.log(`Đã cuộn đến trang ${i + 1}`);
-
-        await page.waitForTimeout(2000);
-        console.log(`Đã đợi 2 giây trước khi chụp ảnh trang ${i + 1}`);
-
-        const imagePath = path.join(
-          this.tempDir,
-          `${fileId}_page_${i + 1}.png`
-        );
-        await page.screenshot({ path: imagePath, fullPage: true });
-        console.log(`Đã chụp ảnh cho trang ${i + 1}: ${imagePath}`);
-
-        imagePaths.push(imagePath);
-      }
-
-      console.log("Đang tạo tài liệu PDF");
-      const pdfDoc = new PDFDocument();
-      pdfDoc.pipe(fs.createWriteStream(outputPath));
-
-      for (const imagePath of imagePaths) {
-        console.log(`Đang thêm ảnh vào PDF: ${imagePath}`);
-        const image = await pdfDoc.openImage(imagePath);
-        console.log(`Kích thước ảnh: ${image.width}x${image.height}`);
-        pdfDoc.addPage({ size: [image.width, image.height] });
-        pdfDoc.image(image, 0, 0);
-      }
-
-      pdfDoc.end();
-      console.log(`Đã tạo tệp PDF: ${outputPath}`);
-
-      for (const imagePath of imagePaths) {
-        console.log(`Đang xóa tệp ảnh tạm thời: ${imagePath}`);
-        await fsp.unlink(imagePath);
-      }
-
-      console.log(
-        `Đã hoàn tất quá trình chuyển đổi cho tài liệu Google Docs: ${fileId}`
-      );
-    } catch (error) {
-      console.error(
-        `Lỗi khi chuyển đổi tài liệu Google Docs sang PDF: ${error.message}`
-      );
-      throw error;
     } finally {
-      if (page) {
-        await page.close();
-        console.log("Đã đóng trang");
-      }
-      this.chromeManager.releaseInstance(browser);
-      console.log("Đã giải phóng phiên bản trình duyệt");
-    }
-  }
-
-  async convertDocxToPDF(fileId, outputPath) {
-    let browser = null;
-    let page = null;
-
-    try {
-      console.log(`Bắt đầu chuyển đổi cho file DOCX: ${fileId}`);
-
-      // Khởi tạo trình duyệt và trang mới
-      browser = await this.chromeManager.getBrowser();
-      console.log("Đã lấy được phiên bản trình duyệt");
-
-      page = await browser.newPage();
-      console.log("Đã mở trang mới");
-
-      // Điều hướng đến URL của file Word
-      const url = `https://docs.google.com/document/d/${fileId}/edit`;
-      await page.goto(url);
-      console.log(`Đã điều hướng đến URL của file Word: ${url}`);
-
-      // Tắt JavaScript
-      await page.setJavaScriptEnabled(false);
-      console.log("Đã tắt JavaScript");
-
-      // Thay đổi URL thành /mobilebasic
-      const mobileUrl = `https://docs.google.com/document/d/${fileId}/mobilebasic`;
-      await page.goto(mobileUrl);
-      console.log(`Đã chuyển sang URL mobile: ${mobileUrl}`);
-
-      // Lấy nội dung văn bản của file Word
-      const content = await page.evaluate(() => {
-        return document.querySelector(".doc").innerText;
-      });
-      console.log("Đã lấy nội dung văn bản của file Word");
-
-      // Tạo file Word mới từ nội dung đã lấy được
-      const tempDocxPath = path.join(this.tempDir, `${fileId}.docx`);
-      await fs.promises.writeFile(tempDocxPath, content);
-      console.log(`Đã tạo file Word mới: ${tempDocxPath}`);
-
-      // Chuyển đổi file Word sang PDF bằng GroupDocs.Conversion Cloud
-      const settings = new GroupDocs.ConvertSettings();
-      settings.filePath = tempDocxPath;
-      settings.format = "pdf";
-      settings.outputPath = outputPath;
-
-      const request = new GroupDocs.ConvertDocumentRequest(settings);
-      const result = await this.convertApi.convertDocument(request);
-
-      console.log(`Đã chuyển đổi file Word sang PDF: ${outputPath}`);
-
-      // Xóa file Word tạm thời
-      await fs.promises.unlink(tempDocxPath);
-      console.log(`Đã xóa file Word tạm thời: ${tempDocxPath}`);
-    } catch (error) {
-      console.error("Lỗi khi chuyển đổi file DOCX sang PDF:", error);
-      throw error;
-    } finally {
-      if (page) {
-        await page.close();
-        console.log("Đã đóng trang");
-      }
-      this.chromeManager.releaseInstance(browser);
-      console.log("Đã giải phóng phiên bản trình duyệt");
+        if (page) await page.close();
+        if (browser) this.chromeManager.releaseInstance(browser);
     }
   }
 
