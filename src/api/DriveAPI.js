@@ -447,7 +447,7 @@ class DriveAPI {
           );
           console.log(`3. Folder phải được chia sẻ với tài khoản nguồn`);
           console.log(`\n💡 Mã lỗi:`, error.message);
-          console.log(`\n💡 Tr��ng thái:`, error.response?.status);
+          console.log(`\n💡 Trạng thái:`, error.response?.status);
           console.log(`\n💡 Chi tiết:`, error.response?.data);
         }
         throw error;
@@ -830,7 +830,7 @@ class DriveAPI {
               );
 
               for (const docsFile of docsFiles) {
-                await docsHandler.processDocsFile(
+                const uploadResult = await docsHandler.processDocsFile(
                   docsFile,
                   this.currentTargetFolderId
                 );
@@ -861,7 +861,7 @@ class DriveAPI {
               );
 
               for (const docxFile of docxFiles) {
-                await docsHandler.processDocsFile(
+                const uploadResult = await docsHandler.processDocsFile(
                   docxFile,
                   this.currentTargetFolderId
                 );
@@ -958,7 +958,9 @@ class DriveAPI {
           supportsAllDrives: true,
         });
 
-        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`);
+        console.log(
+          `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
+        );
       } catch (permError) {
         console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
       }

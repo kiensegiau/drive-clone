@@ -3,12 +3,6 @@ const fs = require("fs");
 const fsp = require("fs").promises;
 const ChromeManager = require("../ChromeManager");
 const PDFDocument = require("pdfkit");
-const mammoth = require("mammoth");
-const GroupDocs = require("groupdocs-conversion-cloud");
-const { credentials } = require("../../config/auth");
-const { GroupDocsConversion } = require("groupdocs-conversion-cloud");
-const officegen = require("officegen");
-const cheerio = require("cheerio");
 
 class DriveAPIDocsHandler {
   constructor(sourceDrive, targetDrive, tempDir, config) {
@@ -17,102 +11,47 @@ class DriveAPIDocsHandler {
     this.tempDir = tempDir;
     this.config = config;
     this.chromeManager = ChromeManager.getInstance("pdf");
-    const clientId = credentials.client_id;
-    const clientSecret = credentials.client_secret;
-    const serverUrl = "https://api.groupdocs.cloud";
-
-    
+   
   }
 
-  async processDocsFile(file, targetFolderId) {
-    try {
-      if (file.mimeType === "application/vnd.google-apps.document") {
-        const outputPath = path.join(this.tempDir, `${file.id}.pdf`);
-        await this.convertDocsToPDF(file.id, outputPath);
-
-        const pdfFile = await this.targetDrive.files.create({
-          requestBody: {
-            name: `${file.name}.pdf`,
-            parents: [targetFolderId],
-            mimeType: "application/pdf",
-          },
-          media: {
-            mimeType: "application/pdf",
-            body: fs.createReadStream(outputPath),
-          },
-          fields: "id",
-        });
-
-        console.log(`PDF file created from Google Docs: ${pdfFile.data.id}`);
-        await fsp.unlink(outputPath);
-      } else if (
-        file.mimeType ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      ) {
-        const outputPath = path.join(this.tempDir, `${file.id}.pdf`);
-        await this.convertDocsToPDF(file.id, outputPath);
-
-        const pdfFile = await this.targetDrive.files.create({
-          requestBody: {
-            name: `${file.name}.pdf`,
-            parents: [targetFolderId],
-            mimeType: "application/pdf",
-          },
-          media: {
-            mimeType: "application/pdf",
-            body: fs.createReadStream(outputPath),
-          },
-          fields: "id",
-        });
-
-        console.log(`PDF file created from DOCX: ${pdfFile.data.id}`);
-        // await fsp.unlink(outputPath);
-      }
-    } catch (error) {
-      console.error(`Error processing Docs/DOCX file: ${error.message}`);
-    }
-  }
-
-  async convertDocsToPDF(fileId, outputPath) {
+  async convertDocsToPDF(fileId, outputPath, targetFolderId, originalFileName) {
     let browser = null;
     let page = null;
 
     try {
-        console.log(`Bắt đầu chuyển đổi tài liệu: ${fileId}`);
-        browser = await this.chromeManager.getBrowser();
-        page = await browser.newPage();
+      
+      browser = await this.chromeManager.getBrowser();
+      page = await browser.newPage();
 
-        // 1. Truy cập URL edit trước
-        const editUrl = `https://docs.google.com/document/d/${fileId}/edit`;
-        await page.goto(editUrl);
-        console.log(`Đã truy cập URL edit: ${editUrl}`);
+      // 1. Truy cập URL edit trước
+      const editUrl = `https://docs.google.com/document/d/${fileId}/edit`;
+      await page.goto(editUrl);
+      
+      // 2. Đợi 1 giây cho tài liệu load
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      
+      // 3. Tắt JavaScript
+      await page.setJavaScriptEnabled(false);
+      
+      // 4. Chuyển sang mobile view
+      const mobileUrl = `https://docs.google.com/document/d/${fileId}/mobilebasic`;
+      await page.goto(mobileUrl);
+      
+      // 5. Lấy HTML và CSS
+      const content = await page.evaluate(() => {
+        const styles = Array.from(document.querySelectorAll("style"))
+          .map((style) => style.innerHTML)
+          .join("\n");
+        const html = document.querySelector(".doc-content").outerHTML;
+        return {
+          styles,
+          html,
+        };
+      });
 
-        // 2. Đợi 1 giây cho tài liệu load
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        console.log("Đã đợi 1 giây cho tài liệu load");
-
-        // 3. Tắt JavaScript
-        await page.setJavaScriptEnabled(false);
-        console.log("Đã tắt JavaScript");
-
-        // 4. Chuyển sang mobile view
-        const mobileUrl = `https://docs.google.com/document/d/${fileId}/mobilebasic`;
-        await page.goto(mobileUrl);
-        console.log(`Đã chuyển sang mobile view: ${mobileUrl}`);
-
-        // 5. Lấy HTML và CSS
-        const content = await page.evaluate(() => {
-            const styles = Array.from(document.querySelectorAll('style')).map(style => style.innerHTML).join('\n');
-            const html = document.querySelector('.doc-content').outerHTML;
-            return {
-                styles,
-                html
-            };
-        });
-
-        // 6. Tạo file HTML tạm với nội dung và style
-        const tempHtmlPath = path.join(this.tempDir, `${fileId}.html`);
-        const htmlContent = `
+      // 6. Tạo file HTML tạm với nội dung và style
+      const tempHtmlPath = path.join(this.tempDir, `${fileId}.html`);
+      const htmlContent = `
             <!DOCTYPE html>
             <html>
             <head>
@@ -177,45 +116,71 @@ class DriveAPIDocsHandler {
             </body>
             </html>
         `;
-        
-        await fs.promises.writeFile(tempHtmlPath, htmlContent);
-        console.log(`Đã tạo file HTML tạm: ${tempHtmlPath}`);
 
-        // 7. Mở file HTML và chuyển sang PDF
-        await page.goto(`file://${tempHtmlPath}`);
-        
-        // Đợi fonts load
-        await page.waitForTimeout(1000);
-        
-        // Điều chỉnh viewport khi tạo PDF
-        await page.setViewport({
-            width: 1200,  // Tăng chiều rộng viewport
-            height: 800
-        });
+      await fs.promises.writeFile(tempHtmlPath, htmlContent);
+      
+      // 7. Mở file HTML và chuyển sang PDF
+      await page.goto(`file://${tempHtmlPath}`);
 
-        await page.pdf({
-            path: outputPath,
-            format: 'A4',
-            margin: {
-                top: '20mm',
-                right: '20mm',
-                bottom: '20mm',
-                left: '20mm'
-            },
-            printBackground: true,
-            scale: 1.0  // Đảm bảo không bị thu nhỏ
-        });
-        console.log(`Đã tạo file PDF: ${outputPath}`);
+      // Đợi fonts load
+      await page.waitForTimeout(1000);
 
-        // 8. Xóa file HTML tạm
+      // Điều chỉnh viewport khi tạo PDF
+      await page.setViewport({
+        width: 1200, // Tăng chiều rộng viewport
+        height: 800,
+      });
+
+      await page.pdf({
+        path: outputPath,
+        format: "A4",
+        margin: {
+          top: "20mm",
+          right: "20mm",
+          bottom: "20mm",
+          left: "20mm",
+        },
+        printBackground: true,
+        scale: 1.0, // Đảm bảo không bị thu nhỏ
+      });
+      console.log(`Đã tạo file PDF: ${outputPath}`);
+
+      // Upload file PDF lên Drive với tên gốc và vào folder đích
+      const uploadResult = await this.uploadToDrive(
+        outputPath, 
+        targetFolderId,
+        originalFileName
+      );
+
+      if (!uploadResult.success) {
+        throw new Error(`Upload thất bại: ${uploadResult.error}`);
+      }
+
+      console.log(`✅ Đã upload file PDF lên Drive thành công`);
+
+      // Xóa file PDF tạm sau khi upload thành công
+      try {
+        await fs.promises.unlink(outputPath);
+        console.log(`🗑️ Đã xóa file PDF tạm: ${outputPath}`);
+      } catch (error) {
+        console.error(`⚠️ Lỗi xóa file PDF tạm ${outputPath}:`, error.message);
+      }
+
+      // Xóa file HTML tạm sau khi hoàn tất
+      try {
         await fs.promises.unlink(tempHtmlPath);
+        console.log(`🗑️ Đã xóa file HTML tạm: ${tempHtmlPath}`);
+      } catch (error) {
+        console.error(`⚠️ Lỗi xóa file HTML tạm ${tempHtmlPath}:`, error.message);
+      }
 
+      return uploadResult;
     } catch (error) {
-        console.error("Lỗi chuyển đổi sang PDF:", error);
-        throw error;
+      console.error("Lỗi chuyển đổi sang PDF:", error);
+      throw error;
     } finally {
-        if (page) await page.close();
-        if (browser) this.chromeManager.releaseInstance(browser);
+      if (page) await page.close();
+      if (browser) this.chromeManager.releaseInstance(browser);
     }
   }
 
@@ -235,6 +200,129 @@ class DriveAPIDocsHandler {
     } catch (error) {
       console.error("Lỗi khi lấy nội dung file DOCX:", error);
       throw error;
+    }
+  }
+
+  async processDocsFile(file, targetFolderId) {
+    try {
+      const outputPath = path.join(this.tempDir, `${file.id}.pdf`);
+      const originalFileName = file.name;
+
+      const uploadResult = await this.convertDocsToPDF(
+        file.id,
+        outputPath,
+        targetFolderId,
+        originalFileName
+      );
+
+      return uploadResult;
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý file Docs "${file.name}":`, error.message);
+      throw error;
+    }
+  }
+
+  async checkExistingFile(fileName, folderId) {
+    try {
+      const query = `name='${fileName}' and '${folderId}' in parents and trashed=false`;
+      const response = await this.targetDrive.files.list({
+        q: query,
+        fields: "files(id, name, size)",
+        supportsAllDrives: true,
+      });
+
+      if (response.data.files.length > 0) {
+        const existingFile = response.data.files[0];
+        console.log(
+          `📁 Đã tồn tại - Size: ${(existingFile.size / (1024 * 1024)).toFixed(
+            2
+          )} MB`
+        );
+        return existingFile;
+      }
+
+      console.log(`🆕 File chưa tồn tại, cần tải mới`);
+      return null;
+    } catch (error) {
+      console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error.message);
+      return null;
+    }
+  }
+
+  async uploadToDrive(filePath, targetFolderId, customFileName) {
+    try {
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File không tồn tại: ${filePath}`);
+      }
+
+      const fileSize = fs.statSync(filePath).size;
+      if (fileSize === 0) {
+        throw new Error("File rỗng");
+      }
+
+      const fileName = customFileName || path.basename(filePath);
+
+      // Kiểm tra xem file đã tồn tại trong thư mục đích chưa
+      const existingFile = await this.checkExistingFile(fileName, targetFolderId);
+      if (existingFile) {
+        console.log(`📁 File đã tồn tại: ${fileName}`);
+        return {
+          success: true,
+          skipped: true,
+          uploadedFile: existingFile,
+        };
+      }
+
+      const fileMetadata = {
+        name: fileName,
+        parents: [targetFolderId],
+      };
+
+      const media = {
+        mimeType: "application/pdf",
+        body: fs.createReadStream(filePath),
+      };
+
+      // Sử dụng targetDrive để upload
+      const uploadResponse = await this.targetDrive.files.create({
+        requestBody: fileMetadata,
+        media: media,
+        fields: "id, name, size",
+        supportsAllDrives: true,
+      });
+
+      console.log(`\n✅ Upload thành công: ${uploadResponse.data.name}`);
+
+      // Thay đổi phần set permissions sau khi upload thành công
+      try {
+        // Sau đó cập nhật file để vô hiệu hóa các quyền
+        await this.targetDrive.files.update({
+          fileId: uploadResponse.data.id,
+          requestBody: {
+            copyRequiresWriterPermission: true,
+            viewersCanCopyContent: false,
+            writersCanShare: false,
+            sharingUser: null,
+            permissionIds: [],
+          },
+          supportsAllDrives: true,
+        });
+
+        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${fileName}`);
+      } catch (permError) {
+        console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
+      }
+
+      return {
+        success: true,
+        uploadedFile: uploadResponse.data,
+      };
+    } catch (error) {
+      console.error(`\n❌ Lỗi upload: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
     }
   }
 }
