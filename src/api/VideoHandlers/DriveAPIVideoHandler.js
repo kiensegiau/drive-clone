@@ -640,134 +640,180 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       await fileHandle.close();
       fileHandle = await fs.promises.open(outputPath, "r+");
 
-      // Kiểm tra tốc độ mạng bằng cách tải thử một chunk nhỏ
-      const testChunkSize = 1 * 1024 * 1024; // 1MB để test
+      // Thêm timeout dài hơn cho test tốc độ
+      const testChunkSize = 5 * 1024 * 1024; // Tăng lên 5MB để test chính xác hơn
       const testHeaders = {
         ...headers,
         Range: `bytes=0-${testChunkSize - 1}`,
       };
 
       console.log(`${indent}🔍 Đang kiểm tra tốc độ mạng...`);
-      const testStartTime = Date.now();
-      const testResponse = await axios.get(videoUrl, {
-        headers: testHeaders,
-        responseType: "arraybuffer",
-        timeout: 10000,
-      });
-      const testDuration = (Date.now() - testStartTime) / 1000;
-      const speedMBps = (testChunkSize / 1024 / 1024 / testDuration).toFixed(2);
-      console.log(`${indent}📊 Tốc độ mạng ước tính: ${speedMBps} MB/s`);
 
-      // Tự động điều chỉnh cấu hình dựa trên tốc độ mạng
+      // Thêm retry cho việc test tốc độ
+      let speedMBps = 0;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const testStartTime = Date.now();
+          const testResponse = await axios.get(videoUrl, {
+            headers: testHeaders,
+            responseType: "arraybuffer",
+            timeout: 30000, // Tăng timeout lên 30s
+          });
+
+          if (testResponse.data.length === 0) {
+            throw new Error("Received empty response");
+          }
+
+          const testDuration = (Date.now() - testStartTime) / 1000;
+          speedMBps = (testChunkSize / 1024 / 1024 / testDuration).toFixed(2);
+          console.log(`${indent}📊 Tốc độ mạng ước tính: ${speedMBps} MB/s`);
+          break;
+        } catch (error) {
+          console.log(
+            `${indent}⚠️ Lỗi test tốc độ lần ${attempt}: ${error.message}`
+          );
+          if (attempt === 3) {
+            console.log(
+              `${indent}⚠️ Không thể đo tốc độ, dùng cấu hình mặc định`
+            );
+            speedMBps = 10; // Giá trị mặc định an toàn
+          } else {
+            await new Promise((r) => setTimeout(r, 5000));
+          }
+        }
+      }
+
+      // Điều chỉnh ngưỡng tốc độ và cấu hình
       let CHUNK_SIZE, CONCURRENT_CHUNKS;
-      if (speedMBps > 50) {
-        // Mạng nhanh (>400Mbps)
-        CHUNK_SIZE = 50 * 1024 * 1024; // 50MB chunks
-        CONCURRENT_CHUNKS = 10;
-        console.log(`${indent}⚡ Phát hiện mạng nhanh - Tối ưu cho tốc độ cao`);
-      } else if (speedMBps > 20) {
-        // Mạng trung bình (160-400Mbps)
+      if (speedMBps > 20) {
+        // Mạng nhanh (>160Mbps)
         CHUNK_SIZE = 25 * 1024 * 1024; // 25MB chunks
         CONCURRENT_CHUNKS = 6;
+        console.log(`${indent}⚡ Phát hiện mạng nhanh - Tối ưu cho tốc độ cao`);
+      } else if (speedMBps > 10) {
+        // Mạng trung bình (80-160Mbps)
+        CHUNK_SIZE = 15 * 1024 * 1024; // 15MB chunks
+        CONCURRENT_CHUNKS = 4;
         console.log(`${indent}🚀 Phát hiện mạng khá - Cấu hình cân bằng`);
       } else {
-        // Mạng chậm (<160Mbps)
-        CHUNK_SIZE = 10 * 1024 * 1024; // 10MB chunks
+        // Mạng chậm (<80Mbps)
+        CHUNK_SIZE = 8 * 1024 * 1024; // 8MB chunks
         CONCURRENT_CHUNKS = 3;
         console.log(`${indent}🐢 Phát hiện mạng chậm - Cấu hình ổn định`);
       }
 
-      // Lấy kích thước file
+      // Thêm timeout dài hơn cho HEAD request
       let totalSize;
       const axiosInstance = axios.create({
-        timeout: 10000,
+        timeout: 30000,
         httpAgent: new http.Agent({ keepAlive: true }),
         httpsAgent: new https.Agent({ keepAlive: true }),
       });
 
+      // Thêm retry cho HEAD request
       for (let i = 0; i < this.MAX_RETRIES; i++) {
         try {
-          const headResponse = await axiosInstance.head(videoUrl, { headers });
+          const headResponse = await axiosInstance.head(videoUrl, {
+            headers,
+            validateStatus: (status) => status === 200 || status === 206,
+          });
+
+          if (!headResponse.headers["content-length"]) {
+            throw new Error("Missing content-length header");
+          }
+
           totalSize = parseInt(headResponse.headers["content-length"], 10);
+          if (totalSize <= 0) {
+            throw new Error("Invalid content length");
+          }
           break;
         } catch (error) {
+          console.log(
+            `${indent}⚠️ Lỗi HEAD request lần ${i + 1}: ${error.message}`
+          );
           if (i === this.MAX_RETRIES - 1) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((r) => setTimeout(r, 5000));
         }
       }
 
-      // Hiển thị tiến độ với thông tin chi tiết hơn
-      let lastDownloadedSize = 0;
+      // Thêm kiểm tra tiến độ thực tế
+      let lastProgress = 0;
+      let stuckCount = 0;
       const progressInterval = setInterval(() => {
         const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
         const totalMB = (totalSize / 1024 / 1024).toFixed(2);
         const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
-
-        // Tính tốc độ tức thời
-        const instantSpeed = (
-          (downloadedSize - lastDownloadedSize) /
-          1024 /
-          1024 /
-          2
-        ).toFixed(2);
-        lastDownloadedSize = downloadedSize;
-
-        // Tốc độ trung bình
-        const avgSpeed = (downloadedSize / 1024 / 1024 / currentTime).toFixed(
-          2
-        );
-
         const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
+        const speed = (downloadedSize / 1024 / 1024 / currentTime).toFixed(2);
+
+        // Kiểm tra stuck
+        if (progress === lastProgress) {
+          stuckCount++;
+          if (stuckCount >= 5) {
+            console.log(
+              `${indent}⚠️ Phát hiện tải xuống bị kẹt, đang thử lại...`
+            );
+            throw new Error("Download stuck");
+          }
+        } else {
+          stuckCount = 0;
+          lastProgress = progress;
+        }
+
+        // Log gọn trên 1 dòng
         console.log(
-          `${indent}⏬ ${fileName}\n` +
-            `${indent}   Tiến độ: ${progress}% (${downloadedMB}MB / ${totalMB}MB)\n` +
-            `${indent}   Tốc độ hiện tại: ${instantSpeed} MB/s\n` +
-            `${indent}   Tốc độ trung bình: ${avgSpeed} MB/s`
+          `${indent}⏬ ${fileName} | ${progress}% (${downloadedMB}/${totalMB}MB) | ${speed}MB/s | ${currentTime}s`
         );
       }, 2000);
 
-      // Chia thành các chunks
+      // Thêm retry cho từng chunk riêng lẻ
+      const downloadChunk = async (chunk, attempt = 1) => {
+        try {
+          const chunkHeaders = {
+            ...headers,
+            Range: `bytes=${chunk.start}-${chunk.end}`,
+            Connection: "keep-alive",
+          };
+
+          const response = await axios.get(videoUrl, {
+            headers: chunkHeaders,
+            responseType: "arraybuffer",
+            timeout: 30000,
+            maxContentLength: CHUNK_SIZE * 2,
+            maxBodyLength: CHUNK_SIZE * 2,
+          });
+
+          if (response.data.length === 0) {
+            throw new Error("Empty chunk received");
+          }
+
+          const buffer = Buffer.from(response.data);
+          await fileHandle.write(buffer, 0, buffer.length, chunk.start);
+          downloadedSize += buffer.length;
+        } catch (error) {
+          if (attempt >= this.MAX_RETRIES) throw error;
+          console.log(
+            `${indent}⚠️ Lỗi chunk ${chunk.start}-${chunk.end}, thử lại lần ${
+              attempt + 1
+            }...`
+          );
+          await new Promise((r) => setTimeout(r, 5000));
+          return downloadChunk(chunk, attempt + 1);
+        }
+      };
+
+      // Thêm retry cho từng chunk riêng lẻ
       const chunks = [];
       for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
         const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
         chunks.push({ start, end });
       }
 
-      // Tải chunks với retry tự động
       for (let i = 0; i < chunks.length; i += CONCURRENT_CHUNKS) {
         const chunkGroup = chunks.slice(i, i + CONCURRENT_CHUNKS);
         await Promise.all(
           chunkGroup.map(async (chunk) => {
-            for (let attempt = 1; attempt <= this.MAX_RETRIES; attempt++) {
-              try {
-                const chunkHeaders = {
-                  ...headers,
-                  Range: `bytes=${chunk.start}-${chunk.end}`,
-                  Connection: "keep-alive",
-                };
-
-                const response = await axios.get(videoUrl, {
-                  headers: chunkHeaders,
-                  responseType: "arraybuffer",
-                  maxContentLength: CHUNK_SIZE,
-                  maxBodyLength: CHUNK_SIZE,
-                });
-
-                const buffer = Buffer.from(response.data);
-                await fileHandle.write(buffer, 0, buffer.length, chunk.start);
-                downloadedSize += buffer.length;
-                break;
-              } catch (error) {
-                const retryDelay = Math.min(1000 * attempt, 5000);
-                if (attempt === this.MAX_RETRIES) throw error;
-                console.log(
-                  `${indent}⚠️ Lỗi chunk ${chunk.start}-${
-                    chunk.end
-                  }, thử lại sau ${retryDelay / 1000}s...`
-                );
-                await new Promise((resolve) => setTimeout(resolve, retryDelay));
-              }
-            }
+            await downloadChunk(chunk);
           })
         );
       }
@@ -781,6 +827,23 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           `${indent}   📊 Tốc độ TB: ${avgSpeed} MB/s\n` +
           `${indent}   📦 Kích thước: ${(totalSize / 1024 / 1024).toFixed(2)}MB`
       );
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
+
+      // Nếu lỗi do kẹt, thử lại toàn bộ
+      if (error.message === "Download stuck") {
+        console.log(`${indent}🔄 Thử lại toàn bộ quá trình tải xuống...`);
+        await new Promise((r) => setTimeout(r, 5000));
+        return this.downloadWithChunks(
+          videoUrl,
+          outputPath,
+          headers,
+          fileName,
+          depth
+        );
+      }
+
+      throw error;
     } finally {
       if (fileHandle) {
         try {
