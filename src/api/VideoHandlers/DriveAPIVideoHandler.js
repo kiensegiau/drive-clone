@@ -159,8 +159,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             response.config.headers,
             fileName,
             depth,
-            targetFolderId,
-            fileId
+            targetFolderId
           );
           return;
         }
@@ -249,11 +248,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       await this.startDownloadInBackground(
         result.url,
         tempPath,
-        result.headers,
+        result.headers || {},
         fileName,
         depth,
-        targetFolderId,
-        fileId
+        targetFolderId
       )
         .catch((error) => {
           console.error(`${indent}❌ Lỗi tải ngầm ${fileName}:`, error.message);
@@ -407,11 +405,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       await this.startDownloadInBackground(
         result.url, // Sử dụng URL từ result object
         outputPath,
-        result.headers, // Sử dụng headers từ result object
+        {}, // Headers mặc định
         fileName,
         depth,
-        targetFolderId,
-        fileId
+        targetFolderId
       );
 
       return true;
@@ -430,6 +427,26 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       while (retries > 0) {
         try {
           currentPage = await browser.newPage();
+
+          // Lấy cookies từ page
+          const cookies = await currentPage.cookies();
+          const cookieString = cookies
+            .map((cookie) => `${cookie.name}=${cookie.value}`)
+            .join("; ");
+
+          // Tạo headers chuẩn
+          const standardHeaders = {
+            Accept: "*/*",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Language": "en-US,en;q=0.9",
+            Cookie: cookieString,
+            Origin: "https://drive.google.com",
+            Referer: "https://drive.google.com/",
+            "Sec-Fetch-Dest": "video",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-site",
+            "User-Agent": await browser.userAgent(),
+          };
 
           // Tạo promise để đợi kết quả
           const resultPromise = new Promise((resolve, reject) => {
@@ -468,44 +485,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
                       const bestTranscode = fhd || hd || sd;
                       if (bestTranscode) {
-                        // Lấy cookies sau khi đã tìm thấy URL
-                        const cookies = await currentPage.cookies();
-                        const cookieString = cookies
-                          .map((cookie) => `${cookie.name}=${cookie.value}`)
-                          .join("; ");
-
-                        // Log URL để debug
-                        console.log(
-                          `${indent}🔗 URL gốc: ${bestTranscode.url}`
-                        );
-
-                        // Thêm tham số để tránh cache
-                        const finalUrl = `${
-                          bestTranscode.url
-                        }&_t=${Date.now()}`;
-                        console.log(`${indent}🔗 URL cuối: ${finalUrl}`);
-
-                        // Tạo headers chuẩn với cookie đã lấy được
-                        const standardHeaders = {
-                          Accept: "*/*",
-                          "Accept-Encoding": "gzip, deflate, br",
-                          "Accept-Language": "en-US,en;q=0.9",
-                          Cookie: cookieString,
-                          Origin: "https://drive.google.com",
-                          Referer: "https://drive.google.com/",
-                          "Sec-Fetch-Dest": "video",
-                          "Sec-Fetch-Mode": "cors",
-                          "Sec-Fetch-Site": "same-site",
-                          "User-Agent": await browser.userAgent(),
-                        };
-
-                        // Đợi 1 giây để đảm bảo URL đã sẵn sàng
-                        await new Promise((resolve) =>
-                          setTimeout(resolve, 1000)
-                        );
-
                         const result = {
-                          url: finalUrl,
+                          url: bestTranscode.url,
                           quality: fhd ? "1080p" : hd ? "720p" : "360p",
                           metadata: bestTranscode,
                           headers: standardHeaders,
@@ -513,9 +494,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
                         console.log(
                           `${indent} Tìm thấy URL video chất lượng: ${result.quality}`
-                        );
-                        console.log(
-                          `${indent} Cookie length: ${cookieString.length}`
                         );
 
                         resolve(result);
@@ -636,8 +614,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     headers,
     fileName,
     depth,
-    targetFolderId,
-    fileId = null
+    targetFolderId
   ) {
     const indent = "  ".repeat(depth);
     try {
@@ -649,174 +626,15 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
       console.log(`${indent}📥 Bắt đầu tải ngầm: ${fileName}`);
       console.log(`${indent}💾 Đường dẫn file tạm: ${tempPath}`);
-      console.log(
-        `${indent}🔑 Headers được sử dụng:`,
-        JSON.stringify(headers, null, 2)
+
+      // Tải file
+      await this.downloader.downloadWithChunks(
+        url,
+        tempPath,
+        headers,
+        fileName,
+        depth
       );
-
-      let lastError = null;
-      let browser = null;
-
-      for (let retry = 0; retry < 3; retry++) {
-        try {
-          const writeStream = fs.createWriteStream(tempPath);
-
-          // Tạo promise để theo dõi tiến trình tải
-          const downloadPromise = new Promise((resolve, reject) => {
-            let downloadedBytes = 0;
-            let lastLogTime = Date.now();
-            let startTime = Date.now();
-
-            const axios = require("axios");
-            
-            // Tính toán các chunk để tải song song
-            const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB mỗi chunk
-            const chunks = [];
-            let position = 0;
-
-            // Lấy content length trước
-            const headResponse = await axios.head(url, { headers });
-            const totalSize = parseInt(headResponse.headers['content-length'], 10);
-            
-            while (position < totalSize) {
-              const end = Math.min(position + CHUNK_SIZE - 1, totalSize - 1);
-              chunks.push({ start: position, end });
-              position += CHUNK_SIZE;
-            }
-
-            console.log(`${indent}📦 Chia thành ${chunks.length} chunks để tải song song`);
-
-            // Tải song song các chunks
-            const chunkPromises = chunks.map((chunk, index) => {
-              const chunkHeaders = {
-                ...headers,
-                Range: `bytes=${chunk.start}-${chunk.end}`,
-                'Accept-Encoding': 'identity', // Tắt nén để tránh lỗi
-              };
-
-              return axios({
-                method: "get",
-                url: url + "&alt=media", // Thêm alt=media để tăng tốc
-                headers: chunkHeaders,
-                responseType: "arraybuffer",
-                timeout: 300000,
-                maxContentLength: Infinity,
-                maxBodyLength: Infinity,
-                // Tăng buffer size
-                httpAgent: new (require('http').Agent)({ 
-                  keepAlive: true,
-                  maxSockets: 1,
-                  maxFreeSockets: 1,
-                  timeout: 300000,
-                  scheduling: 'lifo',
-                  maxTotalSockets: 1
-                }),
-                httpsAgent: new (require('https').Agent)({
-                  keepAlive: true, 
-                  maxSockets: 1,
-                  maxFreeSockets: 1,
-                  timeout: 300000,
-                  scheduling: 'lifo',
-                  maxTotalSockets: 1
-                })
-              }).then(response => {
-                downloadedBytes += response.data.length;
-                
-                // Log tiến trình
-                const now = Date.now();
-                if (now - lastLogTime > 2000) {
-                  const elapsedSeconds = (now - startTime) / 1000;
-                  const speed = downloadedBytes / elapsedSeconds / 1024 / 1024;
-                  const progress = (downloadedBytes / totalSize) * 100;
-                  
-                  console.log(
-                    `${indent}⏬ ${fileName} | ${progress.toFixed(1)}% (${(downloadedBytes/1024/1024).toFixed(2)}/${(totalSize/1024/1024).toFixed(2)}MB) | ${speed.toFixed(2)}MB/s | ${elapsedSeconds.toFixed(2)}s`
-                  );
-                  
-                  lastLogTime = now;
-                }
-
-                return {
-                  index,
-                  data: response.data
-                };
-              });
-            });
-
-            // Đợi tất cả chunks tải xong
-            const results = await Promise.all(chunkPromises);
-            
-            // Sắp xếp lại theo thứ tự
-            results.sort((a, b) => a.index - b.index);
-            
-            // Ghi file
-            const writeStream = fs.createWriteStream(tempPath);
-            for (const result of results) {
-              writeStream.write(result.data);
-            }
-            writeStream.end();
-
-            // Đợi ghi file xong
-            await new Promise((resolve, reject) => {
-              writeStream.on('finish', resolve);
-              writeStream.on('error', reject);
-            });
-
-            resolve();
-          });
-
-          // Đợi tải xong
-          await downloadPromise;
-          break;
-        } catch (error) {
-          lastError = error;
-          console.error(`${indent}❌ Lỗi tải xuống:`, error.message);
-
-          // Nếu lỗi 404 hoặc URL hết hạn
-          if (
-            error.response?.status === 404 ||
-            error.message.includes("timeout")
-          ) {
-            if (fileId && retry < 2) {
-              console.log(`${indent}🔄 URL hết hạn, lấy URL mới...`);
-              try {
-                // Khởi tạo browser mới
-                browser = await this.chromeManager.getBrowser();
-
-                // Lấy URL và headers mới
-                const newResult = await this.getVideoUrlAndHeaders(
-                  browser,
-                  fileId,
-                  indent
-                );
-
-                if (newResult && newResult.url) {
-                  url = newResult.url;
-                  headers = newResult.headers;
-                  console.log(`${indent}✅ Đã lấy được URL mới`);
-                  await new Promise((resolve) => setTimeout(resolve, 1000));
-                  continue;
-                }
-              } catch (err) {
-                console.error(`${indent}❌ Lỗi lấy URL mới:`, err.message);
-              } finally {
-                if (browser) {
-                  await browser.close();
-                  browser = null;
-                }
-              }
-            }
-            console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-            continue;
-          }
-          throw error;
-        }
-      }
-
-      if (lastError) {
-        throw lastError;
-      }
 
       // Kiểm tra file đã tải về
       if (!fs.existsSync(tempPath)) {
@@ -838,6 +656,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       try {
         if (fs.existsSync(tempPath)) {
           await fs.promises.unlink(tempPath);
+          // Chỉ log khi xóa thành công
           console.log(`${indent}🧹 Đã xóa file tạm: ${fileName}`);
         }
       } catch (err) {
@@ -845,6 +664,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý download/upload:`, error.message);
+      // Log thêm thông tin debug
       console.error(`${indent}📄 Chi tiết:
         - File: ${fileName}
         - Đường dẫn: ${tempPath}
