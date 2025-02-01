@@ -422,153 +422,128 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   async getVideoUrlAndHeaders(browser, fileId, indent) {
     let currentPage = null;
     let retries = 5;
+    let allRequests = [];
 
     try {
       while (retries > 0) {
         try {
           currentPage = await browser.newPage();
 
-          // Lấy cookies từ page
-          const cookies = await currentPage.cookies();
-          const cookieString = cookies
-            .map((cookie) => `${cookie.name}=${cookie.value}`)
-            .join("; ");
+          // Chỉ set UserAgent đơn giản
+          await currentPage.setUserAgent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+          );
 
-          // Tạo headers chuẩn
-          const standardHeaders = {
-            Accept: "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Accept-Language": "en-US,en;q=0.9",
-            Cookie: cookieString,
-            Origin: "https://drive.google.com",
-            Referer: "https://drive.google.com/",
-            "Sec-Fetch-Dest": "video",
-            "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-site",
-            "User-Agent": await browser.userAgent(),
-          };
-
-          // Tạo promise để đợi kết quả
-          const resultPromise = new Promise((resolve, reject) => {
-            currentPage.on("response", async (response) => {
-              try {
-                const url = response.url();
-                const headers = response.headers();
-                const contentType = headers["content-type"] || "";
-
-                if (contentType.includes("application/json")) {
-                  let responseData = await response.text();
-
-                  // Loại bỏ các ký tự không mong muốn ở đầu
-                  if (responseData.startsWith(")]}'")) {
-                    responseData = responseData.slice(4);
-                  }
-
-                  try {
-                    const jsonData = JSON.parse(responseData);
-
-                    if (jsonData?.mediaStreamingData?.formatStreamingData) {
-                      const progressiveTranscodes =
-                        jsonData.mediaStreamingData.formatStreamingData
-                          .progressiveTranscodes || [];
-
-                      // Tìm URL chất lượng cao nhất
-                      const fhd = progressiveTranscodes.find(
-                        (t) => t.itag === 37
-                      );
-                      const hd = progressiveTranscodes.find(
-                        (t) => t.itag === 22
-                      );
-                      const sd = progressiveTranscodes.find(
-                        (t) => t.itag === 18
-                      );
-
-                      const bestTranscode = fhd || hd || sd;
-                      if (bestTranscode) {
-                        const result = {
-                          url: bestTranscode.url,
-                          quality: fhd ? "1080p" : hd ? "720p" : "360p",
-                          metadata: bestTranscode,
-                          headers: standardHeaders,
-                        };
-
-                        resolve(result);
-                        return;
-                      }
-                    }
-                  } catch (jsonError) {
-                    // Thêm xử lý đăng nhập khi parse JSON lỗi
-                    const loginCheck = await currentPage.$(
-                      'input[type="email"]'
-                    );
-                    if (loginCheck) {
-                      console.log(`${indent}🔒 Đang đợi đăng nhập...`);
-                      await currentPage.waitForFunction(
-                        () => !document.querySelector('input[type="email"]'),
-                        { timeout: 300000 } // 5 phút
-                      );
-                      console.log(`${indent}✅ Đã đăng nhập xong`);
-                      // Đợi thêm 1 phút sau khi đăng nhập
-                      await new Promise((resolve) =>
-                        setTimeout(resolve, 100000)
-                      );
-
-                      // Reload trang sau khi đăng nhập
-                      await currentPage.reload({
-                        waitUntil: ["networkidle0", "domcontentloaded"],
-                      });
-                      return; // Tiếp tục vòng lặp để lấy URL
-                    }
-                    throw jsonError;
-                  }
-                }
-              } catch (error) {
-                reject(error);
-              }
-            });
-          });
-
-          // Thiết lập request interception
+          // Enable request interception
           await currentPage.setRequestInterception(true);
-          currentPage.on("request", (request) => {
-            const url = request.url();
-            if (url.includes("clients6.google.com")) {
-              const headers = request.headers();
-              headers["Origin"] = "https://drive.google.com";
-              headers["Referer"] = "https://drive.google.com/";
-              request.continue({ headers });
-            } else {
-              request.continue();
+
+          // Theo dõi mọi request
+          currentPage.on("request", async (request) => {
+            try {
+              const url = request.url();
+
+              // Chỉ lưu URL videoplayback
+              if (url.includes("videoplayback")) {
+                allRequests.push({
+                  url: url,
+                  timestamp: new Date().toISOString(),
+                  headers: request.headers(),
+                });
+                console.log(`${indent}🎥 Tìm thấy URL video:`, url);
+              }
+
+              // Thêm headers cơ bản
+              const headers = {
+                ...request.headers(),
+                Origin: "https://drive.google.com",
+                Referer: "https://drive.google.com/",
+              };
+
+              await request.continue({ headers });
+            } catch (error) {
+              console.log(`${indent}⚠️ Lỗi xử lý request:`, error.message);
+              try {
+                await request.continue();
+              } catch (e) {}
             }
           });
 
+          // Theo dõi response để tìm thêm URL
+          currentPage.on("response", async (response) => {
+            try {
+              const url = response.url();
+              const headers = response.headers();
+
+              // Chỉ xử lý response JSON
+              if (headers["content-type"]?.includes("application/json")) {
+                try {
+                  const text = await response.text();
+
+                  // Tìm URL trong response
+                  const urlMatches =
+                    text.match(/(https?:\/\/[^\s<>"]+|www\.[^\s<>"]+)/g) || [];
+                  const videoUrls = urlMatches.filter((url) =>
+                    url.includes("videoplayback")
+                  );
+
+                  if (videoUrls.length > 0) {
+                    console.log(
+                      `${indent}🎯 Tìm thấy ${videoUrls.length} URL video trong response`
+                    );
+                    videoUrls.forEach((url) => {
+                      allRequests.push({
+                        url: url,
+                        source: "response_text",
+                        timestamp: new Date().toISOString(),
+                      });
+                    });
+                  }
+                } catch (e) {}
+              }
+            } catch (error) {}
+          });
+
+          // Truy cập trang
+          console.log(
+            `${indent}🌐 Truy cập: drive.google.com/file/d/${fileId}/view`
+          );
           await currentPage.goto(
             `https://drive.google.com/file/d/${fileId}/view`,
             {
-              waitUntil: ["networkidle0", "domcontentloaded"],
+              waitUntil: ["networkidle0"],
               timeout: 30000,
             }
           );
 
-          // Đợi kết quả với timeout
-          const result = await Promise.race([
-            resultPromise,
-            new Promise((_, reject) =>
-              setTimeout(
-                () => reject(new Error("Timeout waiting for video URL")),
-                30000
-              )
-            ),
-          ]);
+          // Đợi thêm 5s để thu thập requests
+          await currentPage.waitForTimeout(5000);
 
-          if (!result || !result.url) {
-            throw new Error("Không tìm thấy URL video hợp lệ");
+          // Kiểm tra xem có URL video không
+          if (allRequests.length > 0) {
+            // Lấy URL cuối cùng (thường là URL chính thức)
+            const bestRequest = allRequests[allRequests.length - 1];
+
+            console.log(`${indent}✅ Đã tìm thấy URL video:`, bestRequest.url);
+
+            return {
+              url: bestRequest.url,
+              headers: {
+                Accept: "*/*",
+                "Accept-Encoding": "identity",
+                Origin: "https://drive.google.com",
+                Referer: "https://drive.google.com/",
+                "User-Agent":
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+              },
+            };
           }
 
-          return result;
+          throw new Error("Không tìm thấy URL video");
         } catch (error) {
+          console.error(`${indent}❌ Lỗi:`, error.message);
           retries--;
           if (retries > 0) {
+            console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
             await new Promise((r) => setTimeout(r, 5000));
             await this.chromeManager.killAllChromeProcesses();
           } else {
