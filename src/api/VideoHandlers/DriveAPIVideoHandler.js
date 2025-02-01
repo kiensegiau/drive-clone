@@ -424,6 +424,20 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     let retries = 5;
     let allRequests = [];
 
+    // Thêm map chất lượng video
+    const itagQualities = {
+      37: { quality: 1080, type: "video/mp4" }, // MP4 1080p
+      137: { quality: 1080, type: "video/mp4" }, // MP4 1080p
+      22: { quality: 720, type: "video/mp4" }, // MP4 720p
+      136: { quality: 720, type: "video/mp4" }, // MP4 720p
+      135: { quality: 480, type: "video/mp4" }, // MP4 480p
+      134: { quality: 360, type: "video/mp4" }, // MP4 360p
+      133: { quality: 240, type: "video/mp4" }, // MP4 240p
+      160: { quality: 144, type: "video/mp4" }, // MP4 144p
+      18: { quality: 360, type: "video/mp4" }, // MP4 360p
+      140: { quality: 0, type: "audio/mp4" }, // Audio only
+    };
+
     try {
       while (retries > 0) {
         try {
@@ -444,12 +458,25 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
               // Chỉ lưu URL videoplayback
               if (url.includes("videoplayback")) {
+                const itag =
+                  parseInt(new URL(url).searchParams.get("itag")) || 0;
+                const quality = itagQualities[itag] || {
+                  quality: 0,
+                  type: "unknown",
+                };
+
                 allRequests.push({
                   url: url,
                   timestamp: new Date().toISOString(),
                   headers: request.headers(),
+                  itag: itag,
+                  quality: quality.quality,
+                  type: quality.type,
                 });
-                console.log(`${indent}🎥 Tìm thấy URL video:`, url);
+                console.log(
+                  `${indent}🎥 Tìm thấy URL video ${quality.quality}p (itag=${itag}):`,
+                  url
+                );
               }
 
               // Thêm headers cơ bản
@@ -491,11 +518,24 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                       `${indent}🎯 Tìm thấy ${videoUrls.length} URL video trong response`
                     );
                     videoUrls.forEach((url) => {
+                      const itag =
+                        parseInt(new URL(url).searchParams.get("itag")) || 0;
+                      const quality = itagQualities[itag] || {
+                        quality: 0,
+                        type: "unknown",
+                      };
+
                       allRequests.push({
                         url: url,
                         source: "response_text",
                         timestamp: new Date().toISOString(),
+                        itag: itag,
+                        quality: quality.quality,
+                        type: quality.type,
                       });
+                      console.log(
+                        `${indent}🎥 Tìm thấy URL video ${quality.quality}p (itag=${itag})`
+                      );
                     });
                   }
                 } catch (e) {}
@@ -520,18 +560,68 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
           // Kiểm tra xem có URL video không
           if (allRequests.length > 0) {
-            // Lấy URL cuối cùng (thường là URL chính thức)
-            const bestRequest = allRequests[allRequests.length - 1];
+            // Lọc ra các URL video (không phải audio)
+            let videoRequests = allRequests.filter(
+              (req) => req.type === "video/mp4"
+            );
 
-            console.log(`${indent}✅ Đã tìm thấy URL video:`, bestRequest.url);
+            if (videoRequests.length === 0) {
+              console.log(
+                `${indent}⚠️ Không tìm thấy URL video MP4, thử lấy URL bất kỳ`
+              );
+              videoRequests = allRequests;
+            }
+
+            // Sắp xếp theo chất lượng giảm dần
+            videoRequests.sort((a, b) => b.quality - a.quality);
+
+            // Lấy URL chất lượng cao nhất
+            const bestRequest = videoRequests[0];
+            console.log(
+              `${indent}✅ Đã chọn URL video ${bestRequest.quality}p (itag=${bestRequest.itag})`
+            );
+
+            // Lấy cookies từ page
+            const cookies = await currentPage.cookies();
+            const cookieString = cookies
+              .map((cookie) => `${cookie.name}=${cookie.value}`)
+              .join("; ");
+
+            // Lấy thêm headers từ page
+            const client = await currentPage.target().createCDPSession();
+            await client.send("Network.enable");
+
+            // Thử request test để lấy headers
+            console.log(`${indent}🔄 Kiểm tra headers...`);
+            const testResponse = await currentPage.evaluate(async (url) => {
+              const response = await fetch(url, {
+                method: "HEAD",
+              });
+              return response.ok;
+            }, bestRequest.url);
+
+            if (!testResponse) {
+              console.log(`${indent}⚠️ Cần thêm headers xác thực`);
+            }
+
+            // Đóng page và browser
+            await currentPage.close();
+            currentPage = null;
 
             return {
               url: bestRequest.url,
+              quality: `${bestRequest.quality}p`,
               headers: {
                 Accept: "*/*",
                 "Accept-Encoding": "identity",
+                "Accept-Language": "en-US,en;q=0.9",
+                Connection: "keep-alive",
+                Cookie: cookieString,
                 Origin: "https://drive.google.com",
                 Referer: "https://drive.google.com/",
+                "Sec-Fetch-Dest": "video",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-site",
                 "User-Agent":
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
               },
