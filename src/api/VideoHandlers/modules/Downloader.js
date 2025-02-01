@@ -10,6 +10,78 @@ class Downloader {
     this.MAX_CHUNK_RETRIES = 5; // Số lần thử lại cho mỗi chunk
   }
 
+  async downloadFullFile(videoUrl, outputPath, headers, fileName, depth) {
+    const indent = "  ".repeat(depth);
+    const startTime = Date.now();
+    let downloadedSize = 0;
+    let progressInterval;
+
+    try {
+      console.log(`${indent}📥 Chuyển sang tải nguyên file: ${fileName}`);
+      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+
+      const downloadHeaders = {
+        ...headers,
+        "User-Agent": headers["User-Agent"] || "Mozilla/5.0",
+        Accept: "*/*",
+        "Accept-Encoding": "identity",
+        Connection: "keep-alive",
+      };
+
+      const response = await axios({
+        method: "get",
+        url: videoUrl,
+        headers: downloadHeaders,
+        responseType: "stream",
+        timeout: 600000, // 10 phút
+      });
+
+      const totalSize = parseInt(response.headers["content-length"], 10);
+      const writer = fs.createWriteStream(outputPath);
+
+      // Theo dõi tiến độ
+      progressInterval = setInterval(() => {
+        const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
+        const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
+        const totalMB = (totalSize / 1024 / 1024).toFixed(2);
+        const speed = (downloadedSize / 1024 / 1024 / currentTime).toFixed(2);
+
+        console.log(
+          `${indent}⏬ ${fileName} | ${progress}% (${downloadedMB}/${totalMB}MB) | ${speed}MB/s | ${currentTime}s`
+        );
+      }, 2000);
+
+      // Xử lý download
+      await new Promise((resolve, reject) => {
+        response.data.on("data", (chunk) => {
+          downloadedSize += chunk.length;
+        });
+
+        response.data.pipe(writer);
+
+        writer.on("finish", resolve);
+        writer.on("error", reject);
+      });
+
+      clearInterval(progressInterval);
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      const avgSpeed = (totalSize / 1024 / 1024 / totalTime).toFixed(2);
+      console.log(
+        `${indent}✅ Hoàn thành tải ${fileName}\n` +
+          `${indent}   ⏱️ Thời gian: ${totalTime}s\n` +
+          `${indent}   📊 Tốc độ TB: ${avgSpeed} MB/s\n` +
+          `${indent}   📦 Kích thước: ${(totalSize / 1024 / 1024).toFixed(2)}MB`
+      );
+
+      return true;
+    } catch (error) {
+      if (progressInterval) clearInterval(progressInterval);
+      console.error(`${indent}❌ Lỗi tải nguyên file:`, error.message);
+      throw error;
+    }
+  }
+
   async downloadWithChunks(videoUrl, outputPath, headers, fileName, depth) {
     const indent = "  ".repeat(depth);
     let fileHandle = null;
@@ -17,16 +89,14 @@ class Downloader {
     const startTime = Date.now();
     let stuckRetryCount = 0;
     let progressInterval;
+    let shouldSwitchToFull = false;
 
     try {
       await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
-      console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
-
       fileHandle = await fs.promises.open(outputPath, "w");
       await fileHandle.close();
       fileHandle = await fs.promises.open(outputPath, "r+");
 
-      // Thêm headers quan trọng từ Chrome
       const downloadHeaders = {
         ...headers,
         "User-Agent": headers["User-Agent"] || "Mozilla/5.0",
@@ -40,9 +110,10 @@ class Downloader {
         Referer: "https://drive.google.com/",
       };
 
-      // Lấy kích thước file với headers đầy đủ
+      // Lấy kích thước file
       let totalSize;
       try {
+        console.log(`${indent}🔍 Kiểm tra kích thước file...`);
         const headResponse = await axios.head(videoUrl, {
           headers: downloadHeaders,
           timeout: 30000,
@@ -51,14 +122,24 @@ class Downloader {
 
         totalSize = parseInt(headResponse.headers["content-length"], 10);
         if (!totalSize) throw new Error("Invalid content length");
+        console.log(
+          `${indent}✅ Kích thước file: ${(totalSize / 1024 / 1024).toFixed(
+            2
+          )}MB`
+        );
       } catch (error) {
-        console.error(`${indent}❌ Lỗi lấy kích thước file:`, error.message);
-        if (fileHandle) {
-          try {
-            await fileHandle.close();
-          } catch (err) {
-            console.warn(`${indent}⚠️ Lỗi đóng file:`, err.message);
-          }
+        if (error.response && error.response.status === 404) {
+          console.log(
+            `${indent}⚠️ Lỗi 404 khi kiểm tra kích thước, thử tải nguyên file...`
+          );
+          if (fileHandle) await fileHandle.close();
+          return await this.downloadFullFile(
+            videoUrl,
+            outputPath,
+            headers,
+            fileName,
+            depth
+          );
         }
         throw error;
       }
@@ -69,46 +150,19 @@ class Downloader {
         chunks.push({ start, end });
       }
 
-      console.log(
-        `${indent}⚙️ Chia thành ${chunks.length} chunks, mỗi chunk ${
-          this.CHUNK_SIZE / 1024 / 1024
-        }MB`
-      );
-
-      // Sửa lại phần progress tracking
-      let lastProgress = -1;
-      let noProgressCount = 0;
-      progressInterval = setInterval(() => {
-        const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
-        const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
-        const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
-        const totalMB = (totalSize / 1024 / 1024).toFixed(2);
-        const speed = (downloadedSize / 1024 / 1024 / currentTime).toFixed(2);
-
-        if (downloadedSize === lastProgress || downloadedSize === 0) {
-          noProgressCount++;
-          if (noProgressCount >= 15) {
-            clearInterval(progressInterval);
-            throw new Error(`Download kẹt tại ${progress}%`);
-          }
-        } else {
-          noProgressCount = 0;
-          lastProgress = downloadedSize;
+      // Download chunk
+      const downloadChunk = async (chunk, attempt = 1) => {
+        if (shouldSwitchToFull) {
+          throw new Error("SWITCH_TO_FULL_DOWNLOAD");
         }
 
-        console.log(
-          `${indent}⏬ ${fileName} | ${progress}% (${downloadedMB}/${totalMB}MB) | ${speed}MB/s | ${currentTime}s`
-        );
-      }, 2000);
-
-      // Sửa lại phần download chunk
-      const downloadChunk = async (chunk, attempt = 1) => {
         try {
           const chunkHeaders = {
             ...downloadHeaders,
             Range: `bytes=${chunk.start}-${chunk.end}`,
           };
 
+          console.log(`${indent}📥 Tải chunk: ${chunk.start}-${chunk.end}`);
           const response = await axios({
             method: "get",
             url: videoUrl,
@@ -120,6 +174,14 @@ class Downloader {
             validateStatus: (status) => status === 200 || status === 206,
           });
 
+          if (response.status === 404) {
+            console.log(
+              `${indent}⚠️ Gặp lỗi 404, chuyển sang tải nguyên file...`
+            );
+            shouldSwitchToFull = true;
+            throw new Error("SWITCH_TO_FULL_DOWNLOAD");
+          }
+
           if (!response.data) {
             throw new Error("Empty response");
           }
@@ -127,31 +189,70 @@ class Downloader {
           const buffer = Buffer.from(response.data);
           await fileHandle.write(buffer, 0, buffer.length, chunk.start);
           downloadedSize += buffer.length;
+          console.log(
+            `${indent}✅ Đã tải xong chunk: ${chunk.start}-${chunk.end}`
+          );
 
           return true;
         } catch (error) {
+          if (
+            error.response?.status === 404 ||
+            error.message === "SWITCH_TO_FULL_DOWNLOAD"
+          ) {
+            shouldSwitchToFull = true;
+            throw new Error("SWITCH_TO_FULL_DOWNLOAD");
+          }
+
+          if (shouldSwitchToFull) {
+            throw new Error("SWITCH_TO_FULL_DOWNLOAD");
+          }
+
           if (attempt >= this.MAX_CHUNK_RETRIES) {
             throw error;
           }
 
-          const retryDelay = 5000;
           console.log(
-            `${indent}⚠️ Lỗi chunk ${chunk.start}-${chunk.end}, thử lại sau ${
-              retryDelay / 1000
-            }s... (${attempt}/${this.MAX_CHUNK_RETRIES})`
+            `${indent}⚠️ Lỗi chunk ${chunk.start}-${chunk.end}: ${error.message}`
           );
-
-          await new Promise((r) => setTimeout(r, retryDelay));
+          console.log(
+            `${indent}🔄 Thử lại lần ${attempt + 1}/${
+              this.MAX_CHUNK_RETRIES
+            }...`
+          );
+          await new Promise((r) => setTimeout(r, 5000));
           return downloadChunk(chunk, attempt + 1);
         }
       };
 
       // Download chunks song song với số lượng giới hạn
-      for (let i = 0; i < chunks.length; i += this.CONCURRENT_CHUNKS) {
-        const chunkBatch = chunks.slice(i, i + this.CONCURRENT_CHUNKS);
-        await Promise.all(chunkBatch.map((chunk) => downloadChunk(chunk)));
-        // Delay nhỏ giữa các batch
-        await new Promise((r) => setTimeout(r, 500));
+      try {
+        for (let i = 0; i < chunks.length; i += this.CONCURRENT_CHUNKS) {
+          if (shouldSwitchToFull) {
+            throw new Error("SWITCH_TO_FULL_DOWNLOAD");
+          }
+
+          const chunkBatch = chunks.slice(i, i + this.CONCURRENT_CHUNKS);
+          console.log(
+            `${indent}📥 Bắt đầu tải batch ${
+              i / this.CONCURRENT_CHUNKS + 1
+            }/${Math.ceil(chunks.length / this.CONCURRENT_CHUNKS)}`
+          );
+          await Promise.all(chunkBatch.map((chunk) => downloadChunk(chunk)));
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      } catch (error) {
+        if (error.message === "SWITCH_TO_FULL_DOWNLOAD") {
+          console.log(`${indent}🔄 Chuyển sang chế độ tải nguyên file...`);
+          if (fileHandle) await fileHandle.close();
+          return await this.downloadFullFile(
+            videoUrl,
+            outputPath,
+            headers,
+            fileName,
+            depth
+          );
+        }
+        throw error;
       }
 
       // Verify file size
@@ -173,23 +274,31 @@ class Downloader {
       return true;
     } catch (error) {
       if (progressInterval) clearInterval(progressInterval);
-      console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
+      console.error(`${indent}❌ Lỗi tải xuống:`, error.message);
+      console.error(`${indent}📊 Trạng thái:
+        - Đã tải: ${(downloadedSize / 1024 / 1024).toFixed(2)}MB
+        - Tổng cộng: ${
+          totalSize
+            ? (totalSize / 1024 / 1024).toFixed(2) + "MB"
+            : "Không xác định"
+        }
+      `);
 
-      // Cleanup và retry
       if (fileHandle) {
         try {
           await fileHandle.close();
           await fs.promises.unlink(outputPath);
-        } catch (err) {
-          console.warn(`${indent}⚠️ Lỗi cleanup:`, err.message);
-        }
+        } catch (err) {}
       }
 
-      // Thử lại toàn bộ nếu chưa quá số lần
+      if (shouldSwitchToFull) {
+        throw new Error("SWITCH_TO_FULL_DOWNLOAD");
+      }
+
       if (stuckRetryCount < this.MAX_STUCK_RETRIES) {
         stuckRetryCount++;
         console.log(
-          `${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`
+          `${indent}🔄 Thử lại toàn bộ lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}`
         );
         await new Promise((r) => setTimeout(r, 5000));
         return this.downloadWithChunks(
@@ -203,13 +312,10 @@ class Downloader {
 
       throw error;
     } finally {
-      // Đảm bảo đóng fileHandle nếu vẫn còn mở
       if (fileHandle) {
         try {
           await fileHandle.close();
-        } catch (err) {
-          console.warn(`${indent}⚠️ Lỗi đóng file:`, err.message);
-        }
+        } catch (err) {}
       }
     }
   }
