@@ -1317,7 +1317,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.log(`${indent}💾 Đường dẫn file tạm: ${tempPath}`);
 
       // Tải file
-      await this.downloadVideoWithChunks(url, tempPath, headers, fileName, depth);
+      await this.downloadVideoWithChunks(
+        url,
+        tempPath,
+        headers,
+        fileName,
+        depth
+      );
 
       // Kiểm tra file đã tải về
       if (!fs.existsSync(tempPath)) {
@@ -1467,16 +1473,38 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     return new Promise((resolve, reject) => {
       console.log("🔄 Bắt đầu ghép video và audio...");
       const ffmpeg = require("fluent-ffmpeg");
+
       ffmpeg()
         .input(videoPath)
         .input(audioPath)
-        .outputOptions(["-c:v copy", "-c:a aac", "-strict experimental"])
+        .outputOptions([
+          // Copy cả video và audio stream để tăng tốc
+          "-c:v",
+          "copy",
+          "-c:a",
+          "copy",
+          // Chỉ định rõ stream để tránh lỗi
+          "-map",
+          "0:v:0",
+          "-map",
+          "1:a:0",
+          // Tối ưu cho streaming và xử lý file lớn
+          "-movflags",
+          "faststart",
+          "-max_muxing_queue_size",
+          "9999",
+          // Tự động ghi đè file
+          "-y",
+        ])
         .on("start", () => {
           console.log("🎬 FFmpeg bắt đầu xử lý...");
         })
         .on("progress", (progress) => {
           if (progress.percent) {
-            console.log(`⏳ Đã xử lý: ${Math.round(progress.percent)}%`);
+            // Chỉ log mỗi 20%
+            if (Math.round(progress.percent) % 20 === 0) {
+              console.log(`⏳ Đã xử lý: ${Math.round(progress.percent)}%`);
+            }
           }
         })
         .on("end", () => {
