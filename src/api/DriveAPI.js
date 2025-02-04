@@ -373,60 +373,91 @@ class DriveAPI {
       // Bắt đầu xử lý
       console.log(`\n🎯 Bắt đầu tải folder: ${folderInfo.data.name}`);
 
-      // Tìm folder gốc "video-drive-clone" trước
-      console.log(`\n🔍 Đang tìm folder gốc: "video-drive-clone"`);
-      const existingRootFolders = await this.targetDrive.files.list({
-        q: `name = 'video-drive-clone' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-        fields: "files(id, name)",
-        spaces: "drive",
-        supportsAllDrives: true,
+      // Hỏi người dùng có muốn chọn folder đích không
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
       });
 
-      let rootFolder;
-      if (existingRootFolders.data.files.length > 0) {
-        rootFolder = existingRootFolders.data.files[0];
-        console.log(
-          `✅ Đã tìm thấy folder gốc: "video-drive-clone" (${rootFolder.id})`
+      const useCustomTarget = await new Promise(resolve => {
+        rl.question(
+          "\n📂 Bạn muốn upload vào đâu:\n" +
+          "1. Tạo folder mới tự động\n" +
+          "2. Chọn folder đích có sẵn\n" +
+          "Lựa chọn của bạn (1/2): ",
+          answer => resolve(answer)
         );
-      } else {
-        console.log(`📁 Tạo mới folder gốc: "video-drive-clone"`);
-        rootFolder = await this.findOrCreateFolder("video-drive-clone");
-        console.log(
-          `✅ Đã tạo folder gốc: "video-drive-clone" (${rootFolder.id})`
-        );
-      }
-
-      // Tìm hoặc tạo folder con với tên folder nguồn trong video-drive-clone
-      console.log(`\n🔍 Đang tìm folder: "${folderInfo.data.name}"`);
-      const existingSourceFolders = await this.targetDrive.files.list({
-        q: `name = '${folderInfo.data.name.replace(/'/g, "\\'")}' and '${
-          rootFolder.id
-        }' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-        fields: "files(id, name)",
-        spaces: "drive",
-        supportsAllDrives: true,
       });
 
-      let sourceNameFolder;
-      if (existingSourceFolders.data.files.length > 0) {
-        sourceNameFolder = existingSourceFolders.data.files[0];
-        console.log(
-          `✅ Đã tìm thấy folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`
-        );
+      if (useCustomTarget === "2") {
+        // Cho phép nhập link folder đích
+        const targetUrl = await new Promise(resolve => {
+          rl.question("\n🔗 Nhập link folder đích: ", answer => resolve(answer));
+        });
+        
+        const targetFolderId = this.extractFolderId(targetUrl);
+        if (!targetFolderId) {
+          rl.close();
+          throw new Error("URL folder đích không hợp lệ");
+        }
+
+        try {
+          const targetInfo = await this.targetDrive.files.get({
+            fileId: targetFolderId,
+            fields: "name",
+            supportsAllDrives: true,
+          });
+          console.log(`\n✅ Đã tìm thấy folder đích: ${targetInfo.data.name}`);
+          this.currentTargetFolderId = targetFolderId;
+        } catch (error) {
+          rl.close();
+          throw new Error("Không thể truy cập folder đích. Vui lòng kiểm tra link và quyền truy cập");
+        }
       } else {
-        console.log(`📁 Tạo mới folder: "${folderInfo.data.name}"`);
-        sourceNameFolder = await this.findOrCreateFolder(
-          folderInfo.data.name,
-          rootFolder.id
-        );
-        console.log(
-          `✅ Đã tạo folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`
-        );
+        // Logic cũ tạo folder tự động
+        console.log(`\n🔍 Đang tìm folder gốc: "video-drive-clone"`);
+        const existingRootFolders = await this.targetDrive.files.list({
+          q: `name = 'video-drive-clone' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: "files(id, name)",
+          spaces: "drive",
+          supportsAllDrives: true,
+        });
+
+        let rootFolder;
+        if (existingRootFolders.data.files.length > 0) {
+          rootFolder = existingRootFolders.data.files[0];
+          console.log(`✅ Đã tìm thấy folder gốc: "video-drive-clone" (${rootFolder.id})`);
+        } else {
+          console.log(`📁 Tạo mới folder gốc: "video-drive-clone"`);
+          rootFolder = await this.findOrCreateFolder("video-drive-clone");
+          console.log(`✅ Đã tạo folder gốc: "video-drive-clone" (${rootFolder.id})`);
+        }
+
+        // Tìm hoặc tạo folder con với tên folder nguồn trong video-drive-clone
+        console.log(`\n🔍 Đang tìm folder: "${folderInfo.data.name}"`);
+        const existingSourceFolders = await this.targetDrive.files.list({
+          q: `name = '${folderInfo.data.name.replace(/'/g, "\\'")}' and '${rootFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          fields: "files(id, name)",
+          spaces: "drive",
+          supportsAllDrives: true,
+        });
+
+        let sourceNameFolder;
+        if (existingSourceFolders.data.files.length > 0) {
+          sourceNameFolder = existingSourceFolders.data.files[0];
+          console.log(`✅ Đã tìm thấy folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+        } else {
+          console.log(`📁 Tạo mới folder: "${folderInfo.data.name}"`);
+          sourceNameFolder = await this.findOrCreateFolder(folderInfo.data.name, rootFolder.id);
+          console.log(`✅ Đã tạo folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+        }
+
+        this.currentTargetFolderId = sourceNameFolder.id;
       }
 
-      this.currentTargetFolderId = sourceNameFolder.id;
+      rl.close();
 
-      // Kiểm tra quyền truy cập
+      // Kiểm tra quyền truy cập và xử lý folder
       try {
         await this.sourceDrive.files.list({
           q: `'${sourceFolderId}' in parents and trashed=false`,
@@ -434,17 +465,12 @@ class DriveAPI {
           pageSize: 1,
         });
 
-        // Bắt đầu xử lý nội dung folder
         await this.processFolder(sourceFolderId);
       } catch (error) {
         if (error.message.includes("File not found")) {
           console.error(`\n❌ Không thể truy cập folder. Vui lòng kiểm tra:`);
-          console.log(
-            `1. URL folder: https://drive.google.com/drive/folders/${sourceFolderId}`
-          );
-          console.log(
-            `2. Tài khoản nguồn (${this.sourceEmail}) phải có quyền xem folder`
-          );
+          console.log(`1. URL folder: https://drive.google.com/drive/folders/${sourceFolderId}`);
+          console.log(`2. Tài khoản nguồn (${this.sourceEmail}) phải có quyền xem folder`);
           console.log(`3. Folder phải được chia sẻ với tài khoản nguồn`);
           console.log(`\n💡 Mã lỗi:`, error.message);
           console.log(`\n💡 Trạng thái:`, error.response?.status);
@@ -456,6 +482,20 @@ class DriveAPI {
       console.error(`❌ Lỗi xử lý folder:`, error.message);
       throw error;
     }
+  }
+
+  // Thêm helper method để xử lý folder ID từ URL
+  extractFolderId(url) {
+    if (url.includes("/folders/")) {
+      return url.match(/folders\/([a-zA-Z0-9_-]+)/)?.[1];
+    }
+    if (url.includes("id=")) {
+      return url.match(/id=([a-zA-Z0-9_-]+)/)?.[1];
+    }
+    if (url.match(/^[a-zA-Z0-9_-]+$/)) {
+      return url;
+    }
+    return null;
   }
 
   async findOrCreateFolder(folderName, parentId = null) {
@@ -959,7 +999,7 @@ class DriveAPI {
         });
 
         console.log(
-          `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
+          `�� Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
         );
       } catch (permError) {
         console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
