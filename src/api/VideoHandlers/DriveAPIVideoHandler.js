@@ -388,61 +388,21 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                     // Lưu formatData vào biến tạm
                     savedFormatData = formatData;
 
-                    // Log tất cả các URL video tìm được
-                    console.log(`${indent}📝 DANH SÁCH URL VIDEO:`);
                     const progressiveTranscodes =
                       formatData.progressiveTranscodes || [];
-                    progressiveTranscodes.forEach((transcode) => {
-                      console.log(`${indent}🎥 Chất lượng ${transcode.itag}:
-                        - URL: ${transcode.url}
-                        - Định dạng: ${transcode.mimeType || "Không xác định"}
-                        - Kích thước: ${
-                          transcode.contentLength
-                            ? Math.round(
-                                transcode.contentLength / 1024 / 1024
-                              ) + "MB"
-                            : "Không xác định"
-                        }
-                      `);
-                    });
+                  
 
                     // Log tất cả các URL audio tìm được
-                    console.log(`${indent}📝 DANH SÁCH URL AUDIO:`);
+               
                     const audioTranscodes = formatData.audioTranscodes || [];
-                    audioTranscodes.forEach((transcode) => {
-                      console.log(`${indent}🔊 Audio ${transcode.itag}:
-                        - URL: ${transcode.url}
-                        - Định dạng: ${transcode.mimeType || "Không xác định"}
-                        - Kích thước: ${
-                          transcode.contentLength
-                            ? Math.round(
-                                transcode.contentLength / 1024 / 1024
-                              ) + "MB"
-                            : "Không xác định"
-                        }
-                        - Bitrate: ${transcode.bitrate || "Không xác định"}
-                      `);
-                    });
-
+                  
                     // Log các URL khác nếu có
                     if (formatData.adaptiveTranscodes) {
-                      console.log(`${indent}📝 DANH SÁCH URL ADAPTIVE:`);
                       formatData.adaptiveTranscodes.forEach((transcode) => {
                         const type = transcode.mimeType?.includes("audio")
                           ? "🔊 Audio"
                           : "🎥 Video";
-                        console.log(`${indent}${type} ${transcode.itag}:
-                          - URL: ${transcode.url}
-                          - Định dạng: ${transcode.mimeType || "Không xác định"}
-                          - Kích thước: ${
-                            transcode.contentLength
-                              ? Math.round(
-                                  transcode.contentLength / 1024 / 1024
-                                ) + "MB"
-                              : "Không xác định"
-                          }
-                          - Bitrate: ${transcode.bitrate || "Không xác định"}
-                        `);
+                       
                       });
                     }
 
@@ -462,10 +422,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                         headers: standardHeaders,
                       };
 
-                      console.log(
-                        `${indent} Tìm thấy URL video chất lượng: ${result.quality}`
-                      );
-
+                      
                       resolve(result);
                       return;
                     }
@@ -519,7 +476,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           `https://drive.google.com/file/d/${fileId}/view`,
           {
             waitUntil: ["networkidle0", "domcontentloaded"],
-            timeout: 30000,
+            timeout: 60000,
           }
         );
 
@@ -858,46 +815,23 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           error.message.includes("404_NOT_FOUND") ||
           error.response?.status === 404
         ) {
-          console.log(
-            `${indent}⚠️ Không thể tải video hoàn chỉnh, chuyển sang tải riêng video và audio...`
-          );
+          
 
           // Log thông tin formatData hiện tại
-          console.log(`${indent}📝 Thông tin formatData:`, {
-            hasFormatData: !!this.currentFormatData,
-            hasAdaptiveTranscodes: !!this.currentFormatData?.adaptiveTranscodes,
-            totalAdaptiveTranscodes:
-              this.currentFormatData?.adaptiveTranscodes?.length || 0,
-          });
+          
 
           // Tìm URL video và audio chất lượng cao nhất
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
 
           if (!bestVideo || !bestAudio) {
-            throw new Error("Không tìm thấy URL video hoặc audio phù hợp");
+            throw new Error("Không tìm thấy URL");
           }
 
           // Log thông tin URL tìm được
-          console.log(`${indent}📝 URL video tìm được:
-            - Chất lượng: ${bestVideo.itag}
-            - Định dạng: ${bestVideo.mimeType}
-            - Kích thước: ${
-              bestVideo.contentLength
-                ? Math.round(bestVideo.contentLength / 1024 / 1024) + "MB"
-                : "Không xác định"
-            }
-          `);
+          
 
-          console.log(`${indent}📝 URL audio tìm được:
-            - Chất lượng: ${bestAudio.itag}
-            - Định dạng: ${bestAudio.mimeType}
-            - Kích thước: ${
-              bestAudio.contentLength
-                ? Math.round(bestAudio.contentLength / 1024 / 1024) + "MB"
-                : "Không xác định"
-            }
-          `);
+         
 
           // Tạo tên file tạm
           const tempVideoPath = `${outputPath}.video.tmp`;
@@ -920,7 +854,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             );
 
             // Ghép video và audio
-            console.log(`${indent}🔄 Đang ghép video và audio...`);
+           
             await this.mergeVideoAudio(
               tempVideoPath,
               tempAudioPath,
@@ -931,7 +865,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             await fs.promises.unlink(tempVideoPath).catch(() => {});
             await fs.promises.unlink(tempAudioPath).catch(() => {});
 
-            console.log(`${indent}✅ Đã ghép video thành công`);
+            
             return;
           } catch (error) {
             // Dọn dẹp file tạm nếu có lỗi
@@ -1363,17 +1297,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return null;
     }
 
-    // Log danh sách để debug
-    console.log(
-      "📝 Danh sách adaptiveTranscodes:",
-      this.currentFormatData.adaptiveTranscodes.map((t) => ({
-        itag: t.itag,
-        mimeType: t.mimeType,
-        isVideo: !t.mimeType?.includes("audio"),
-        height: t.height || "N/A",
-        width: t.width || "N/A",
-      }))
-    );
+   
 
     // Lọc ra danh sách video (không phải audio)
     const videos = this.currentFormatData.adaptiveTranscodes.filter(
@@ -1409,15 +1333,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     for (const quality of videoQualities) {
       const video = videos.find((t) => t.itag === quality);
       if (video) {
-        console.log(`✅ Tìm thấy video chất lượng ${
-          qualityNames[quality]
-        } (itag ${quality}):
-          - Độ phân giải: ${video.width}x${video.height}
-          - Định dạng: ${video.mimeType}
-          - Bitrate: ${
-            video.bitrate ? Math.round(video.bitrate / 1024) + "Kbps" : "N/A"
-          }
-        `);
+       
         return video;
       }
     }
@@ -1426,16 +1342,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const bestVideo = videos.sort(
       (a, b) => (b.height || 0) - (a.height || 0)
     )[0];
-    console.log(`✅ Lấy video chất lượng cao nhất có sẵn:
-      - Itag: ${bestVideo.itag}
-      - Độ phân giải: ${bestVideo.width}x${bestVideo.height}
-      - Định dạng: ${bestVideo.mimeType}
-      - Bitrate: ${
-        bestVideo.bitrate
-          ? Math.round(bestVideo.bitrate / 1024) + "Kbps"
-          : "N/A"
-      }
-    `);
+    
     return bestVideo;
   }
 
@@ -1445,23 +1352,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return null;
     }
 
-    // Log danh sách để debug
-    console.log(
-      "📝 Danh sách adaptiveTranscodes (audio):",
-      this.currentFormatData.adaptiveTranscodes.map((t) => ({
-        itag: t.itag,
-        mimeType: t.mimeType,
-        isAudio: t.itag === 140,
-      }))
-    );
-
     // Tìm audio 140 (thường là audio duy nhất)
     const audio = this.currentFormatData.adaptiveTranscodes.find(
       (t) => t.itag === 140
     );
 
     if (audio) {
-      console.log(`✅ Tìm thấy audio 140`);
+     
       return audio;
     }
 
@@ -1471,7 +1368,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
   async mergeVideoAudio(videoPath, audioPath, outputPath) {
     return new Promise((resolve, reject) => {
-      console.log("🔄 Bắt đầu ghép video và audio...");
+   
       const ffmpeg = require("fluent-ffmpeg");
 
       ffmpeg()
@@ -1497,7 +1394,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           "-y",
         ])
         .on("start", () => {
-          console.log("🎬 FFmpeg bắt đầu xử lý...");
+          
         })
         .on("progress", (progress) => {
           if (progress.percent) {
@@ -1508,7 +1405,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           }
         })
         .on("end", () => {
-          console.log("✅ Ghép video thành công");
+         
           resolve();
         })
         .on("error", (err) => {
