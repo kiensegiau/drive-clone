@@ -373,31 +373,21 @@ class DriveAPI {
       // Bắt đầu xử lý
       console.log(`\n🎯 Bắt đầu tải folder: ${folderInfo.data.name}`);
 
-      // Hỏi người dùng có muốn chọn folder đích không
+      // Cho phép nhập link folder đích (không bắt buộc)
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout
       });
 
-      const useCustomTarget = await new Promise(resolve => {
-        rl.question(
-          "\n📂 Bạn muốn upload vào đâu:\n" +
-          "1. Tạo folder mới tự động\n" +
-          "2. Chọn folder đích có sẵn\n" +
-          "Lựa chọn của bạn (1/2): ",
-          answer => resolve(answer)
-        );
+      const targetUrl = await new Promise(resolve => {
+        rl.question("\n🔗 Nhập link folder đích (Enter để bỏ qua): ", answer => resolve(answer));
       });
 
-      if (useCustomTarget === "2") {
-        // Cho phép nhập link folder đích
-        const targetUrl = await new Promise(resolve => {
-          rl.question("\n🔗 Nhập link folder đích: ", answer => resolve(answer));
-        });
-        
+      rl.close();
+
+      if (targetUrl.trim()) {
         const targetFolderId = this.extractFolderId(targetUrl);
         if (!targetFolderId) {
-          rl.close();
           throw new Error("URL folder đích không hợp lệ");
         }
 
@@ -410,11 +400,11 @@ class DriveAPI {
           console.log(`\n✅ Đã tìm thấy folder đích: ${targetInfo.data.name}`);
           this.currentTargetFolderId = targetFolderId;
         } catch (error) {
-          rl.close();
           throw new Error("Không thể truy cập folder đích. Vui lòng kiểm tra link và quyền truy cập");
         }
       } else {
         // Logic cũ tạo folder tự động
+        console.log(`\n📂 Sử dụng folder mặc định...`);
         console.log(`\n🔍 Đang tìm folder gốc: "video-drive-clone"`);
         const existingRootFolders = await this.targetDrive.files.list({
           q: `name = 'video-drive-clone' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
@@ -454,8 +444,6 @@ class DriveAPI {
 
         this.currentTargetFolderId = sourceNameFolder.id;
       }
-
-      rl.close();
 
       // Kiểm tra quyền truy cập và xử lý folder
       try {
@@ -999,7 +987,7 @@ class DriveAPI {
         });
 
         console.log(
-          `�� Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
+          `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
         );
       } catch (permError) {
         console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
