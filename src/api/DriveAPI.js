@@ -1532,6 +1532,54 @@ class DriveAPI {
       return null;
     }
   }
+
+  // Thêm hàm downloadChunksParallel
+  async downloadChunksParallel(videoId, chunks, maxParallelDownloads = 3) {
+    const results = [];
+    
+    // Chia chunks thành các nhóm để tải song song
+    for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
+      const batch = chunks.slice(i, i + maxParallelDownloads);
+      
+      // Tải song song các chunk trong batch
+      const downloadPromises = batch.map(async (chunk, index) => {
+        try {
+          const chunkData = await this.downloadChunk(videoId, chunk);
+          results[i + index] = chunkData;
+          console.log(`✅ Đã tải chunk ${i + index + 1}/${chunks.length}`);
+        } catch (error) {
+          console.error(`❌ Lỗi tải chunk ${i + index + 1}:`, error);
+          throw error;
+        }
+      });
+
+      // Đợi tất cả chunk trong batch hoàn thành
+      await Promise.all(downloadPromises);
+    }
+
+    return results;
+  }
+
+  // Sửa hàm downloadVideo để sử dụng downloadChunksParallel
+  async downloadVideo(videoId, savePath) {
+    try {
+      // ... existing code ...
+
+      // Lấy danh sách chunks
+      const chunks = await this.getVideoChunks(videoId);
+      
+      // Tải song song các chunk với tối đa 3 chunk cùng lúc
+      const chunkResults = await this.downloadChunksParallel(videoId, chunks, 3);
+      
+      // Ghép các chunk lại
+      await this.mergeChunks(chunkResults, savePath);
+
+      // ... existing code ...
+    } catch (error) {
+      console.error(`❌ Lỗi tải video ${videoId}:`, error);
+      throw error;
+    }
+  }
 }
 
 module.exports = DriveAPI;

@@ -388,14 +388,17 @@ async function main(folderUrl) {
       "\n📋 Chọn chế độ:\n" +
         "1. Tải và upload lên Drive qua API\n" +
         "2. Tải và upload qua Drive Desktop\n" +
-        "Lựa chọn của bạn (1/2): "
+        "Lựa chọn của bạn (1/2, mặc định: 1): "
     );
 
-    if (!["1", "2"].includes(choice)) {
+    // Nếu không chọn gì (nhấn Enter) hoặc chọn 1 thì dùng mode 1
+    const selectedChoice = choice.trim() || "1";
+
+    if (!["1", "2"].includes(selectedChoice)) {
       throw new Error("Lựa chọn không hợp lệ");
     }
 
-    const isDownloadMode = choice === "2";
+    const isDownloadMode = selectedChoice === "2";
 
     if (isDownloadMode) {
       const nodeDiskInfo = require("node-disk-info");

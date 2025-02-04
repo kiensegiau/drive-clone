@@ -16,6 +16,19 @@ const axios = require("axios");
 const http = require("http");
 const https = require("https");
 const { google } = require("googleapis");
+const ffmpeg = require("fluent-ffmpeg");
+const { exec } = require('child_process');
+
+// Tìm đường dẫn FFmpeg
+exec('where ffmpeg', (error, stdout, stderr) => {
+  if (error) {
+    console.error('❌ Không tìm thấy FFmpeg trong PATH');
+    return;
+  }
+  const ffmpegPath = stdout.trim();
+  console.log(`✅ Đã tìm thấy FFmpeg tại: ${ffmpegPath}`);
+  ffmpeg.setFfmpegPath(ffmpegPath);
+});
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
   constructor(
@@ -592,13 +605,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     }
   }
 
-  async downloadVideoWithChunks(
-    videoUrl,
-    outputPath,
-    headers,
-    fileName,
-    depth
-  ) {
+  async downloadVideoWithChunks(videoUrl, outputPath, headers, fileName, depth) {
     const indent = "  ".repeat(depth);
     let fileHandle = null;
     let downloadedSize = 0;
@@ -614,7 +621,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       throw new Error("Không có formatData");
     }
 
-    const downloadWithChunksOriginal = async (url, path, headers) => {
+    const downloadWithChunksParallel = async (url, path, headers, maxParallelDownloads = 3) => {
       let fh = null;
       try {
         fh = await fs.promises.open(path, "w");
@@ -635,14 +642,14 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           Referer: "https://drive.google.com/",
         };
 
-        // Kiểm tra URL có tồn tại không bằng cách tải chunk đầu tiên
+        // Kiểm tra URL có tồn tại không
         try {
           const testResponse = await axios({
             method: "get",
             url: url,
             headers: {
               ...downloadHeaders,
-              Range: "bytes=0-1024", // Chỉ tải 1KB đầu tiên để test
+              Range: "bytes=0-1024",
             },
             timeout: 10000,
             validateStatus: (status) => status === 200 || status === 206,
@@ -650,9 +657,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         } catch (error) {
           if (error.response?.status === 404 || error.message.includes("404")) {
             throw new Error("404_NOT_FOUND");
-          }
-          if (error.response?.status === 403 || error.message.includes("403")) {
-            throw new Error("403_FORBIDDEN");
           }
           throw error;
         }
@@ -707,82 +711,79 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           );
         }, 2000);
 
-        // Download từng chunk
-        for (const chunk of chunks) {
-          let retries = 3;
-          while (retries > 0) {
-            try {
-              const chunkHeaders = {
-                ...downloadHeaders,
-                Range: `bytes=${chunk.start}-${chunk.end}`,
-              };
+        // Download chunks song song
+        for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
+          const batch = chunks.slice(i, Math.min(i + maxParallelDownloads, chunks.length));
+          
+          const downloadPromises = batch.map(async (chunk) => {
+            let retries = 3;
+            while (retries > 0) {
+              try {
+                const chunkHeaders = {
+                  ...downloadHeaders,
+                  Range: `bytes=${chunk.start}-${chunk.end}`,
+                };
 
-              const response = await axios({
-                method: "get",
-                url: url,
-                headers: chunkHeaders,
-                responseType: "arraybuffer",
-                timeout: 30000,
-                maxContentLength: CHUNK_SIZE * 2,
-                maxBodyLength: CHUNK_SIZE * 2,
-                validateStatus: (status) => status === 200 || status === 206,
-              });
+                const response = await axios({
+                  method: "get",
+                  url: url,
+                  headers: chunkHeaders,
+                  responseType: "arraybuffer",
+                  timeout: 30000,
+                  maxContentLength: CHUNK_SIZE * 2,
+                  maxBodyLength: CHUNK_SIZE * 2,
+                  validateStatus: (status) => status === 200 || status === 206,
+                });
 
-              if (!response.data) throw new Error("Empty response");
+                if (!response.data) throw new Error("Empty response");
 
-              const buffer = Buffer.from(response.data);
-              await fh.write(buffer, 0, buffer.length, chunk.start);
-              downloadedSize += buffer.length;
-              break;
-            } catch (error) {
-              retries--;
-              failedChunksCount++;
+                const buffer = Buffer.from(response.data);
+                await fh.write(buffer, 0, buffer.length, chunk.start);
+                downloadedSize += buffer.length;
+                break;
+              } catch (error) {
+                retries--;
+                failedChunksCount++;
 
-              // Log chi tiết về lỗi
-              console.log(`${indent}📝 Chi tiết lỗi chunk:
-                - Mã lỗi: ${error.response?.status || "Không có"}
-                - Message: ${error.message}
-                - Response: ${JSON.stringify(
-                  error.response?.data || {},
-                  null,
-                  2
-                )}
-                - Headers: ${JSON.stringify(
-                  error.response?.headers || {},
-                  null,
-                  2
-                )}
-                - Chunk: ${chunk.start}-${chunk.end}
-                - Retries còn lại: ${retries}
-                - Số lần lỗi: ${failedChunksCount}
-              `);
+                // Log chi tiết về lỗi
+                console.log(`${indent}📝 Chi tiết lỗi chunk:
+                  - Mã lỗi: ${error.response?.status || "Không có"}
+                  - Message: ${error.message}
+                  - Chunk: ${chunk.start}-${chunk.end}
+                  - Retries còn lại: ${retries}
+                  - Số lần lỗi: ${failedChunksCount}
+                `);
 
-              // Chuyển qua phương án dự phòng ngay nếu gặp lỗi stream aborted
-              if (error.message.includes("stream has been aborted")) {
-                console.log(
-                  `${indent}⚠️ Phát hiện lỗi stream aborted, chuyển sang phương án dự phòng...`
-                );
-                clearInterval(progressInterval);
-                throw new Error("404_NOT_FOUND");
+                // Chuyển qua phương án dự phòng ngay nếu gặp lỗi stream aborted
+                if (error.message.includes("stream has been aborted")) {
+                  console.log(
+                    `${indent}⚠️ Phát hiện lỗi stream aborted, chuyển sang phương án dự phòng...`
+                  );
+                  clearInterval(progressInterval);
+                  throw new Error("404_NOT_FOUND");
+                }
+
+                // Nếu có quá nhiều chunk lỗi liên tiếp
+                if (failedChunksCount >= 3) {
+                  console.log(
+                    `${indent}⚠️ Quá nhiều lỗi chunk (${failedChunksCount}), chuyển sang phương án dự phòng...`
+                  );
+                  clearInterval(progressInterval);
+                  throw new Error("404_NOT_FOUND");
+                }
+
+                if (retries === 0) {
+                  clearInterval(progressInterval);
+                  throw error;
+                }
+                console.log(`${indent}⚠️ Lỗi chunk, thử lại sau 5s...`);
+                await new Promise((r) => setTimeout(r, 5000));
               }
-
-              // Nếu có quá nhiều chunk lỗi liên tiếp
-              if (failedChunksCount >= 3) {
-                console.log(
-                  `${indent}⚠️ Quá nhiều lỗi chunk (${failedChunksCount}), chuyển sang phương án dự phòng...`
-                );
-                clearInterval(progressInterval);
-                throw new Error("404_NOT_FOUND");
-              }
-
-              if (retries === 0) {
-                clearInterval(progressInterval);
-                throw error;
-              }
-              console.log(`${indent}⚠️ Lỗi chunk, thử lại sau 5s...`);
-              await new Promise((r) => setTimeout(r, 5000));
             }
-          }
+          });
+
+          // Đợi tất cả chunk trong batch hoàn thành
+          await Promise.all(downloadPromises);
         }
 
         clearInterval(progressInterval);
@@ -806,20 +807,12 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
 
       try {
-        // Thử tải với phương pháp chunk trước
-        await downloadWithChunksOriginal(videoUrl, outputPath, headers);
-        console.log(`${indent}✅ Tải video thành công với phương pháp chunk`);
+        // Thử tải với phương pháp chunk song song trước
+        await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
+        console.log(`${indent}✅ Tải video thành công với phương pháp chunk song song`);
         return;
       } catch (error) {
-        if (
-          error.message.includes("404_NOT_FOUND") ||
-          error.response?.status === 404
-        ) {
-          
-
-          // Log thông tin formatData hiện tại
-          
-
+        if (error.message.includes("404_NOT_FOUND") || error.response?.status === 404) {
           // Tìm URL video và audio chất lượng cao nhất
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
@@ -828,44 +821,25 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             throw new Error("Không tìm thấy URL");
           }
 
-          // Log thông tin URL tìm được
-          
-
-         
-
           // Tạo tên file tạm
           const tempVideoPath = `${outputPath}.video.tmp`;
           const tempAudioPath = `${outputPath}.audio.tmp`;
 
           try {
-            // Tải video và audio riêng bằng phương pháp chunk
+            // Tải video và audio riêng bằng phương pháp chunk song song
             console.log(`${indent}📥 Đang tải video...`);
-            await downloadWithChunksOriginal(
-              bestVideo.url,
-              tempVideoPath,
-              headers
-            );
+            await downloadWithChunksParallel(bestVideo.url, tempVideoPath, headers, 3);
 
             console.log(`${indent}🔊 Đang tải audio...`);
-            await downloadWithChunksOriginal(
-              bestAudio.url,
-              tempAudioPath,
-              headers
-            );
+            await downloadWithChunksParallel(bestAudio.url, tempAudioPath, headers, 3);
 
             // Ghép video và audio
-           
-            await this.mergeVideoAudio(
-              tempVideoPath,
-              tempAudioPath,
-              outputPath
-            );
+            await this.mergeVideoAudio(tempVideoPath, tempAudioPath, outputPath);
 
             // Xóa file tạm
             await fs.promises.unlink(tempVideoPath).catch(() => {});
             await fs.promises.unlink(tempAudioPath).catch(() => {});
 
-            
             return;
           } catch (error) {
             // Dọn dẹp file tạm nếu có lỗi
@@ -881,22 +855,11 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
 
       // Thử lại nếu chưa quá số lần và không phải lỗi không có formatData
-      if (
-        stuckRetryCount < this.MAX_STUCK_RETRIES &&
-        !error.message.includes("Không có formatData")
-      ) {
+      if (stuckRetryCount < this.MAX_STUCK_RETRIES && !error.message.includes("Không có formatData")) {
         stuckRetryCount++;
-        console.log(
-          `${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`
-        );
+        console.log(`${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`);
         await new Promise((r) => setTimeout(r, 5000));
-        return this.downloadVideoWithChunks(
-          videoUrl,
-          outputPath,
-          headers,
-          fileName,
-          depth
-        );
+        return this.downloadVideoWithChunks(videoUrl, outputPath, headers, fileName, depth);
       }
 
       // Log failed video
