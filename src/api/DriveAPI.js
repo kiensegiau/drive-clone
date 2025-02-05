@@ -376,11 +376,14 @@ class DriveAPI {
       // Cho phép nhập link folder đích (không bắt buộc)
       const rl = readline.createInterface({
         input: process.stdin,
-        output: process.stdout
+        output: process.stdout,
       });
 
-      const targetUrl = await new Promise(resolve => {
-        rl.question("\n🔗 Nhập link folder đích (Enter để bỏ qua): ", answer => resolve(answer));
+      const targetUrl = await new Promise((resolve) => {
+        rl.question(
+          "\n🔗 Nhập link folder đích (Enter để bỏ qua): ",
+          (answer) => resolve(answer)
+        );
       });
 
       rl.close();
@@ -400,7 +403,9 @@ class DriveAPI {
           console.log(`\n✅ Đã tìm thấy folder đích: ${targetInfo.data.name}`);
           this.currentTargetFolderId = targetFolderId;
         } catch (error) {
-          throw new Error("Không thể truy cập folder đích. Vui lòng kiểm tra link và quyền truy cập");
+          throw new Error(
+            "Không thể truy cập folder đích. Vui lòng kiểm tra link và quyền truy cập"
+          );
         }
       } else {
         // Logic cũ tạo folder tự động
@@ -416,17 +421,23 @@ class DriveAPI {
         let rootFolder;
         if (existingRootFolders.data.files.length > 0) {
           rootFolder = existingRootFolders.data.files[0];
-          console.log(`✅ Đã tìm thấy folder gốc: "video-drive-clone" (${rootFolder.id})`);
+          console.log(
+            `✅ Đã tìm thấy folder gốc: "video-drive-clone" (${rootFolder.id})`
+          );
         } else {
           console.log(`📁 Tạo mới folder gốc: "video-drive-clone"`);
           rootFolder = await this.findOrCreateFolder("video-drive-clone");
-          console.log(`✅ Đã tạo folder gốc: "video-drive-clone" (${rootFolder.id})`);
+          console.log(
+            `✅ Đã tạo folder gốc: "video-drive-clone" (${rootFolder.id})`
+          );
         }
 
         // Tìm hoặc tạo folder con với tên folder nguồn trong video-drive-clone
         console.log(`\n🔍 Đang tìm folder: "${folderInfo.data.name}"`);
         const existingSourceFolders = await this.targetDrive.files.list({
-          q: `name = '${folderInfo.data.name.replace(/'/g, "\\'")}' and '${rootFolder.id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+          q: `name = '${folderInfo.data.name.replace(/'/g, "\\'")}' and '${
+            rootFolder.id
+          }' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
           fields: "files(id, name)",
           spaces: "drive",
           supportsAllDrives: true,
@@ -435,11 +446,18 @@ class DriveAPI {
         let sourceNameFolder;
         if (existingSourceFolders.data.files.length > 0) {
           sourceNameFolder = existingSourceFolders.data.files[0];
-          console.log(`✅ Đã tìm thấy folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+          console.log(
+            `✅ Đã tìm thấy folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`
+          );
         } else {
           console.log(`📁 Tạo mới folder: "${folderInfo.data.name}"`);
-          sourceNameFolder = await this.findOrCreateFolder(folderInfo.data.name, rootFolder.id);
-          console.log(`✅ Đã tạo folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`);
+          sourceNameFolder = await this.findOrCreateFolder(
+            folderInfo.data.name,
+            rootFolder.id
+          );
+          console.log(
+            `✅ Đã tạo folder: "${folderInfo.data.name}" (${sourceNameFolder.id})`
+          );
         }
 
         this.currentTargetFolderId = sourceNameFolder.id;
@@ -457,8 +475,12 @@ class DriveAPI {
       } catch (error) {
         if (error.message.includes("File not found")) {
           console.error(`\n❌ Không thể truy cập folder. Vui lòng kiểm tra:`);
-          console.log(`1. URL folder: https://drive.google.com/drive/folders/${sourceFolderId}`);
-          console.log(`2. Tài khoản nguồn (${this.sourceEmail}) phải có quyền xem folder`);
+          console.log(
+            `1. URL folder: https://drive.google.com/drive/folders/${sourceFolderId}`
+          );
+          console.log(
+            `2. Tài khoản nguồn (${this.sourceEmail}) phải có quyền xem folder`
+          );
           console.log(`3. Folder phải được chia sẻ với tài khoản nguồn`);
           console.log(`\n💡 Mã lỗi:`, error.message);
           console.log(`\n💡 Trạng thái:`, error.response?.status);
@@ -760,12 +782,37 @@ class DriveAPI {
             }
           }
 
+          // Thêm hàm kiểm tra file tồn tại
+          async function checkFileExists(fileName, folderId) {
+            try {
+              const response = await this.targetDrive.files.list({
+                q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
+                fields: "files(id, name)",
+                supportsAllDrives: true,
+              });
+              return response.data.files.length > 0;
+            } catch (error) {
+              console.error(`⚠️ Lỗi kiểm tra file tồn tại:`, error.message);
+              return false;
+            }
+          }
+
           // Xử lý other files
           if (otherFiles.length > 0) {
             try {
               console.log(`\n📄 Xử lý ${otherFiles.length} file khác...`);
               for (const file of otherFiles) {
                 try {
+                  // Kiểm tra file đã tồn tại chưa
+                  const exists = await this.checkFileExists(
+                    file.name,
+                    this.currentTargetFolderId
+                  );
+                  if (exists) {
+                    console.log(`⏩ File đã tồn tại, bỏ qua: ${file.name}`);
+                    continue;
+                  }
+
                   console.log(`📄 Đang tải file: ${file.name}`);
                   const response = await this.sourceDrive.files.get(
                     {
@@ -858,6 +905,16 @@ class DriveAPI {
               );
 
               for (const docsFile of docsFiles) {
+                // Kiểm tra file đã tồn tại chưa
+                const exists = await this.checkFileExists(
+                  docsFile.name,
+                  this.currentTargetFolderId
+                );
+                if (exists) {
+                  console.log(`⏩ File đã tồn tại, bỏ qua: ${docsFile.name}`);
+                  continue;
+                }
+
                 const uploadResult = await docsHandler.processDocsFile(
                   docsFile,
                   this.currentTargetFolderId
@@ -889,6 +946,16 @@ class DriveAPI {
               );
 
               for (const docxFile of docxFiles) {
+                // Kiểm tra file đã tồn tại chưa
+                const exists = await this.checkFileExists(
+                  docxFile.name,
+                  this.currentTargetFolderId
+                );
+                if (exists) {
+                  console.log(`⏩ File đã tồn tại, bỏ qua: ${docxFile.name}`);
+                  continue;
+                }
+
                 const uploadResult = await docsHandler.processDocsFile(
                   docxFile,
                   this.currentTargetFolderId
@@ -986,9 +1053,7 @@ class DriveAPI {
           supportsAllDrives: true,
         });
 
-        console.log(
-          `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
-        );
+        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`);
       } catch (permError) {
         console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
       }
@@ -1536,11 +1601,11 @@ class DriveAPI {
   // Thêm hàm downloadChunksParallel
   async downloadChunksParallel(videoId, chunks, maxParallelDownloads = 3) {
     const results = [];
-    
+
     // Chia chunks thành các nhóm để tải song song
     for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
       const batch = chunks.slice(i, i + maxParallelDownloads);
-      
+
       // Tải song song các chunk trong batch
       const downloadPromises = batch.map(async (chunk, index) => {
         try {
@@ -1567,10 +1632,14 @@ class DriveAPI {
 
       // Lấy danh sách chunks
       const chunks = await this.getVideoChunks(videoId);
-      
+
       // Tải song song các chunk với tối đa 3 chunk cùng lúc
-      const chunkResults = await this.downloadChunksParallel(videoId, chunks, 3);
-      
+      const chunkResults = await this.downloadChunksParallel(
+        videoId,
+        chunks,
+        3
+      );
+
       // Ghép các chunk lại
       await this.mergeChunks(chunkResults, savePath);
 
@@ -1578,6 +1647,21 @@ class DriveAPI {
     } catch (error) {
       console.error(`❌ Lỗi tải video ${videoId}:`, error);
       throw error;
+    }
+  }
+
+  // Thêm phương thức checkFileExists vào class
+  async checkFileExists(fileName, folderId) {
+    try {
+      const response = await this.targetDrive.files.list({
+        q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
+        fields: "files(id, name)",
+        supportsAllDrives: true,
+      });
+      return response.data.files.length > 0;
+    } catch (error) {
+      console.error(`⚠️ Lỗi kiểm tra file tồn tại:`, error.message);
+      return false;
     }
   }
 }

@@ -17,12 +17,12 @@ const http = require("http");
 const https = require("https");
 const { google } = require("googleapis");
 const ffmpeg = require("fluent-ffmpeg");
-const { exec } = require('child_process');
+const { exec } = require("child_process");
 
 // Tìm đường dẫn FFmpeg
-exec('where ffmpeg', (error, stdout, stderr) => {
+exec("where ffmpeg", (error, stdout, stderr) => {
   if (error) {
-    console.error('❌ Không tìm thấy FFmpeg trong PATH');
+    console.error("❌ Không tìm thấy FFmpeg trong PATH");
     return;
   }
   const ffmpegPath = stdout.trim();
@@ -169,6 +169,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       return false;
     } catch (error) {
       console.error("\n❌ Lỗi kiểm tra:", error.message);
+      // Trả về false để tiếp tục tải, tránh bỏ qua file
       return false;
     }
   }
@@ -403,19 +404,17 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
                     const progressiveTranscodes =
                       formatData.progressiveTranscodes || [];
-                  
 
                     // Log tất cả các URL audio tìm được
-               
+
                     const audioTranscodes = formatData.audioTranscodes || [];
-                  
+
                     // Log các URL khác nếu có
                     if (formatData.adaptiveTranscodes) {
                       formatData.adaptiveTranscodes.forEach((transcode) => {
                         const type = transcode.mimeType?.includes("audio")
                           ? "🔊 Audio"
                           : "🎥 Video";
-                       
                       });
                     }
 
@@ -435,7 +434,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                         headers: standardHeaders,
                       };
 
-                      
                       resolve(result);
                       return;
                     }
@@ -542,51 +540,66 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
   }
 
   async processQueue() {
-    if (this.processing) return;
+    if (this.processing) return false;
     this.processing = true;
 
-    const processNextBatch = async () => {
-      while (this.queue.length > 0) {
-        const currentBatch = this.queue.splice(
-          0,
-          this.MAX_CONCURRENT_DOWNLOADS
-        );
-        const promises = currentBatch.map(async (video) => {
-          try {
-            console.log(`🎥 Bắt đầu tải: ${video.fileName}`);
-            await this.processVideoDownload(video);
-          } catch (error) {
-            console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+    try {
+      const processNextBatch = async () => {
+        while (this.queue.length > 0) {
+          const currentBatch = this.queue.splice(
+            0,
+            this.MAX_CONCURRENT_DOWNLOADS
+          );
 
-            // Lấy số lần retry hiện tại
-            const retryCount = this.videoRetries.get(video.fileName) || 0;
+          const promises = currentBatch.map(async (video) => {
+            try {
+              console.log(`🎥 Bắt đầu tải: ${video.fileName}`);
+              await this.processVideoDownload(video);
+              return true;
+            } catch (error) {
+              console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+              const retryCount = this.videoRetries.get(video.fileName) || 0;
 
-            if (retryCount < 2) {
-              console.log(
-                `⏳ Thêm lại vào queue để thử lại: ${video.fileName}`
-              );
-              this.videoRetries.set(video.fileName, retryCount + 1);
-              this.queue.push(video);
-            } else {
-              console.log(
-                `⚠️ Đã thử ${
-                  retryCount + 1
-                } lần không thành công, bỏ qua file: ${video.fileName}`
-              );
-              await this.logFailedVideo(video);
+              if (retryCount < 2) {
+                console.log(
+                  `⏳ Thêm lại vào queue để thử lại: ${video.fileName}`
+                );
+                this.videoRetries.set(video.fileName, retryCount + 1);
+                this.queue.push(video);
+              } else {
+                console.log(
+                  `⚠️ Đã thử ${
+                    retryCount + 1
+                  } lần không thành công, bỏ qua file: ${video.fileName}`
+                );
+                await this.logFailedVideo(video).catch((err) => {
+                  console.error("❌ Lỗi ghi log video lỗi:", err.message);
+                });
+              }
+
+              this.activeChrome.delete(video.fileName);
+              return false;
             }
+          });
 
-            this.activeChrome.delete(video.fileName);
+          try {
+            await Promise.all(promises);
+          } catch (error) {
+            console.error("❌ Lỗi xử lý batch:", error.message);
           }
-        });
 
-        await Promise.all(promises);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-    };
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      };
 
-    await processNextBatch();
-    this.processing = false;
+      await processNextBatch();
+      return true;
+    } catch (error) {
+      console.error("❌ Lỗi xử lý queue:", error.message);
+      return false;
+    } finally {
+      this.processing = false;
+    }
   }
 
   async addToQueue(videoInfo) {
@@ -605,7 +618,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     }
   }
 
-  async downloadVideoWithChunks(videoUrl, outputPath, headers, fileName, depth) {
+  async downloadVideoWithChunks(
+    videoUrl,
+    outputPath,
+    headers,
+    fileName,
+    depth
+  ) {
     const indent = "  ".repeat(depth);
     let fileHandle = null;
     let downloadedSize = 0;
@@ -621,7 +640,12 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       throw new Error("Không có formatData");
     }
 
-    const downloadWithChunksParallel = async (url, path, headers, maxParallelDownloads = 3) => {
+    const downloadWithChunksParallel = async (
+      url,
+      path,
+      headers,
+      maxParallelDownloads = 8
+    ) => {
       let fh = null;
       try {
         fh = await fs.promises.open(path, "w");
@@ -713,8 +737,11 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
         // Download chunks song song
         for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
-          const batch = chunks.slice(i, Math.min(i + maxParallelDownloads, chunks.length));
-          
+          const batch = chunks.slice(
+            i,
+            Math.min(i + maxParallelDownloads, chunks.length)
+          );
+
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0) {
@@ -809,10 +836,15 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       try {
         // Thử tải với phương pháp chunk song song trước
         await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
-        console.log(`${indent}✅ Tải video thành công với phương pháp chunk song song`);
+        console.log(
+          `${indent}✅ Tải video thành công với phương pháp chunk song song`
+        );
         return;
       } catch (error) {
-        if (error.message.includes("404_NOT_FOUND") || error.response?.status === 404) {
+        if (
+          error.message.includes("404_NOT_FOUND") ||
+          error.response?.status === 404
+        ) {
           // Tìm URL video và audio chất lượng cao nhất
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
@@ -828,13 +860,27 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           try {
             // Tải video và audio riêng bằng phương pháp chunk song song
             console.log(`${indent}📥 Đang tải video...`);
-            await downloadWithChunksParallel(bestVideo.url, tempVideoPath, headers, 3);
+            await downloadWithChunksParallel(
+              bestVideo.url,
+              tempVideoPath,
+              headers
+          
+            );
 
             console.log(`${indent}🔊 Đang tải audio...`);
-            await downloadWithChunksParallel(bestAudio.url, tempAudioPath, headers, 3);
+            await downloadWithChunksParallel(
+              bestAudio.url,
+              tempAudioPath,
+              headers
+          
+            );
 
             // Ghép video và audio
-            await this.mergeVideoAudio(tempVideoPath, tempAudioPath, outputPath);
+            await this.mergeVideoAudio(
+              tempVideoPath,
+              tempAudioPath,
+              outputPath
+            );
 
             // Xóa file tạm
             await fs.promises.unlink(tempVideoPath).catch(() => {});
@@ -855,11 +901,22 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
 
       // Thử lại nếu chưa quá số lần và không phải lỗi không có formatData
-      if (stuckRetryCount < this.MAX_STUCK_RETRIES && !error.message.includes("Không có formatData")) {
+      if (
+        stuckRetryCount < this.MAX_STUCK_RETRIES &&
+        !error.message.includes("Không có formatData")
+      ) {
         stuckRetryCount++;
-        console.log(`${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`);
+        console.log(
+          `${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`
+        );
         await new Promise((r) => setTimeout(r, 5000));
-        return this.downloadVideoWithChunks(videoUrl, outputPath, headers, fileName, depth);
+        return this.downloadVideoWithChunks(
+          videoUrl,
+          outputPath,
+          headers,
+          fileName,
+          depth
+        );
       }
 
       // Log failed video
@@ -895,30 +952,39 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     let currentDelay = 60000;
 
     // Kiểm tra xem có cần nghỉ không
-    if (this.uploadCount >= this.UPLOAD_BATCH_SIZE) {
-      const timeSinceLastPause = Date.now() - this.lastPauseTime;
-      if (timeSinceLastPause < this.PAUSE_DURATION) {
-        const waitTime = this.PAUSE_DURATION - timeSinceLastPause;
-        console.log(
-          `${indent}⏸️ Đã upload ${
-            this.uploadCount
-          } videos, tạm dừng ${Math.ceil(waitTime / 1000 / 60)} phút...`
-        );
-        await new Promise((resolve) => setTimeout(resolve, waitTime));
+    try {
+      if (this.uploadCount >= this.UPLOAD_BATCH_SIZE) {
+        const timeSinceLastPause = Date.now() - this.lastPauseTime;
+        if (timeSinceLastPause < this.PAUSE_DURATION) {
+          const waitTime = this.PAUSE_DURATION - timeSinceLastPause;
+          console.log(
+            `${indent}⏸️ Đã upload ${
+              this.uploadCount
+            } videos, tạm dừng ${Math.ceil(waitTime / 1000 / 60)} phút...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        }
+        this.uploadCount = 0;
+        this.lastPauseTime = Date.now();
       }
-      this.uploadCount = 0;
-      this.lastPauseTime = Date.now();
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi kiểm tra pause:`, error.message);
     }
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
+        // Kiểm tra file tồn tại
+        if (!fs.existsSync(filePath)) {
+          throw new Error(`File không tồn tại: ${filePath}`);
+        }
+
         const fileSize = fs.statSync(filePath).size;
         const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
         console.log(
-          `${indent} Bắt đầu upload video (Lần ${attempt}/${MAX_RETRIES}): ${fileName}`
+          `${indent}📤 Bắt đầu upload video (Lần ${attempt}/${MAX_RETRIES}): ${fileName}`
         );
-        console.log(`${indent}📦 Kích thớc: ${fileSizeMB}MB`);
+        console.log(`${indent}📦 Kích thước: ${fileSizeMB}MB`);
 
         // Tạo promise với timeout
         const uploadPromise = new Promise(async (resolve, reject) => {
@@ -932,8 +998,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
               ((elapsedTime / this.UPLOAD_TIMEOUT) * 100).toFixed(0)
             );
             if (percentUploaded - lastLoggedPercent >= 10) {
-              // Chỉ log mỗi 10%
-              console.log(`${indent} Đã upload ${percentUploaded}%...`);
+              console.log(`${indent}📤 Đã upload ${percentUploaded}%...`);
               lastLoggedPercent = percentUploaded;
             }
           }, 6000);
@@ -984,7 +1049,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
         // Thay đổi phần set permissions sau khi upload thành công
         try {
-          // Sau đó cập nhật file để vô hiệu hóa các quyền
           await this.targetDrive.files.update({
             fileId: response.data.id,
             requestBody: {
@@ -1034,6 +1098,11 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             targetFolderId,
             error: error.message,
             timestamp: new Date().toISOString(),
+          }).catch((logError) => {
+            console.error(
+              `${indent}❌ Lỗi ghi log video lỗi:`,
+              logError.message
+            );
           });
           throw error;
         }
@@ -1052,6 +1121,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }
       }
     }
+
+    throw new Error(`Không thể upload sau ${MAX_RETRIES} lần thử`);
   }
 
   // Thêm method ghi log video li
@@ -1059,27 +1130,51 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const logPath = path.join(this.TEMP_DIR, "failed_videos.json");
     try {
       let failedVideos = [];
-      if (fs.existsSync(logPath)) {
-        failedVideos = JSON.parse(await fs.promises.readFile(logPath, "utf8"));
+      try {
+        if (fs.existsSync(logPath)) {
+          const content = await fs.promises.readFile(logPath, "utf8");
+          try {
+            failedVideos = JSON.parse(content);
+          } catch (parseError) {
+            console.error("❌ Lỗi parse file log:", parseError.message);
+            failedVideos = [];
+          }
+        }
+      } catch (readError) {
+        console.error("❌ Lỗi đọc file log:", readError.message);
       }
-      failedVideos.push(failedVideo);
-      await fs.promises.writeFile(
-        logPath,
-        JSON.stringify(failedVideos, null, 2)
-      );
-      console.log(`📝 Đã ghi log video lỗi: ${failedVideo.fileName}`);
+
+      failedVideos.push({
+        ...failedVideo,
+        timestamp: new Date().toISOString(),
+      });
+
+      try {
+        await fs.promises.writeFile(
+          logPath,
+          JSON.stringify(failedVideos, null, 2)
+        );
+        console.log(`📝 Đã ghi log video lỗi: ${failedVideo.fileName}`);
+      } catch (writeError) {
+        console.error("❌ Lỗi ghi file log:", writeError.message);
+      }
     } catch (error) {
-      console.error("❌ Lỗi ghi log video:", error);
+      console.error("❌ Lỗi xử lý log video:", error.message);
     }
   }
 
   // Thêm utility function để cleanup temp một cách an toàn
   async cleanupTempDirectory() {
+    if (!this.TEMP_DIR) {
+      console.warn("⚠️ Thư mục temp chưa được khởi tạo");
+      return;
+    }
+
     try {
       if (!fs.existsSync(this.TEMP_DIR)) return;
 
       const files = await fs.promises.readdir(this.TEMP_DIR);
-      console.log(`\n🧹 Dn dẹp ${files.length} files tạm...`);
+      console.log(`\n🧹 Dọn dẹp ${files.length} files tạm...`);
 
       for (const file of files) {
         const filePath = path.join(this.TEMP_DIR, file);
@@ -1101,6 +1196,10 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             }
           }
         }
+
+        if (retryCount === 0) {
+          console.error(`❌ Không thể xóa file sau 5 lần thử: ${file}`);
+        }
       }
     } catch (error) {
       console.error("❌ Lỗi dọn dẹp temp:", error.message);
@@ -1109,12 +1208,22 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
   async retryFailedVideos() {
     const logPath = path.join(this.TEMP_DIR, "failed_videos.json");
-    if (!fs.existsSync(logPath)) return;
 
     try {
-      const failedVideos = JSON.parse(
-        await fs.promises.readFile(logPath, "utf8")
-      );
+      if (!fs.existsSync(logPath)) {
+        console.log("ℹ️ Không có video lỗi cần thử lại");
+        return;
+      }
+
+      let failedVideos = [];
+      try {
+        const content = await fs.promises.readFile(logPath, "utf8");
+        failedVideos = JSON.parse(content);
+      } catch (error) {
+        console.error("❌ Lỗi đọc file log video lỗi:", error.message);
+        return;
+      }
+
       if (failedVideos.length > 0) {
         console.log(`\n🔄 Thử lại ${failedVideos.length} videos lỗi...`);
 
@@ -1126,14 +1235,23 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           targetFolderId: video.targetFolderId,
         }));
 
-        // Xóa file log cũ
-        await fs.promises.unlink(logPath);
+        try {
+          // Xóa file log cũ
+          await fs.promises.unlink(logPath);
+        } catch (error) {
+          console.error("❌ Lỗi xóa file log cũ:", error.message);
+        }
 
-        // X lý lại queue
-        await this.processQueue();
+        // Xử lý lại queue
+        const success = await this.processQueue();
+        if (!success) {
+          console.error("❌ Lỗi xử lý lại các video lỗi");
+        }
+      } else {
+        console.log("ℹ️ Không có video lỗi cần thử lại");
       }
     } catch (error) {
-      console.error("❌ Lỗi retry failed videos:", error);
+      console.error("❌ Lỗi retry failed videos:", error.message);
     }
   }
 
@@ -1205,32 +1323,50 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const indent = "  ".repeat(depth);
     try {
       // Đảm bảo thư mục temp tồn tại
-      await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
-      console.log(
-        `${indent}📁 Đảm bảo thư mục temp tồn tại: ${path.dirname(tempPath)}`
-      );
+      try {
+        await fs.promises.mkdir(path.dirname(tempPath), { recursive: true });
+        console.log(
+          `${indent}📁 Đảm bảo thư mục temp tồn tại: ${path.dirname(tempPath)}`
+        );
+      } catch (mkdirError) {
+        console.error(`${indent}❌ Lỗi tạo thư mục temp:`, mkdirError.message);
+        return false;
+      }
 
       console.log(`${indent}📥 Bắt đầu tải ngầm: ${fileName}`);
       console.log(`${indent}💾 Đường dẫn file tạm: ${tempPath}`);
 
       // Tải file
-      await this.downloadVideoWithChunks(
-        url,
-        tempPath,
-        headers,
-        fileName,
-        depth
-      );
+      try {
+        await this.downloadVideoWithChunks(
+          url,
+          tempPath,
+          headers,
+          fileName,
+          depth
+        );
+      } catch (downloadError) {
+        console.error(`${indent}❌ Lỗi tải file:`, downloadError.message);
+        return false;
+      }
 
       // Kiểm tra file đã tải về
       if (!fs.existsSync(tempPath)) {
-        throw new Error(`File tạm không tồn tại sau khi tải: ${tempPath}`);
+        console.error(
+          `${indent}❌ File tạm không tồn tại sau khi tải: ${tempPath}`
+        );
+        return false;
       }
 
       if (!this.downloadOnly) {
         // Upload file sau khi tải xong
-        console.log(`${indent}⬆️ Bắt đầu upload: ${fileName}`);
-        await this.uploadVideo(tempPath, fileName, targetFolderId, depth);
+        try {
+          console.log(`${indent}⬆️ Bắt đầu upload: ${fileName}`);
+          await this.uploadVideo(tempPath, fileName, targetFolderId, depth);
+        } catch (uploadError) {
+          console.error(`${indent}❌ Lỗi upload:`, uploadError.message);
+          return false;
+        }
       }
 
       // Xóa file tạm sau khi xử lý xong
@@ -1239,9 +1375,14 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           await fs.promises.unlink(tempPath);
           console.log(`${indent}🧹 Đã xóa file tạm: ${fileName}`);
         }
-      } catch (err) {
-        console.warn(`${indent}⚠️ Không thể xóa file tạm:`, err.message);
+      } catch (unlinkError) {
+        console.warn(
+          `${indent}⚠️ Không thể xóa file tạm:`,
+          unlinkError.message
+        );
       }
+
+      return true;
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý download/upload:`, error.message);
       // Log thêm thông tin debug
@@ -1250,132 +1391,128 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         - Đường dẫn: ${tempPath}
         - Thư mục tồn tại: ${fs.existsSync(path.dirname(tempPath))}
       `);
-      throw error;
+      return false;
     }
   }
 
   findBestAdaptiveVideo() {
-    if (!this.currentFormatData?.adaptiveTranscodes) {
-      console.log("⚠️ Không tìm thấy danh sách video adaptive");
-      return null;
-    }
-
-   
-
-    // Lọc ra danh sách video (không phải audio)
-    const videos = this.currentFormatData.adaptiveTranscodes.filter(
-      (t) => t.itag !== 140 && !t.mimeType?.includes("audio") // Loại bỏ audio 140 và các audio khác
-    );
-
-    if (videos.length === 0) {
-      console.log("❌ Không tìm thấy video nào trong adaptiveTranscodes");
-      return null;
-    }
-
-    // Ưu tiên theo thứ tự chất lượng từ cao xuống thấp
-    const videoQualities = [
-      313, // 4K
-      271, // 1440p
-      137, // 1080p
-      136, // 720p
-      135, // 480p
-      134, // 360p
-      133, // 240p
-    ];
-
-    const qualityNames = {
-      313: "4K",
-      271: "1440p",
-      137: "1080p",
-      136: "720p",
-      135: "480p",
-      134: "360p",
-      133: "240p",
-    };
-
-    for (const quality of videoQualities) {
-      const video = videos.find((t) => t.itag === quality);
-      if (video) {
-       
-        return video;
+    try {
+      if (!this.currentFormatData?.adaptiveTranscodes) {
+        console.log("⚠️ Không tìm thấy danh sách video adaptive");
+        return null;
       }
-    }
 
-    // Nếu không tìm thấy theo itag, sắp xếp theo height và lấy cao nhất
-    const bestVideo = videos.sort(
-      (a, b) => (b.height || 0) - (a.height || 0)
-    )[0];
-    
-    return bestVideo;
+      const videos = this.currentFormatData.adaptiveTranscodes.filter(
+        (t) => t.itag !== 140 && !t.mimeType?.includes("audio")
+      );
+
+      if (videos.length === 0) {
+        console.log("❌ Không tìm thấy video nào trong adaptiveTranscodes");
+        return null;
+      }
+
+      const videoQualities = [
+        313, // 4K
+        271, // 1440p
+        137, // 1080p
+        136, // 720p
+        135, // 480p
+        134, // 360p
+        133, // 240p
+      ];
+
+      for (const quality of videoQualities) {
+        const video = videos.find((t) => t.itag === quality);
+        if (video) {
+          return video;
+        }
+      }
+
+      const bestVideo = videos.sort(
+        (a, b) => (b.height || 0) - (a.height || 0)
+      )[0];
+
+      return bestVideo;
+    } catch (error) {
+      console.error("❌ Lỗi tìm video chất lượng cao:", error.message);
+      return null;
+    }
   }
 
   findBestAdaptiveAudio() {
-    if (!this.currentFormatData?.adaptiveTranscodes) {
-      console.log("⚠️ Không tìm thấy danh sách audio adaptive");
+    try {
+      if (!this.currentFormatData?.adaptiveTranscodes) {
+        console.log("⚠️ Không tìm thấy danh sách audio adaptive");
+        return null;
+      }
+
+      const audio = this.currentFormatData.adaptiveTranscodes.find(
+        (t) => t.itag === 140
+      );
+
+      if (audio) {
+        return audio;
+      }
+
+      console.log("❌ Không tìm thấy audio 140");
+      return null;
+    } catch (error) {
+      console.error("❌ Lỗi tìm audio:", error.message);
       return null;
     }
-
-    // Tìm audio 140 (thường là audio duy nhất)
-    const audio = this.currentFormatData.adaptiveTranscodes.find(
-      (t) => t.itag === 140
-    );
-
-    if (audio) {
-     
-      return audio;
-    }
-
-    console.log("❌ Không tìm thấy audio 140");
-    return null;
   }
 
   async mergeVideoAudio(videoPath, audioPath, outputPath) {
     return new Promise((resolve, reject) => {
-   
-      const ffmpeg = require("fluent-ffmpeg");
+      try {
+        const ffmpeg = require("fluent-ffmpeg");
 
-      ffmpeg()
-        .input(videoPath)
-        .input(audioPath)
-        .outputOptions([
-          // Copy cả video và audio stream để tăng tốc
-          "-c:v",
-          "copy",
-          "-c:a",
-          "copy",
-          // Chỉ định rõ stream để tránh lỗi
-          "-map",
-          "0:v:0",
-          "-map",
-          "1:a:0",
-          // Tối ưu cho streaming và xử lý file lớn
-          "-movflags",
-          "faststart",
-          "-max_muxing_queue_size",
-          "9999",
-          // Tự động ghi đè file
-          "-y",
-        ])
-        .on("start", () => {
-          
-        })
-        .on("progress", (progress) => {
-          if (progress.percent) {
-            // Chỉ log mỗi 20%
-            if (Math.round(progress.percent) % 20 === 0) {
-              console.log(`⏳ Đã xử lý: ${Math.round(progress.percent)}%`);
+        ffmpeg()
+          .input(videoPath)
+          .input(audioPath)
+          .outputOptions([
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-movflags",
+            "faststart",
+            "-max_muxing_queue_size",
+            "9999",
+            "-y",
+          ])
+          .on("start", () => {
+            console.log("🎬 Bắt đầu ghép video và audio...");
+          })
+          .on("progress", (progress) => {
+            if (progress.percent) {
+              if (Math.round(progress.percent) % 20 === 0) {
+                console.log(`⏳ Đã xử lý: ${Math.round(progress.percent)}%`);
+              }
             }
-          }
-        })
-        .on("end", () => {
-         
-          resolve();
-        })
-        .on("error", (err) => {
-          console.error("❌ Lỗi ghép video:", err.message);
-          reject(err);
-        })
-        .save(outputPath);
+          })
+          .on("end", () => {
+            console.log("✅ Đã ghép video và audio thành công");
+            resolve(true);
+          })
+          .on("error", (err) => {
+            console.error("❌ Lỗi ghép video:", err.message);
+            // Trả về false thay vì reject để tránh crash
+            resolve(false);
+          })
+          .save(outputPath)
+          .on("error", (err) => {
+            console.error("❌ Lỗi lưu file:", err.message);
+            resolve(false);
+          });
+      } catch (error) {
+        console.error("❌ Lỗi khởi tạo FFmpeg:", error.message);
+        resolve(false);
+      }
     });
   }
 }
