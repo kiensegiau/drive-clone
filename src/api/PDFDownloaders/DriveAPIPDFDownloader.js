@@ -582,8 +582,8 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     try {
       let lastPageCount = 0;
       let noNewPagesCount = 0;
-      const MAX_NO_NEW_PAGES = 10;
-      const SCROLL_INTERVAL = 100; // Tăng thời gian giữa các lần cuộn để cuộn chậm hơn
+      const MAX_NO_NEW_PAGES = 50;
+      const SCROLL_INTERVAL = 200; // Tăng thời gian giữa các lần cuộn để cuộn chậm hơn
       const SPACE_PRESSES_PER_BATCH = 2; // Giảm số lần nhấn Space trong mỗi batch để cuộn chậm hơn
       const BATCH_INTERVAL = 500; // Thêm khoảng thời gian chờ giữa các batch để cuộn chậm hơn
       const MAX_SCROLL_ATTEMPTS = 900;

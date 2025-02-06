@@ -631,6 +631,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     const startTime = Date.now();
     let stuckRetryCount = 0;
     let failedChunksCount = 0;
+    let progressInterval = null;
 
     // Kiểm tra xem có formatData không
     if (!this.currentFormatData) {
@@ -647,12 +648,13 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       maxParallelDownloads = 8
     ) => {
       let fh = null;
+      let isStuck = false;
+
       try {
         fh = await fs.promises.open(path, "w");
         await fh.close();
         fh = await fs.promises.open(path, "r+");
 
-        // Thêm headers quan trọng từ Chrome
         const downloadHeaders = {
           ...headers,
           "User-Agent": headers["User-Agent"] || "Mozilla/5.0",
@@ -667,23 +669,16 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         };
 
         // Kiểm tra URL có tồn tại không
-        try {
-          const testResponse = await axios({
-            method: "get",
-            url: url,
-            headers: {
-              ...downloadHeaders,
-              Range: "bytes=0-1024",
-            },
-            timeout: 10000,
-            validateStatus: (status) => status === 200 || status === 206,
-          });
-        } catch (error) {
-          if (error.response?.status === 404 || error.message.includes("404")) {
-            throw new Error("404_NOT_FOUND");
-          }
-          throw error;
-        }
+        const testResponse = await axios({
+          method: "get",
+          url: url,
+          headers: {
+            ...downloadHeaders,
+            Range: "bytes=0-1024",
+          },
+          timeout: 10000,
+          validateStatus: (status) => status === 200 || status === 206,
+        });
 
         // Lấy kích thước file
         const headResponse = await axios.head(url, {
@@ -712,7 +707,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         // Progress tracking
         let lastProgress = -1;
         let noProgressCount = 0;
-        const progressInterval = setInterval(() => {
+
+        progressInterval = setInterval(() => {
           const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
           const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
           const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
@@ -722,8 +718,14 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           if (downloadedSize === lastProgress || downloadedSize === 0) {
             noProgressCount++;
             if (noProgressCount >= 15) {
-              clearInterval(progressInterval);
-              throw new Error(`Download kẹt tại ${progress}%`);
+              console.log(
+                `${indent}⚠️ Download kẹt tại ${progress}%, chuyển sang phương án dự phòng...`
+              );
+              isStuck = true;
+              if (progressInterval) {
+                clearInterval(progressInterval);
+                progressInterval = null;
+              }
             }
           } else {
             noProgressCount = 0;
@@ -736,7 +738,11 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }, 2000);
 
         // Download chunks song song
-        for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
+        for (
+          let i = 0;
+          i < chunks.length && !isStuck;
+          i += maxParallelDownloads
+        ) {
           const batch = chunks.slice(
             i,
             Math.min(i + maxParallelDownloads, chunks.length)
@@ -744,7 +750,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
-            while (retries > 0) {
+            while (retries > 0 && !isStuck) {
               try {
                 const chunkHeaders = {
                   ...downloadHeaders,
@@ -772,7 +778,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                 retries--;
                 failedChunksCount++;
 
-                // Log chi tiết về lỗi
                 console.log(`${indent}📝 Chi tiết lỗi chunk:
                   - Mã lỗi: ${error.response?.status || "Không có"}
                   - Message: ${error.message}
@@ -781,50 +786,67 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                   - Số lần lỗi: ${failedChunksCount}
                 `);
 
-                // Chuyển qua phương án dự phòng ngay nếu gặp lỗi stream aborted
                 if (error.message.includes("stream has been aborted")) {
                   console.log(
                     `${indent}⚠️ Phát hiện lỗi stream aborted, chuyển sang phương án dự phòng...`
                   );
-                  clearInterval(progressInterval);
-                  throw new Error("404_NOT_FOUND");
+                  isStuck = true;
+                  break;
                 }
 
-                // Nếu có quá nhiều chunk lỗi liên tiếp
                 if (failedChunksCount >= 3) {
                   console.log(
                     `${indent}⚠️ Quá nhiều lỗi chunk (${failedChunksCount}), chuyển sang phương án dự phòng...`
                   );
-                  clearInterval(progressInterval);
-                  throw new Error("404_NOT_FOUND");
+                  isStuck = true;
+                  break;
                 }
 
                 if (retries === 0) {
-                  clearInterval(progressInterval);
-                  throw error;
+                  isStuck = true;
+                  break;
                 }
+
                 console.log(`${indent}⚠️ Lỗi chunk, thử lại sau 5s...`);
                 await new Promise((r) => setTimeout(r, 5000));
               }
             }
           });
 
-          // Đợi tất cả chunk trong batch hoàn thành
-          await Promise.all(downloadPromises);
+          try {
+            await Promise.all(downloadPromises);
+          } catch (error) {
+            console.error(`${indent}❌ Lỗi tải batch chunks:`, error.message);
+            isStuck = true;
+            break;
+          }
+
+          if (isStuck) break;
         }
 
-        clearInterval(progressInterval);
-        await fh.close();
+        // Dọn dẹp
+        if (progressInterval) {
+          clearInterval(progressInterval);
+          progressInterval = null;
+        }
 
-        // Verify file size
-        const stats = await fs.promises.stat(path);
-        if (stats.size !== totalSize) {
-          throw new Error(`File size mismatch: ${stats.size} != ${totalSize}`);
+        if (fh) {
+          await fh.close();
+          fh = null;
+        }
+
+        if (isStuck) {
+          throw new Error("404_NOT_FOUND");
         }
 
         return true;
       } catch (error) {
-        if (fh) await fh.close();
+        if (progressInterval) {
+          clearInterval(progressInterval);
+        }
+        if (fh) {
+          await fh.close();
+        }
         throw error;
       }
     };
@@ -834,7 +856,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
 
       try {
-        // Thử tải với phương pháp chunk song song trước
         await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
         console.log(
           `${indent}✅ Tải video thành công với phương pháp chunk song song`
@@ -842,10 +863,9 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         return;
       } catch (error) {
         if (
-          error.message.includes("404_NOT_FOUND") ||
+          error.message === "404_NOT_FOUND" ||
           error.response?.status === 404
         ) {
-          // Tìm URL video và audio chất lượng cao nhất
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
 
@@ -853,45 +873,40 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             throw new Error("Không tìm thấy URL");
           }
 
-          // Tạo tên file tạm
           const tempVideoPath = `${outputPath}.video.tmp`;
           const tempAudioPath = `${outputPath}.audio.tmp`;
 
           try {
-            // Tải video và audio riêng bằng phương pháp chunk song song
             console.log(`${indent}📥 Đang tải video...`);
             await downloadWithChunksParallel(
               bestVideo.url,
               tempVideoPath,
-              headers
-          
+              headers,
+              3
             );
 
             console.log(`${indent}🔊 Đang tải audio...`);
             await downloadWithChunksParallel(
               bestAudio.url,
               tempAudioPath,
-              headers
-          
+              headers,
+              3
             );
 
-            // Ghép video và audio
             await this.mergeVideoAudio(
               tempVideoPath,
               tempAudioPath,
               outputPath
             );
 
-            // Xóa file tạm
             await fs.promises.unlink(tempVideoPath).catch(() => {});
             await fs.promises.unlink(tempAudioPath).catch(() => {});
 
             return;
-          } catch (error) {
-            // Dọn dẹp file tạm nếu có lỗi
+          } catch (innerError) {
             await fs.promises.unlink(tempVideoPath).catch(() => {});
             await fs.promises.unlink(tempAudioPath).catch(() => {});
-            throw error;
+            throw innerError;
           }
         } else {
           throw error;
@@ -900,7 +915,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     } catch (error) {
       console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
 
-      // Thử lại nếu chưa quá số lần và không phải lỗi không có formatData
       if (
         stuckRetryCount < this.MAX_STUCK_RETRIES &&
         !error.message.includes("Không có formatData")
@@ -919,7 +933,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         );
       }
 
-      // Log failed video
       await this.logFailedVideo({
         fileName,
         fileId: this.currentVideoId,
@@ -928,7 +941,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         timestamp: new Date().toISOString(),
       });
 
-      throw error;
+      return false;
     }
   }
 
