@@ -19,16 +19,56 @@ const { google } = require("googleapis");
 const ffmpeg = require("fluent-ffmpeg");
 const { exec } = require("child_process");
 
-// Tìm đường dẫn FFmpeg
-exec("where ffmpeg", (error, stdout, stderr) => {
-  if (error) {
-    console.error("❌ Không tìm thấy FFmpeg trong PATH");
-    return;
+const isWindows = process.platform === 'win32';
+const checkCommand = isWindows ? 'where ffmpeg' : 'which ffmpeg';
+
+// Kiểm tra FFmpeg đồng bộ trước khi khởi tạo class
+try {
+  const ffmpegCheck = require('child_process').execSync(checkCommand).toString();
+  const ffmpegPath = ffmpegCheck.trim().split('\n')[0];
+  
+  // Kiểm tra đường dẫn có tồn tại
+  if (!fs.existsSync(ffmpegPath)) {
+    throw new Error('FFmpeg path not found');
   }
-  const ffmpegPath = stdout.trim();
+  
   console.log(`✅ Đã tìm thấy FFmpeg tại: ${ffmpegPath}`);
   ffmpeg.setFfmpegPath(ffmpegPath);
-});
+} catch (error) {
+  // Thử đường dẫn cố định cho Windows
+  if (isWindows && fs.existsSync('C:\\ffmpeg\\bin\\ffmpeg.exe')) {
+    const ffmpegPath = 'C:\\ffmpeg\\bin\\ffmpeg.exe';
+    console.log(`✅ Đã tìm thấy FFmpeg tại: ${ffmpegPath}`);
+    ffmpeg.setFfmpegPath(ffmpegPath);
+  } else {
+    console.error("❌ Không tìm thấy FFmpeg trong hệ thống");
+    console.log("\n💡 Hướng dẫn cài đặt FFmpeg:");
+    if (isWindows) {
+      console.log("1. Tải FFmpeg cho Windows:");
+      console.log("   https://github.com/BtbN/FFmpeg-Builds/releases");
+      console.log("2. Giải nén file tải về");
+      console.log("3. Copy các file trong thư mục bin vào:");
+      console.log("   C:\\ffmpeg\\bin");
+      console.log("4. Thêm đường dẫn vào PATH:");
+      console.log("   - Mở Settings > System > About > Advanced system settings");
+      console.log("   - Click Environment Variables");
+      console.log("   - Trong System variables, chọn Path > Edit");
+      console.log("   - Click New và thêm: C:\\ffmpeg\\bin");
+      console.log("   - Click OK để lưu");
+      console.log("5. Khởi động lại terminal/command prompt");
+    } else if (process.platform === 'darwin') {
+      console.log("Cài đặt qua Homebrew:");
+      console.log("brew install ffmpeg");
+    } else {
+      console.log("Cài đặt qua package manager:");
+      console.log("Ubuntu/Debian: sudo apt install ffmpeg");
+      console.log("CentOS/RHEL: sudo yum install ffmpeg");
+      console.log("Fedora: sudo dnf install ffmpeg");
+    }
+    // Dừng chương trình
+    process.exit(1);
+  }
+}
 
 class DriveAPIVideoHandler extends BaseVideoHandler {
   constructor(

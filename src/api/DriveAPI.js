@@ -401,7 +401,16 @@ class DriveAPI {
             supportsAllDrives: true,
           });
           console.log(`\n✅ Đã tìm thấy folder đích: ${targetInfo.data.name}`);
-          this.currentTargetFolderId = targetFolderId;
+          
+          // Tạo folder con với tên giống folder nguồn trong folder đích
+          console.log(`\n📁 Tạo folder "${folderInfo.data.name}" trong folder đích...`);
+          const newFolder = await this.findOrCreateFolder(
+            folderInfo.data.name,
+            targetFolderId
+          );
+          console.log(`✅ Đã tạo folder: "${newFolder.name}" (${newFolder.id})`);
+          
+          this.currentTargetFolderId = newFolder.id;
         } catch (error) {
           throw new Error(
             "Không thể truy cập folder đích. Vui lòng kiểm tra link và quyền truy cập"
