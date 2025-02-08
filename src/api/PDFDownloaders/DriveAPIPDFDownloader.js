@@ -493,11 +493,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           if (pageMatch) {
             const pageNum = parseInt(pageMatch[1]);
             if (!pageRequests.has(pageNum)) {
-              console.log(
-                `📄 [DriveAPIPDFDownloader] Phát hiện trang ${pageNum} (${
-                  isViewerNg ? "viewerng" : "viewer2"
-                })`
-              );
+             
               pageRequests.set(pageNum, request);
             }
           }
@@ -514,18 +510,8 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         if ((isViewerNg || isViewer2) && url.includes("page=")) {
           const status = response.status();
           const headers = response.headers();
-          console.log(`\n📥 [Response] ${url}`);
-          console.log(`Pattern: ${isViewerNg ? "viewerng" : "viewer2"}`);
-          console.log(`Status: ${status}`);
-
-          if (status === 200) {
-            console.log(`Content-Type: ${headers["content-type"]}`);
-            const pageMatch = url.match(/[?&]page=(\d+)/);
-            if (pageMatch) {
-              const pageNum = parseInt(pageMatch[1]);
-              console.log(`✅ Trang ${pageNum} response OK`);
-            }
-          }
+          
+          
         }
       });
 
@@ -633,7 +619,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async fastScroll(page, pageRequests) {
-    console.log(`\n🖱️ [DriveAPIPDFDownloader] Bắt đầu fast scroll...`);
+    console.log(`\n🔍 Bắt đầu quét trang...`);
 
     try {
       let lastPageCount = 0;
@@ -659,22 +645,11 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
         const currentPageCount = pageRequests.size;
 
-        // Log tiến trình mỗi lần scroll
-        console.log(
-          `⌨️ [Space ${
-            scrollAttempts * SPACE_PRESSES_PER_BATCH
-          }] Trang: ${currentPageCount}${
-            noNewPagesCount > 0
-              ? ` (Không có trang mới: ${noNewPagesCount})`
-              : ""
-          }`
-        );
-
         if (currentPageCount > lastPageCount) {
           console.log(
-            `✨ Phát hiện ${
+            `📄 Đã quét được: ${currentPageCount} trang (+${
               currentPageCount - lastPageCount
-            } trang mới (Tổng: ${currentPageCount})`
+            })`
           );
           lastPageCount = currentPageCount;
           noNewPagesCount = 0;
@@ -682,28 +657,16 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           noNewPagesCount++;
         }
 
-        // Dừng sớm nếu đã phát hiện được trang và không có trang mới
         if (currentPageCount > 0 && noNewPagesCount >= MAX_NO_NEW_PAGES) {
-          console.log(
-            `🎯 Đã phát hiện ${currentPageCount} trang và không có trang mới sau ${MAX_NO_NEW_PAGES} lần thử, dừng scroll...`
-          );
+          console.log(`✅ Hoàn tất quét với ${currentPageCount} trang`);
           break;
         }
       }
 
-      // Kiểm tra cuối cùng
       if (scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
-        console.log(`⚠️ Đã đạt giới hạn ${MAX_SCROLL_ATTEMPTS} lần scroll`);
+        console.log(`⚠️ Đã đạt giới hạn scroll`);
       }
 
-      console.log(
-        `✅ Hoàn tất với ${pageRequests.size} trang sau ${
-          scrollAttempts * SPACE_PRESSES_PER_BATCH
-        } lần nhấn Space`
-      );
-
-      // Kiểm tra cuối cùng với thời gian dài hơn
-      console.log(`\n🔍 Kiểm tra lần cuối...`);
       const finalPageCount = pageRequests.size;
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await page.keyboard.press("Space");
@@ -712,15 +675,11 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       const newPageCount = pageRequests.size;
       if (newPageCount > finalPageCount) {
         console.log(
-          `🌟 Phát hiện thêm ${
-            newPageCount - finalPageCount
-          } trang mới trong lần kiểm tra cuối`
+          `📄 Phát hiện thêm ${newPageCount - finalPageCount} trang mới`
         );
-      } else {
-        console.log(`✅ Không có trang mới trong lần kiểm tra cuối`);
       }
 
-      console.log(`📊 Tổng số trang: ${pageRequests.size}`);
+      console.log(`\n✅ Tổng số trang: ${pageRequests.size}`);
     } catch (error) {
       console.error(`❌ Lỗi khi scroll:`, error);
       throw error;

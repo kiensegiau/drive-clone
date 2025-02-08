@@ -2,23 +2,41 @@ const path = require("path");
 const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const axios = require("axios");
+const sharp = require("sharp");
 const ChromeManager = require("../ChromeManager.js");
 const os = require("os");
-const { sanitizePath } = require("../../utils/pathUtils");
+const {
+  sanitizePath,
+  getTempPath,
+  getDownloadsPath,
+  safeUnlink,
+  cleanupTempFiles,
+  ensureDirectoryExists,
+} = require("../../utils/pathUtils");
 const BasePDFDownloader = require("./BasePDFDownloader");
 
 class PDFDownloader extends BasePDFDownloader {
   constructor(driveAPI, tempDir, processLogger) {
     super();
     this.driveAPI = driveAPI;
-    this.tempDir = path.join(os.tmpdir(), "drive-clone-pdfs");
-    this.processLogger = processLogger;
+    this.processLogger = processLogger || console;
+
+    // Sử dụng tempDir từ tham số hoặc từ base class
+    try {
+      this.tempDir = tempDir || path.join(os.tmpdir(), "drive-clone-pdfs");
+      this.downloadDir = ensureDirectoryExists(getDownloadsPath());
+    } catch (error) {
+      console.error("❌ Lỗi khởi tạo thư mục:", error.message);
+      throw error;
+    }
+
     this.pageRequests = new Map();
     this.cookies = null;
     this.userAgent = null;
     this.browser = null;
     this.page = null;
     this.chromeManager = ChromeManager.getInstance("pdf");
+    this.chromeManager.resetCurrentProfile();
 
     // Đảm bảo downloadOnly luôn là true cho desktop version
     this.downloadOnly = true;
@@ -28,25 +46,48 @@ class PDFDownloader extends BasePDFDownloader {
     this.BATCH_SIZE = 20;
     this.MAX_CONCURRENT_BATCHES = 5;
 
+    // Thay đổi cách quản lý profile
+    this.currentProfileIndex = 0;
+    this.profiles = Array.from(
+      { length: this.MAX_CONCURRENT_CHECKS },
+      (_, i) => `pdf_profile_${i}`
+    );
+
     console.log(`📥 PDF Downloader mode: download only`);
 
-    // Khởi tạo thư mục temp
+    // Khởi tạo thư mục và dọn dẹp
     this.initTempDir();
+
+    // Khởi tạo ChromeManager
+    try {
+      this.chromeManager = ChromeManager.getInstance("pdf");
+      this.chromeManager.resetCurrentProfile();
+
+      // Đảm bảo thư mục profiles được tạo
+      const profilePath = this.chromeManager.getProfilePath(0);
+      if (!fs.existsSync(profilePath)) {
+        console.log("📁 Tạo thư mục profiles...");
+        ensureDirectoryExists(profilePath);
+      }
+    } catch (error) {
+      console.error("❌ Lỗi khởi tạo ChromeManager:", error.message);
+      throw error;
+    }
   }
 
   async initTempDir() {
     try {
-      if (!fs.existsSync(this.tempDir)) {
-        fs.mkdirSync(this.tempDir, { recursive: true });
+      // Đảm bảo thư mục temp tồn tại
+      if (!this.tempDir) {
+        this.tempDir = getTempPath();
       }
+      ensureDirectoryExists(this.tempDir);
 
-      // Tạo các thư mục con cần thiết
+      // Tạo các thư mục con
       const subDirs = ["cache", "images", "output"];
       for (const dir of subDirs) {
         const subDirPath = path.join(this.tempDir, dir);
-        if (!fs.existsSync(subDirPath)) {
-          fs.mkdirSync(subDirPath, { recursive: true });
-        }
+        ensureDirectoryExists(subDirPath);
       }
 
       // Kiểm tra quyền ghi
@@ -55,36 +96,32 @@ class PDFDownloader extends BasePDFDownloader {
       console.error("❌ Không thể tạo/ghi vào thư mục temp:", error.message);
       // Thử dùng thư mục temp khác
       this.tempDir = path.join(process.cwd(), "temp", "drive-clone-pdfs");
-      if (!fs.existsSync(this.tempDir)) {
-        fs.mkdirSync(this.tempDir, { recursive: true });
-      }
+      ensureDirectoryExists(this.tempDir);
+    }
+  }
+
+  async cleanupOldTempFiles() {
+    try {
+      await cleanupTempFiles(24); // Xóa files cũ hơn 24h
+    } catch (error) {
+      console.warn("⚠️ Lỗi dọn dẹp temp files:", error.message);
     }
   }
 
   async downloadPDF(fileId, fileName, targetPath) {
-    const startTime = new Date();
     const safeFileName = sanitizePath(fileName);
-
-    // Tạo đường dẫn tạm thời với timestamp
     const tempPath = path.join(
       this.tempDir,
       `temp_${Date.now()}_${safeFileName}`
     );
-
-    // Tạo đường dẫn đích cuối cùng trong thư mục đích
     const finalPath = path.join(targetPath, safeFileName);
-
-    const tempFiles = [tempPath];
 
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
       console.log(`📂 Thư mục đích: ${targetPath}`);
 
       // Tạo thư mục đích nếu chưa tồn tại
-      const finalDir = path.dirname(finalPath);
-      if (!fs.existsSync(finalDir)) {
-        fs.mkdirSync(finalDir, { recursive: true });
-      }
+      ensureDirectoryExists(path.dirname(finalPath));
 
       // Kiểm tra file đã tồn tại
       if (fs.existsSync(finalPath)) {
@@ -93,7 +130,7 @@ class PDFDownloader extends BasePDFDownloader {
           console.log(`⏭️ File đã tồn tại, bỏ qua: ${fileName}`);
           return { success: true, filePath: finalPath };
         } else {
-          fs.unlinkSync(finalPath);
+          await safeUnlink(finalPath);
         }
       }
 
@@ -137,29 +174,14 @@ class PDFDownloader extends BasePDFDownloader {
       return { success: false, error: error.message };
     } finally {
       // Cleanup temp files
-      for (const file of tempFiles) {
-        try {
-          if (fs.existsSync(file)) {
-            await fs.promises.unlink(file);
-            console.log(`🧹 Đã xóa file tạm: ${file}`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ Không thể xóa file tạm: ${file}`);
-        }
-      }
+      await safeUnlink(tempPath);
     }
   }
 
   async downloadFromDriveAPI(fileId, outputPath) {
-    const MAX_UPLOAD_RETRIES = 5;
-    const RETRY_DELAY = 5000;
-
     try {
       // Đảm bảo thư mục chứa file đích tồn tại
-      const outputDir = path.dirname(outputPath);
-      if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-      }
+      ensureDirectoryExists(path.dirname(outputPath));
 
       console.log(`\n📥 Bắt đầu tải PDF từ Drive API...`);
 
@@ -207,7 +229,6 @@ class PDFDownloader extends BasePDFDownloader {
                 const stats = await fs.promises.stat(outputPath);
                 const processedSize = stats.size;
 
-                // Luôn trả về success và không upload
                 resolve({
                   success: true,
                   filePath: outputPath,
@@ -232,393 +253,396 @@ class PDFDownloader extends BasePDFDownloader {
     }
   }
 
-  async captureAndCreatePDF(
-    fileId,
-    outputPath,
-    targetFolderId,
-    profileId = null
-  ) {
-    const tempFiles = []; // Track temp files for cleanup
+  async downloadImage(url, pageNum, cookies, userAgent) {
+    const sessionId =
+      Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
 
     try {
-      this.pageRequests.clear();
+      if (!cookies || !userAgent) {
+        throw new Error("Thiếu cookies hoặc userAgent");
+      }
 
-      this.browser = await this.chromeManager.getBrowser();
+      const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
+      const maxRetries = 2;
+      let lastError;
 
-      const page = await this.browser.newPage();
-      this.page = page;
-      console.log("✅ Đã tạo tab mới");
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const response = await axios({
+            method: "get",
+            url: url,
+            responseType: "arraybuffer",
+            timeout: 10000,
+            headers: {
+              Cookie: cookieStr,
+              "User-Agent": userAgent,
+              Referer: "https://drive.google.com/",
+              Accept: "image/webp,image/apng,image/*,*/*;q=0.8",
+            },
+          });
 
+          // Xác định định dạng ảnh từ Content-Type
+          const contentType = response.headers["content-type"];
+          let extension = "png"; // Mặc định là png
+
+          if (contentType) {
+            if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+              extension = "jpg";
+            } else if (contentType.includes("webp")) {
+              extension = "webp";
+            }
+          }
+
+          // Tạo tên file với đuôi phù hợp
+          const imagePath = path.join(
+            this.tempDir,
+            "images",
+            `page_${sessionId}_${String(pageNum).padStart(3, "0")}.${extension}`
+          );
+
+          // Lưu file
+          await fs.promises.writeFile(imagePath, response.data);
+          console.log(`✅ Đã tải trang ${pageNum} (${extension})`);
+          return imagePath;
+        } catch (err) {
+          lastError = err;
+          if (attempt < maxRetries) {
+            console.log(
+              `🔄 Thử lại trang ${pageNum} (${attempt}/${maxRetries})...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+          }
+        }
+      }
+
+      throw lastError;
+    } catch (error) {
+      console.warn(`⚠️ Không thể tải trang ${pageNum}: ${error.message}`);
+      return null;
+    }
+  }
+
+  async captureAndCreatePDF(fileId, outputPath, targetPath, fileName) {
+    const downloadedImages = [];
+    let browser = null;
+    let page = null;
+
+    try {
+      // Đảm bảo ChromeManager đã được khởi tạo đúng
+      if (!this.chromeManager) {
+        this.chromeManager = ChromeManager.getInstance("pdf");
+        this.chromeManager.resetCurrentProfile();
+      }
+
+      console.log(`🌐 Lấy browser instance...`);
+      browser = await this.chromeManager.getBrowser();
+
+      // Đợi một chút để Chrome khởi động hoàn toàn
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      console.log(`📑 Tạo tab mới...`);
+      page = await browser.newPage();
+
+      // Cấu hình page
+      await page.setViewport({ width: 1280, height: 800 });
       await page.setCacheEnabled(false);
       await page.setRequestInterception(true);
 
+      // Xử lý request interception
+      const pageRequests = new Map();
       page.on("request", (request) => {
         const url = request.url();
-        const resourceType = request.resourceType();
 
         if (url.includes("accounts.google.com") || url.includes("oauth")) {
           request.continue();
           return;
         }
 
-        if (resourceType in ["image", "stylesheet", "font", "media"]) {
-          if (!url.includes("viewer2/prod") || !url.includes("page=")) {
-            request.abort();
-            return;
-          }
-        }
+        // Kiểm tra cả 2 pattern: viewerng/img và viewer2/prod
+        const isViewerNg = url.includes("viewerng/img");
+        const isViewer2 = url.includes("viewer2/prod");
 
-        if (url.includes("viewer2/prod") && url.includes("page=")) {
-          const pageMatch = url.match(/page=(\d+)/);
+        if ((isViewerNg || isViewer2) && url.includes("page=")) {
+          const pageMatch = url.match(/[?&]page=(\d+)/);
           if (pageMatch) {
             const pageNum = parseInt(pageMatch[1]);
-            if (!this.pageRequests.has(pageNum)) {
-              this.pageRequests.set(pageNum, request);
-              console.log(`🔍 Trang ${pageNum}`);
+            if (!pageRequests.has(pageNum)) {
+              pageRequests.set(pageNum, request);
             }
           }
         }
         request.continue();
       });
 
-      const pdfUrl = `https://drive.google.com/file/d/${fileId}/view`;
-      await Promise.all([
-        page.goto(pdfUrl, { waitUntil: "networkidle0", timeout: 30000 }),
-      ]);
-      console.log("✅ Đã load trang xong");
+      // Load PDF viewer
+      console.log(`\n🌐 Mở PDF viewer...`);
+      await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
+        waitUntil: "networkidle0",
+        timeout: 60000,
+      });
 
-      await Promise.all([
-        page.cookies().then((cookies) => {
-          this.cookies = cookies;
-        }),
-        page
-          .evaluate(() => navigator.userAgent)
-          .then((userAgent) => {
-            this.userAgent = userAgent;
-          }),
-      ]);
+      // Scroll để load tất cả trang
+      console.log(`\n📜 Bắt đầu scroll...`);
+      await this.fastScroll(page, pageRequests);
+      console.log(`✅ Đã scroll xong`);
+      console.log(`📊 Số trang đã phát hiện: ${pageRequests.size}`);
 
-      console.log("\n🚀 Quét PDF...");
-      await this.fastScroll(page);
+      // Lấy cookies và userAgent
+      const cookies = await page.cookies();
+      const userAgent = await page.evaluate(() => navigator.userAgent);
 
-      console.log(`\n📸 Tải ${this.pageRequests.size} trang...`);
-      const downloadedImages = [];
+      // Đóng page sau khi lấy được thông tin cần thiết
+      console.log(`🔒 Đóng tab sau khi lấy thông tin...`);
+      await page.close();
+      page = null;
 
-      const requests = Array.from(this.pageRequests.entries()).sort(
+      // Tải song song tất cả các trang
+      console.log(`\n📥 Tải ${pageRequests.size} trang...`);
+
+      const requests = Array.from(pageRequests.entries()).sort(
         ([a], [b]) => a - b
       );
 
-      const results = await Promise.all(
-        requests.map(([pageNum, request]) =>
-          this.downloadImage(
+      // Tải song song với Promise.all
+      const downloadPromises = requests.map(async ([pageNum, request]) => {
+        try {
+          console.log(`📄 Tải trang ${pageNum}...`);
+          const image = await this.downloadImage(
             request.url(),
             pageNum,
-            this.cookies,
-            this.userAgent,
-            profileId
-          )
-        )
-      );
-
-      downloadedImages.push(...results.filter(Boolean));
-      tempFiles.push(...downloadedImages); // Track for cleanup
-
-      console.log(`\n📑 Tạo PDF...`);
-      await this.createPDFFromImages(downloadedImages, outputPath, profileId);
-
-      const stats = await fs.promises.stat(outputPath);
-      const fileSizeMB = (stats.size / (1024 * 1024)).toFixed(2);
-      console.log(`\n📦 File PDF đã tạo: ${fileSizeMB}MB`);
-
-      // Sửa lại phần kiểm tra downloadOnly
-      if (this.driveAPI?.downloadOnly === false && targetFolderId) {
-        console.log(`\n📤 Đang upload lên Drive...`);
-        await this.driveAPI.uploadFile(outputPath, targetFolderId);
-        console.log(`✨ Upload hoàn tất!`);
-      } else {
-        console.log(`✅ Đã lưu PDF vào: ${outputPath}`);
-      }
-
-      return {
-        success: true,
-        filePath: outputPath,
-        fileSize: fileSizeMB,
-      };
-    } catch (error) {
-      console.error(`\n❌ Lỗi:`, error.message);
-      return {
-        success: false,
-        error: error.message,
-      };
-    } finally {
-      // Đóng Chrome trong finally để đảm bảo luôn được thực thi
-      if (this.browser) {
-        await this.browser.close();
-        this.browser = null;
-        console.log("🔒 Đã đóng Chrome");
-      }
-    }
-
-    // Cleanup temp files
-    console.log(`\n🧹 Dọn dẹp files tạm...`);
-    for (const tempFile of tempFiles) {
-      try {
-        if (fs.existsSync(tempFile)) {
-          await fs.promises.unlink(tempFile);
-          console.log(`✅ Đã xóa: ${tempFile}`);
-        }
-      } catch (error) {
-        console.error(`⚠️ Không thể xóa: ${tempFile}:`, error.message);
-      }
-    }
-  }
-
-  async fastScroll(page) {
-    const scrollStep = 1000;
-    let lastSize = 0;
-    let noNewRequests = 0;
-    const MAX_NO_NEW_REQUESTS = 5; // Tăng số lần kiểm tra không có request mới
-
-    console.log("\n🚀 Quét PDF...");
-
-    // Cuộn xuống cho đến khi không còn request mới
-    while (noNewRequests < MAX_NO_NEW_REQUESTS) {
-      await Promise.all([
-        page.evaluate((step) => window.scrollBy(0, step), scrollStep),
-        page.keyboard.press("PageDown"),
-        new Promise((r) => setTimeout(r, 100)), // Tăng delay lên để đảm bảo load
-      ]);
-
-      if (this.pageRequests.size > lastSize) {
-        const newRequests = this.pageRequests.size - lastSize;
-        console.log(
-          `📄 Phát hiện ${newRequests} trang mới (Tổng: ${this.pageRequests.size})`
-        );
-        lastSize = this.pageRequests.size;
-        noNewRequests = 0;
-      } else {
-        noNewRequests++;
-        if (noNewRequests > 0) {
-          console.log(
-            `⏳ Kiểm tra lần ${noNewRequests}/${MAX_NO_NEW_REQUESTS}`
+            cookies,
+            userAgent
           );
+          if (image) {
+            downloadedImages[pageNum] = image;
+            console.log(`✅ Trang ${pageNum} OK`);
+          }
+        } catch (error) {
+          console.warn(`⚠️ Lỗi trang ${pageNum}: ${error.message}`);
         }
-      }
-    }
-
-    // Cuộn lên đầu và xuống cuối để đảm bảo
-    await page.evaluate(() => {
-      window.scrollTo(0, 0);
-      setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 500);
-    });
-    await new Promise((r) => setTimeout(r, 1000));
-
-    // Kiểm tra lần cuối
-    const finalCheck = this.pageRequests.size;
-    if (finalCheck > lastSize) {
-      console.log(
-        `📄 Phát hiện thêm ${finalCheck - lastSize} trang sau kiểm tra cuối`
-      );
-    }
-
-    console.log(`\n✅ Hoàn tất quét: ${this.pageRequests.size} trang`);
-  }
-
-  async downloadImage(url, pageNum, cookies, userAgent, profileId) {
-    const imagePath = path.join(
-      this.tempDir,
-      `page_${profileId || "default"}_${Date.now()}_${pageNum}.png`
-    );
-
-    try {
-      // Đảm bảo thư mục tồn tại
-      const imageDir = path.dirname(imagePath);
-      if (!fs.existsSync(imageDir)) {
-        fs.mkdirSync(imageDir, { recursive: true });
-      }
-
-      const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-
-      const response = await axios({
-        method: "get",
-        url: url,
-        responseType: "arraybuffer",
-        timeout: 15000,
-        headers: {
-          Cookie: cookieStr,
-          "User-Agent": userAgent,
-          Accept: "image/webp,image/apng,image/*,*/*;q=0.8",
-          Referer: "https://drive.google.com/",
-          Origin: "https://drive.google.com",
-          "sec-fetch-site": "same-origin",
-          "sec-fetch-mode": "cors",
-          "sec-fetch-dest": "image",
-          Connection: "keep-alive",
-        },
-        withCredentials: true,
       });
 
-      await fs.promises.writeFile(imagePath, response.data);
-      console.log(`✓ ${pageNum}`);
-      return imagePath;
-    } catch (error) {
-      console.error(`⨯ ${pageNum}: ${error.message}`);
-      return null;
-    }
-  }
+      // Chờ tất cả hoàn thành
+      await Promise.all(downloadPromises);
 
-  async killChrome() {
-    try {
-      if (process.platform === "win32") {
-        try {
-          require("child_process").execSync("taskkill /F /IM chrome.exe", {
-            stdio: "ignore",
-          });
-        } catch (e) {
-          try {
-            require("child_process").execSync("taskkill /F /IM chrome.exe /T", {
-              stdio: "ignore",
-            });
-          } catch (e2) {
-            // Bỏ qua nếu không tìm thấy process
-          }
-        }
-      } else {
-        require("child_process").execSync("pkill -f chrome", {
-          stdio: "ignore",
-        });
+      // Tạo PDF từ các ảnh đã tải thành công
+      const validImages = downloadedImages.filter(Boolean);
+      if (validImages.length === 0) {
+        throw new Error("Không tải được trang nào");
       }
-    } catch (error) {
-      // Bỏ qua lỗi
-    }
 
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
+      console.log(
+        `\n📑 Tạo PDF từ ${validImages.length}/${pageRequests.size} trang...`
+      );
+      await this.createPDFFromImages(validImages, outputPath);
 
-  async createPDFFromImages(downloadedImages, outputPath, profileId) {
-    const doc = new PDFDocument({
-      autoFirstPage: false,
-      margin: 0,
-    });
-
-    const pdfStream = fs.createWriteStream(outputPath);
-    doc.pipe(pdfStream);
-
-    // Sort images by page number, extract from filename
-    const sortedImages = downloadedImages.filter(Boolean).sort((a, b) => {
-      const pageA = parseInt(a.match(/_(\d+)\.png$/)[1]);
-      const pageB = parseInt(b.match(/_(\d+)\.png$/)[1]);
-      return pageA - pageB;
-    });
-
-    for (const imagePath of sortedImages) {
-      try {
-        const stats = await fs.promises.stat(imagePath);
-        if (stats.size === 0) {
-          console.error(`⚠️ Bỏ qua file rỗng: ${imagePath}`);
-          continue;
-        }
-
-        const imageBuffer = await fs.promises.readFile(imagePath);
-
-        const img = doc.openImage(imageBuffer);
-        doc.addPage({ size: [img.width, img.height] });
-        doc.image(img, 0, 0);
-
-        console.log(`✅ Đã thêm trang ${imagePath}`);
-      } catch (error) {
-        console.error(`⨯ Lỗi thêm trang ${imagePath}: ${error.message}`);
+      if (!fs.existsSync(outputPath)) {
+        throw new Error(`PDF không được tạo tại: ${outputPath}`);
       }
-    }
-
-    doc.end();
-
-    await new Promise((resolve) => pdfStream.on("finish", resolve));
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  async downloadToLocal(fileId, fileName, targetDir) {
-    try {
-      console.log(`📑 Tải PDF: ${fileName}`);
-
-      const safeFileName = sanitizePath(fileName);
-      const outputPath = path.join(targetDir, safeFileName);
-
-      // Thử tải qua API trước
-      try {
-        const response = await this.driveAPI.drive.files.get(
-          { fileId, alt: "media" },
-          { responseType: "stream" }
-        );
-
-        await new Promise((resolve, reject) => {
-          const dest = fs.createWriteStream(outputPath);
-          let progress = 0;
-
-          response.data
-            .on("data", (chunk) => {
-              progress += chunk.length;
-              process.stdout.write(
-                `\r⏳ Đã tải: ${(progress / 1024 / 1024).toFixed(2)}MB`
-              );
-            })
-            .on("end", () => {
-              process.stdout.write("\n");
-              console.log("✅ Tải PDF hoàn tất");
-              resolve();
-            })
-            .on("error", (err) => reject(err))
-            .pipe(dest);
-        });
-
-        return { success: true, filePath: outputPath };
-      } catch (error) {
-        // Nếu không tải được qua API, thử capture
-        if (
-          error?.error?.code === 403 ||
-          error.message.includes("cannotDownloadFile")
-        ) {
-          console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
-          return await this.captureAndSaveLocal(fileId, outputPath);
-        }
-        throw error;
-      }
-    } catch (error) {
-      console.error(`❌ Lỗi tải PDF:`, error.message);
-      return { success: false, error: error.message };
-    }
-  }
-
-  async captureAndSaveLocal(fileId, outputPath) {
-    let browser;
-    const tempFiles = [];
-
-    try {
-      browser = await this.chromeManager.getBrowser();
-      const page = await browser.newPage();
-
-      // Capture từng trang PDF
-      const images = await this.capturePDFPages(page, fileId);
-
-      // Tạo PDF từ các ảnh đã capture
-      await this.createPDFFromImages(images, outputPath);
 
       return { success: true, filePath: outputPath };
     } catch (error) {
-      console.error(`❌ Lỗi capture PDF:`, error.message);
+      console.error(`\n❌ Lỗi xử lý:`, error.message);
       return { success: false, error: error.message };
     } finally {
-      if (browser) await browser.close();
-      // Cleanup temp files
-      for (const file of tempFiles) {
-        try {
-          if (fs.existsSync(file)) {
-            fs.unlinkSync(file);
+      // Chỉ đóng page, KHÔNG đóng browser
+      if (page) {
+        await page.close().catch(() => {});
+      }
+
+      // Dọn dẹp images
+      try {
+        for (const image of downloadedImages) {
+          if (image && fs.existsSync(image)) {
+            await fs.promises.unlink(image);
           }
-        } catch (error) {
-          console.warn(`⚠️ Không thể xóa file tạm: ${file}`);
+        }
+      } catch (err) {
+        console.warn(`⚠️ Lỗi khi dọn dẹp:`, err.message);
+      }
+    }
+  }
+
+  async fastScroll(page, pageRequests) {
+    console.log(`\n🔍 Bắt đầu quét trang...`);
+
+    try {
+      let lastPageCount = 0;
+      let noNewPagesCount = 0;
+      const MAX_NO_NEW_PAGES = 10;
+      const SCROLL_INTERVAL = 200;
+      const SPACE_PRESSES_PER_BATCH = 2;
+      const BATCH_INTERVAL = 500;
+      const MAX_SCROLL_ATTEMPTS = 100;
+      let scrollAttempts = 0;
+
+      while (
+        noNewPagesCount < MAX_NO_NEW_PAGES &&
+        scrollAttempts < MAX_SCROLL_ATTEMPTS
+      ) {
+        for (let i = 0; i < SPACE_PRESSES_PER_BATCH; i++) {
+          await page.keyboard.press("Space");
+          await new Promise((resolve) => setTimeout(resolve, SCROLL_INTERVAL));
+        }
+
+        scrollAttempts++;
+        await new Promise((resolve) => setTimeout(resolve, BATCH_INTERVAL));
+
+        const currentPageCount = pageRequests.size;
+
+        if (currentPageCount > lastPageCount) {
+          console.log(
+            `📄 Đã quét được: ${currentPageCount} trang (+${
+              currentPageCount - lastPageCount
+            })`
+          );
+          lastPageCount = currentPageCount;
+          noNewPagesCount = 0;
+        } else {
+          noNewPagesCount++;
+        }
+
+        if (currentPageCount > 0 && noNewPagesCount >= MAX_NO_NEW_PAGES) {
+          console.log(`✅ Hoàn tất quét với ${currentPageCount} trang`);
+          break;
         }
       }
+
+      if (scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
+        console.log(`⚠️ Đã đạt giới hạn scroll`);
+      }
+
+      const finalPageCount = pageRequests.size;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await page.keyboard.press("Space");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const newPageCount = pageRequests.size;
+      if (newPageCount > finalPageCount) {
+        console.log(
+          `📄 Phát hiện thêm ${newPageCount - finalPageCount} trang mới`
+        );
+      }
+
+      console.log(`\n✅ Tổng số trang: ${pageRequests.size}`);
+    } catch (error) {
+      console.error(`❌ Lỗi khi scroll:`, error);
+      throw error;
+    }
+  }
+
+  async createPDFFromImages(downloadedImages, outputPath) {
+    try {
+      // Tạo tên file an toàn nhưng giữ nguyên dấu
+      const outputDir = path.dirname(outputPath);
+      const fileName = path.basename(outputPath);
+      // Chỉ loại bỏ ký tự không hợp lệ trong tên file
+      const safeFileName = fileName.replace(/[<>:"/\\|?*]/g, "");
+      const safeOutputPath = path.join(outputDir, safeFileName);
+
+      console.log(
+        `\n📑 Tạo PDF từ ${downloadedImages.filter(Boolean).length}/${
+          downloadedImages.length
+        } trang...`
+      );
+
+      // Đảm bảo thư mục tồn tại
+      ensureDirectoryExists(outputDir);
+
+      const doc = new PDFDocument({
+        autoFirstPage: false,
+        margin: 0,
+        bufferPages: true,
+      });
+
+      // Tạo write stream và promise để theo dõi khi nào hoàn thành
+      const writeStream = fs.createWriteStream(safeOutputPath);
+      const streamFinished = new Promise((resolve, reject) => {
+        writeStream.on("finish", resolve);
+        writeStream.on("error", reject);
+      });
+
+      doc.pipe(writeStream);
+
+      // Xử lý từng ảnh
+      for (const imagePath of downloadedImages.filter(Boolean).sort((a, b) => {
+        const pageA = parseInt(a.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
+        const pageB = parseInt(b.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
+        return pageA - pageB;
+      })) {
+        try {
+          if (!fs.existsSync(imagePath)) {
+            console.warn(`⚠️ Không tìm thấy file ảnh: ${imagePath}`);
+            continue;
+          }
+
+          console.log(`📄 Đang xử lý ảnh: ${path.basename(imagePath)}`);
+          let imageBuffer = await fs.promises.readFile(imagePath);
+
+          // Nếu là WebP, chuyển sang PNG
+          if (imagePath.endsWith(".webp")) {
+            console.log(`🔄 Chuyển đổi WebP sang PNG...`);
+            imageBuffer = await sharp(imageBuffer).png().toBuffer();
+          }
+
+          const img = doc.openImage(imageBuffer);
+          doc.addPage({ size: [img.width, img.height] });
+          doc.image(img, 0, 0);
+          console.log(`✅ Đã xử lý xong trang`);
+        } catch (error) {
+          console.warn(`⚠️ Lỗi xử lý ảnh ${imagePath}:`, error.message);
+        }
+      }
+
+      // Kết thúc document và đợi stream hoàn thành
+      doc.end();
+      await streamFinished;
+
+      // Kiểm tra file đã tạo
+      if (!fs.existsSync(safeOutputPath)) {
+        throw new Error(`PDF không được tạo tại: ${safeOutputPath}`);
+      }
+
+      const stats = fs.statSync(safeOutputPath);
+      if (stats.size === 0) {
+        throw new Error("File PDF được tạo nhưng rỗng");
+      }
+
+      console.log(
+        `✅ Đã tạo PDF: ${path.basename(safeOutputPath)} (${(
+          stats.size /
+          1024 /
+          1024
+        ).toFixed(2)}MB)`
+      );
+      return safeOutputPath;
+    } catch (error) {
+      console.error(`\n❌ Lỗi tạo PDF:`, error.message);
+      throw error;
+    }
+  }
+
+  async cleanup() {
+    try {
+      // Đóng browser và page
+      if (this.page) {
+        await this.page.close().catch(() => {});
+        this.page = null;
+      }
+      if (this.browser) {
+        await this.browser.close().catch(() => {});
+        this.browser = null;
+      }
+
+      // Reset các biến
+      this.pageRequests.clear();
+      this.cookies = null;
+      this.userAgent = null;
+
+      // Dọn dẹp temp files
+      await this.cleanupOldTempFiles();
+    } catch (error) {
+      console.warn(`⚠️ Lỗi cleanup:`, error.message);
     }
   }
 }
