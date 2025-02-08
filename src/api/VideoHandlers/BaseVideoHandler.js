@@ -11,7 +11,7 @@ const {
   getVideoTempPath,
   safeUnlink,
   cleanupTempFiles,
-  ensureDirectoryExists
+  ensureDirectoryExists,
 } = require("../../utils/pathUtils");
 const https = require("https");
 const { pipeline } = require("stream");
@@ -76,16 +76,16 @@ class BaseVideoHandler {
     try {
       await this.chromeManager.killAll();
     } catch (error) {
-      console.error('❌ Lỗi đóng Chrome:', error.message);
+      console.error("❌ Lỗi đóng Chrome:", error.message);
     }
   }
 
   getVideoQuality(itag) {
     const qualityMap = {
       37: 1080, // 1080p
-      22: 720,  // 720p
-      59: 480,  // 480p
-      18: 360,  // 360p
+      22: 720, // 720p
+      59: 480, // 480p
+      18: 360, // 360p
     };
     return qualityMap[itag] || 0;
   }
@@ -103,22 +103,27 @@ class BaseVideoHandler {
 
     try {
       if (!currentUrl && fileId) {
-        currentUrl = await this.findVideoUrl(fileId, fileName, depth, profileId);
+        currentUrl = await this.findVideoUrl(
+          fileId,
+          fileName,
+          depth,
+          profileId
+        );
       }
 
       if (!currentUrl) {
-        throw new Error('Không tìm thấy URL video');
+        throw new Error("Không tìm thấy URL video");
       }
 
       console.log(`${indent}📥 Bắt đầu tải chunks...`);
-      
+
       const response = await axios({
-        method: 'get',
+        method: "get",
         url: currentUrl,
-        responseType: 'stream'
+        responseType: "stream",
       });
 
-      const totalSize = parseInt(response.headers['content-length'], 10);
+      const totalSize = parseInt(response.headers["content-length"], 10);
       let downloadedSize = 0;
       let lastLogTime = Date.now();
       const logInterval = 1000; // Log mỗi giây
@@ -127,10 +132,10 @@ class BaseVideoHandler {
         const writer = fs.createWriteStream(outputPath);
         response.data.pipe(writer);
 
-        response.data.on('data', (chunk) => {
+        response.data.on("data", (chunk) => {
           downloadedSize += chunk.length;
           const now = Date.now();
-          
+
           if (now - lastLogTime >= logInterval) {
             const progress = (downloadedSize / totalSize) * 100;
             console.log(`${indent}⏳ Đã tải: ${progress.toFixed(1)}%`);
@@ -138,8 +143,8 @@ class BaseVideoHandler {
           }
         });
 
-        writer.on('finish', resolve);
-        writer.on('error', reject);
+        writer.on("finish", resolve);
+        writer.on("error", reject);
       });
 
       console.log(`${indent}✅ Đã tải xong video`);
@@ -217,7 +222,9 @@ class BaseVideoHandler {
           return true;
         }
 
-        console.log(`⏳ Video đang được xử lý... (${attempts + 1}/${maxAttempts})`);
+        console.log(
+          `⏳ Video đang được xử lý... (${attempts + 1}/${maxAttempts})`
+        );
         await new Promise((resolve) => setTimeout(resolve, 5000));
         attempts++;
       } catch (error) {
@@ -313,7 +320,9 @@ class BaseVideoHandler {
 
   async processQueueConcurrently() {
     try {
-      console.log(`\n🎬 Bắt đầu xử lý ${this.queue.length} videos (${this.MAX_CONCURRENT_DOWNLOADS} videos song song)`);
+      console.log(
+        `\n🎬 Bắt đầu xử lý ${this.queue.length} videos (${this.MAX_CONCURRENT_DOWNLOADS} videos song song)`
+      );
 
       await cleanupTempFiles(24);
 
@@ -362,7 +371,7 @@ class BaseVideoHandler {
       console.log(`${indent}📥 Bắt đầu tải: ${file.name}`);
 
       await this.downloadVideoWithChunks(videoUrl, outputPath);
-      
+
       console.log(`${indent}📤 Đang upload: ${file.name}`);
       await this.uploadFile(outputPath, file.name, targetFolderId, "video/mp4");
 
@@ -384,7 +393,7 @@ class BaseVideoHandler {
 
     try {
       console.log(`${indent}🔍 Tìm URL video cho: ${fileName}`);
-      
+
       // Khởi tạo browser
       browser = await this.chromeManager.getBrowser(profileId);
       const page = await browser.newPage();
@@ -395,9 +404,9 @@ class BaseVideoHandler {
 
       // Theo dõi requests
       const videoUrls = [];
-      page.on('request', request => {
+      page.on("request", (request) => {
         const url = request.url();
-        if (url.includes('videoplayback') && url.includes('itag=')) {
+        if (url.includes("videoplayback") && url.includes("itag=")) {
           videoUrls.push(url);
         }
         request.continue();
@@ -405,14 +414,14 @@ class BaseVideoHandler {
 
       // Truy cập trang video
       await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-        waitUntil: 'networkidle0',
-        timeout: 30000
+        waitUntil: "networkidle0",
+        timeout: 30000,
       });
 
       // Tìm URL chất lượng cao nhất
       let bestUrl = null;
       let bestQuality = 0;
-      
+
       for (const url of videoUrls) {
         const itag = this.getItagFromUrl(url);
         const quality = this.getVideoQuality(itag);
@@ -427,8 +436,7 @@ class BaseVideoHandler {
         return bestUrl;
       }
 
-      throw new Error('Không tìm thấy URL video phù hợp');
-
+      throw new Error("Không tìm thấy URL video phù hợp");
     } catch (error) {
       console.error(`${indent}❌ Lỗi tìm URL video:`, error.message);
       throw error;
@@ -447,10 +455,10 @@ class BaseVideoHandler {
     try {
       const browser = await this.chromeManager.getBrowser(profileId);
       const page = await browser.newPage();
-      
-      await page.goto('https://drive.google.com', {
-        waitUntil: 'networkidle0',
-        timeout: 30000
+
+      await page.goto("https://drive.google.com", {
+        waitUntil: "networkidle0",
+        timeout: 30000,
       });
 
       const cookies = await page.cookies();
@@ -459,7 +467,7 @@ class BaseVideoHandler {
       await browser.close();
       return cookies;
     } catch (error) {
-      console.error('❌ Lỗi refresh cookies:', error.message);
+      console.error("❌ Lỗi refresh cookies:", error.message);
       throw error;
     }
   }
@@ -477,4 +485,4 @@ class BaseVideoHandler {
   }
 }
 
-module.exports = BaseVideoHandler; 
+module.exports = BaseVideoHandler;

@@ -4,34 +4,35 @@ const path = require("path");
 const fs = require("fs");
 const PDFDownloader = require("./PDFDownloaders/DesktopPDFDownloader");
 const VideoHandler = require("./VideoHandlers/DesktopVideoHandler");
-const { getConfigPath } = require('../utils/pathUtils');
+const { getConfigPath } = require("../utils/pathUtils");
 const readline = require("readline");
 const { sanitizePath } = require("../utils/pathUtils");
-
 
 class DriveAPI {
   constructor(targetPath, maxConcurrent = 3) {
     try {
-      const isPkg = typeof process.pkg !== 'undefined';
-      const isProduction = process.env.NODE_ENV === 'production';
-      
-      const rootDir = isPkg 
-        ? path.dirname(process.execPath) 
-        : isProduction 
-          ? path.join(__dirname, '..', '..') 
-          : process.cwd();
-      
-      this.BASE_DIR = path.isAbsolute(targetPath) 
-        ? targetPath 
+      const isPkg = typeof process.pkg !== "undefined";
+      const isProduction = process.env.NODE_ENV === "production";
+
+      const rootDir = isPkg
+        ? path.dirname(process.execPath)
+        : isProduction
+        ? path.join(__dirname, "..", "..")
+        : process.cwd();
+
+      this.BASE_DIR = path.isAbsolute(targetPath)
+        ? targetPath
         : path.resolve(rootDir, targetPath);
 
-      const configDir = isPkg 
-        ? path.join(rootDir, 'config')
-        : path.join(process.cwd(), 'config');
-      
+      const configDir = isPkg
+        ? path.join(rootDir, "config")
+        : path.join(process.cwd(), "config");
+
       console.log(`\n🔧 Thông tin môi trường:`);
-      console.log(`- Chạy từ exe: ${isPkg ? 'Có' : 'Không'}`);
-      console.log(`- Môi trường: ${isProduction ? 'Production' : 'Development'}`);
+      console.log(`- Chạy từ exe: ${isPkg ? "Có" : "Không"}`);
+      console.log(
+        `- Môi trường: ${isProduction ? "Production" : "Development"}`
+      );
       console.log(`- Thư mục gốc: ${rootDir}`);
       console.log(`- Thư mục config: ${configDir}`);
       console.log(`- Thư mục đích: ${this.BASE_DIR}`);
@@ -40,13 +41,13 @@ class DriveAPI {
 
       let credentials, SCOPES;
       try {
-        const authConfig = require(path.join(configDir, 'auth.js'));
+        const authConfig = require(path.join(configDir, "auth.js"));
         credentials = authConfig.credentials;
         SCOPES = authConfig.SCOPES;
       } catch (configError) {
-        console.error('❌ Lỗi load config:', configError.message);
+        console.error("❌ Lỗi load config:", configError.message);
         if (isPkg) {
-          const altConfigPath = path.join(process.cwd(), 'config', 'auth.js');
+          const altConfigPath = path.join(process.cwd(), "config", "auth.js");
           console.log(`↪️ Thử load config từ: ${altConfigPath}`);
           const authConfig = require(altConfigPath);
           credentials = authConfig.credentials;
@@ -58,16 +59,16 @@ class DriveAPI {
 
       this.credentials = credentials;
       this.SCOPES = SCOPES;
-      
+
       try {
         this.BASE_DIR = path.normalize(this.BASE_DIR);
-        
+
         const parts = this.BASE_DIR.split(path.sep);
-        let currentPath = '';
-        
+        let currentPath = "";
+
         for (let i = 0; i < parts.length; i++) {
           const part = parts[i];
-          if (i === 0 && part.endsWith(':')) {
+          if (i === 0 && part.endsWith(":")) {
             currentPath = part + path.sep;
             continue;
           }
@@ -85,19 +86,22 @@ class DriveAPI {
 
         fs.accessSync(this.BASE_DIR, fs.constants.W_OK);
         console.log("✅ Đã tạo/kiểm tra thư mục đích thành công");
-
       } catch (dirError) {
         console.error(`❌ Lỗi với thư mục đích: ${dirError.message}`);
-        
+
         let documentsPath;
         if (isPkg) {
-          documentsPath = path.join(rootDir, 'drive-clone-downloads');
+          documentsPath = path.join(rootDir, "drive-clone-downloads");
         } else {
-          documentsPath = path.join(require('os').homedir(), 'Documents', 'drive-clone');
+          documentsPath = path.join(
+            require("os").homedir(),
+            "Documents",
+            "drive-clone"
+          );
         }
 
         console.log(`↪️ Thử tạo tại: ${documentsPath}`);
-        
+
         try {
           if (!fs.existsSync(documentsPath)) {
             fs.mkdirSync(documentsPath, { recursive: true });
@@ -106,8 +110,11 @@ class DriveAPI {
           this.BASE_DIR = documentsPath;
           console.log(`✅ Đã tạo thư mục tại: ${this.BASE_DIR}`);
         } catch (fallbackError) {
-          console.error(`❌ Không thể tạo thư mục fallback:`, fallbackError.message);
-          throw new Error('Không thể tạo thư mục đích ở bất kỳ đâu');
+          console.error(
+            `❌ Không thể tạo thư mục fallback:`,
+            fallbackError.message
+          );
+          throw new Error("Không thể tạo thư mục đích ở bất kỳ đâu");
         }
       }
 
@@ -127,17 +134,17 @@ class DriveAPI {
     }
   }
 
-async  ensureDirectoryExists(dirPath) {
+  async ensureDirectoryExists(dirPath) {
     try {
       const normalizedPath = path.normalize(dirPath);
       const parts = normalizedPath.split(path.sep);
-      let currentPath = '';
-      
+      let currentPath = "";
+
       // Xử lý đặc biệt cho ổ đĩa network/cloud
-      if (parts[0].endsWith(':')) {
+      if (parts[0].endsWith(":")) {
         // Thêm delay 2 giây trước khi kiểm tra ổ đĩa
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
         const rootPath = parts[0] + path.sep;
         try {
           fs.accessSync(rootPath, fs.constants.W_OK);
@@ -153,16 +160,18 @@ async  ensureDirectoryExists(dirPath) {
       for (const part of parts) {
         if (!part) continue;
         currentPath = path.join(currentPath, part);
-        
+
         if (!fs.existsSync(currentPath)) {
           try {
             // Thêm delay 1 giây trước khi tạo mỗi thư mục
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
             fs.mkdirSync(currentPath);
           } catch (error) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise((resolve) => setTimeout(resolve, 1000));
             if (!fs.existsSync(currentPath)) {
-              console.error(`❌ Không thể tạo thư mục ${currentPath}: ${error.message}`);
+              console.error(
+                `❌ Không thể tạo thư mục ${currentPath}: ${error.message}`
+              );
               return false;
             }
           }
@@ -178,53 +187,52 @@ async  ensureDirectoryExists(dirPath) {
   async authenticate() {
     try {
       console.log("🔑 Đang xác thực với Drive API...");
-      
-      const token = await this.getToken('source');
+
+      const token = await this.getToken("source");
       this.oauth2Client.setCredentials(token);
 
-      this.drive = google.drive({ 
-        version: 'v3', 
-        auth: this.oauth2Client 
+      this.drive = google.drive({
+        version: "v3",
+        auth: this.oauth2Client,
       });
 
       const userInfo = await this.drive.about.get({
-        fields: "user"
+        fields: "user",
       });
       this.userEmail = userInfo.data.user.emailAddress;
       console.log(`✅ Đã xác thực tài khoản: ${this.userEmail}`);
-
     } catch (error) {
       console.error("❌ Lỗi xác thực:", error.message);
       throw error;
     }
   }
 
-  async getToken(type = 'source') {
+  async getToken(type = "source") {
     try {
       const configPath = getConfigPath();
-      if (!configPath || typeof configPath !== 'string') {
-        throw new Error('Không thể lấy đường dẫn config hợp lệ');
+      if (!configPath || typeof configPath !== "string") {
+        throw new Error("Không thể lấy đường dẫn config hợp lệ");
       }
 
       const tokenPath = path.join(configPath, `token_${type}.json`);
       console.log(`🔍 Kiểm tra token tại: ${tokenPath}`);
-      
+
       if (fs.existsSync(tokenPath)) {
-        const token = JSON.parse(fs.readFileSync(tokenPath, 'utf8'));
-        console.log('✅ Đã tìm thấy token');
+        const token = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
+        console.log("✅ Đã tìm thấy token");
         return token;
       }
 
-      console.log('⚠️ Không tìm thấy token, tạo mới...');
+      console.log("⚠️ Không tìm thấy token, tạo mới...");
       const newToken = await this.createNewToken(type);
-      
+
       if (!fs.existsSync(configPath)) {
         fs.mkdirSync(configPath, { recursive: true });
       }
-      
+
       fs.writeFileSync(tokenPath, JSON.stringify(newToken, null, 2));
       console.log(`💾 Đã lưu token tại: ${tokenPath}`);
-      
+
       return newToken;
     } catch (error) {
       console.error(`❌ Lỗi lấy token ${type}:`, error.message);
@@ -232,13 +240,13 @@ async  ensureDirectoryExists(dirPath) {
     }
   }
 
-  async createNewToken(type = 'source') {
+  async createNewToken(type = "source") {
     console.log(`⚠️ Tạo token mới cho tài khoản ${type}...`);
 
     const authUrl = this.oauth2Client.generateAuthUrl({
       access_type: "offline",
       scope: this.SCOPES,
-      prompt: 'consent'
+      prompt: "consent",
     });
 
     console.log(`\n📱 Hướng dẫn lấy mã xác thực:`);
@@ -246,7 +254,9 @@ async  ensureDirectoryExists(dirPath) {
     console.log(authUrl);
     console.log(`\n2. Đăng nhập và cấp quyền cho ứng dụng`);
     console.log(`3. Sau khi redirect, copy mã từ URL (phần sau "code=")`);
-    console.log(`4. Paste mã ngay vào đây (mã chỉ có hiệu lực trong vài giây)\n`);
+    console.log(
+      `4. Paste mã ngay vào đây (mã chỉ có hiệu lực trong vài giây)\n`
+    );
 
     const rl = readline.createInterface({
       input: process.stdin,
@@ -260,15 +270,12 @@ async  ensureDirectoryExists(dirPath) {
       try {
         const code = await new Promise((resolve) => {
           rl.question("📝 Nhập mã xác thực: ", (code) => {
-            let cleanCode = code
-              .trim()
-              .replace(/%%/g, '%')
-              .replace(/\s+/g, '');
+            let cleanCode = code.trim().replace(/%%/g, "%").replace(/\s+/g, "");
 
-            if (cleanCode.includes('4/0A')) {
+            if (cleanCode.includes("4/0A")) {
               // Đã đúng định dạng
-            } else if (cleanCode.includes('4%2F0A')) {
-              cleanCode = cleanCode.replace('4%2F0A', '4/0A');
+            } else if (cleanCode.includes("4%2F0A")) {
+              cleanCode = cleanCode.replace("4%2F0A", "4/0A");
             }
 
             resolve(cleanCode);
@@ -281,25 +288,26 @@ async  ensureDirectoryExists(dirPath) {
         }
 
         console.log(`\n🔑 Đang xác thực với mã: ${code}`);
-        
+
         const { tokens } = await this.oauth2Client.getToken(code);
-        
+
         const tokenPath = path.join(getConfigPath(), `token_${type}.json`);
         fs.writeFileSync(tokenPath, JSON.stringify(tokens));
         console.log(`\n💾 Đã lưu token ${type} tại: ${tokenPath}`);
-        
+
         rl.close();
         return tokens;
-
       } catch (error) {
         console.error(`\n❌ Lỗi: ${error.message}`);
-        if (error.message.includes('invalid_grant')) {
-          console.log(`\n⚠️ Mã đã hết hạn hoặc đã được sử dụng. Vui lòng lấy mã mới.`);
+        if (error.message.includes("invalid_grant")) {
+          console.log(
+            `\n⚠️ Mã đã hết hạn hoặc đã được sử dụng. Vui lòng lấy mã mới.`
+          );
           console.log(`1. Truy cập lại URL để lấy mã mới:`);
           console.log(authUrl);
         }
         retryCount++;
-        
+
         if (retryCount < MAX_RETRIES) {
           console.log(`\n🔄 Thử lại lần ${retryCount + 1}/${MAX_RETRIES}...\n`);
         }
@@ -446,17 +454,21 @@ async  ensureDirectoryExists(dirPath) {
 
   async processFolder(sourceFolderId, targetPath, depth = 0) {
     const indent = "  ".repeat(depth);
-    
+
     try {
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`${indent}📂 Xử lý folder: ${folderName}`);
 
       const parentFolderName = path.basename(targetPath);
-      const currentFolderPath = parentFolderName === folderName 
-        ? targetPath // Nếu tên trùng thì dùng thư mục cha
-        : path.join(targetPath, sanitizePath(folderName)); // Nếu khác tên thì tạo thư mục con
+      const currentFolderPath =
+        parentFolderName === folderName
+          ? targetPath // Nếu tên trùng thì dùng thư mục cha
+          : path.join(targetPath, sanitizePath(folderName)); // Nếu khác tên thì tạo thư mục con
 
-      if (parentFolderName !== folderName && !fs.existsSync(currentFolderPath)) {
+      if (
+        parentFolderName !== folderName &&
+        !fs.existsSync(currentFolderPath)
+      ) {
         console.log(`${indent}📁 Tạo thư mục: ${folderName}`);
         fs.mkdirSync(currentFolderPath, { recursive: true });
       }
@@ -469,7 +481,8 @@ async  ensureDirectoryExists(dirPath) {
       });
 
       const files = response.data.files;
-      const { videoFiles, pdfFiles, otherFiles, folders } = this.categorizeFiles(files);
+      const { videoFiles, pdfFiles, otherFiles, folders } =
+        this.categorizeFiles(files);
 
       // Log thống kê
       console.log(`${indent}📊 Tổng số files: ${files.length}`);
@@ -481,11 +494,14 @@ async  ensureDirectoryExists(dirPath) {
       // Xử lý các files trong thư mục hiện tại
       if (videoFiles.length > 0) {
         console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
-        const videoHandler = new VideoHandler(this.oauth2Client);
-        
+        const videoHandler = new VideoHandler(3, 4); // Mặc định 3 chrome đồng thời, 4 download đồng thời
+
         for (const file of videoFiles) {
-          const videoPath = path.join(currentFolderPath, sanitizePath(file.name));
-          
+          const videoPath = path.join(
+            currentFolderPath,
+            sanitizePath(file.name)
+          );
+
           // Kiểm tra video đã tồn tại chưa
           if (fs.existsSync(videoPath)) {
             const stats = fs.statSync(videoPath);
@@ -502,20 +518,20 @@ async  ensureDirectoryExists(dirPath) {
             fileId: file.id,
             fileName: file.name,
             targetPath: currentFolderPath,
-            depth
+            depth,
           });
         }
-        
+
         await videoHandler.processQueue();
       }
 
       if (pdfFiles.length > 0) {
         console.log(`${indent}📑 Xử lý ${pdfFiles.length} PDF files...`);
         const pdfDownloader = new PDFDownloader(this);
-        
-        const pdfPromises = pdfFiles.map(async file => {
+
+        const pdfPromises = pdfFiles.map(async (file) => {
           const pdfPath = path.join(currentFolderPath, sanitizePath(file.name));
-          
+
           // Kiểm tra PDF đã tồn tại chưa
           if (fs.existsSync(pdfPath)) {
             const stats = fs.statSync(pdfPath);
@@ -528,16 +544,17 @@ async  ensureDirectoryExists(dirPath) {
             }
           }
 
-          return pdfDownloader.downloadPDF(
-            file.id, 
-            file.name,
-            currentFolderPath
-          ).catch(error => {
-            console.error(`${indent}❌ Lỗi xử lý PDF ${file.name}:`, error.message);
-            return null;
-          });
+          return pdfDownloader
+            .downloadPDF(file.id, file.name, currentFolderPath)
+            .catch((error) => {
+              console.error(
+                `${indent}❌ Lỗi xử lý PDF ${file.name}:`,
+                error.message
+              );
+              return null;
+            });
         });
-        
+
         await Promise.all(pdfPromises);
       }
 
@@ -546,13 +563,18 @@ async  ensureDirectoryExists(dirPath) {
         try {
           await this.processFolder(folder.id, currentFolderPath, depth + 1);
         } catch (error) {
-          console.error(`${indent}❌ Lỗi xử lý folder ${folder.name}:`, error.message);
+          console.error(
+            `${indent}❌ Lỗi xử lý folder ${folder.name}:`,
+            error.message
+          );
           continue;
         }
       }
-
     } catch (error) {
-      console.error(`${indent}❌ Lỗi trong quá trình xử lý folder:`, error.message);
+      console.error(
+        `${indent}❌ Lỗi trong quá trình xử lý folder:`,
+        error.message
+      );
     }
   }
 
@@ -591,11 +613,11 @@ async  ensureDirectoryExists(dirPath) {
 
         const fileMetadata = await this.drive.files.get({
           fileId: fileId,
-          fields: 'mimeType,name',
-          supportsAllDrives: true
+          fields: "mimeType,name",
+          supportsAllDrives: true,
         });
 
-        if (fileMetadata.data.mimeType.includes('google-apps')) {
+        if (fileMetadata.data.mimeType.includes("google-apps")) {
           console.log(`⚠️ Bỏ qua file Google Docs: ${fileMetadata.data.name}`);
           return null;
         }
