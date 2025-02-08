@@ -538,7 +538,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       // Scroll để load tất cả trang
       console.log(`\n📜 [DriveAPIPDFDownloader] Bắt đầu scroll...`);
-      await this.fastScroll(page);
+      await this.fastScroll(page, pageRequests);
       console.log(`✅ [DriveAPIPDFDownloader] Đã scroll xong`);
       console.log(`📊 Số trang đã phát hiện: ${pageRequests.size}`);
 
@@ -632,44 +632,43 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
-  async fastScroll(page) {
+  async fastScroll(page, pageRequests) {
     console.log(`\n🖱️ [DriveAPIPDFDownloader] Bắt đầu fast scroll...`);
 
     try {
       let lastPageCount = 0;
       let noNewPagesCount = 0;
-      const MAX_NO_NEW_PAGES = 50;
-      const SCROLL_INTERVAL = 200; // Tăng thời gian giữa các lần cuộn để cuộn chậm hơn
-      const SPACE_PRESSES_PER_BATCH = 2; // Giảm số lần nhấn Space trong mỗi batch để cuộn chậm hơn
-      const BATCH_INTERVAL = 500; // Thêm khoảng thời gian chờ giữa các batch để cuộn chậm hơn
-      const MAX_SCROLL_ATTEMPTS = 900;
+      const MAX_NO_NEW_PAGES = 10;
+      const SCROLL_INTERVAL = 200;
+      const SPACE_PRESSES_PER_BATCH = 2;
+      const BATCH_INTERVAL = 500;
+      const MAX_SCROLL_ATTEMPTS = 100;
       let scrollAttempts = 0;
 
       while (
         noNewPagesCount < MAX_NO_NEW_PAGES &&
         scrollAttempts < MAX_SCROLL_ATTEMPTS
       ) {
-        // Nhấn Space nhiều lần trong mỗi batch
         for (let i = 0; i < SPACE_PRESSES_PER_BATCH; i++) {
           await page.keyboard.press("Space");
           await new Promise((resolve) => setTimeout(resolve, SCROLL_INTERVAL));
         }
 
         scrollAttempts++;
-
-        // Chỉ một khoảng thời gian giữa các batch để cuộn chậm hơn
         await new Promise((resolve) => setTimeout(resolve, BATCH_INTERVAL));
 
-        // Chỉ log mỗi 2 lần để giảm output
-        if (scrollAttempts % 2 === 0) {
-          console.log(
-            `⌨️ [DriveAPIPDFDownloader] Đã nhấn Space ${
-              scrollAttempts * SPACE_PRESSES_PER_BATCH
-            } lần`
-          );
-        }
+        const currentPageCount = pageRequests.size;
 
-        const currentPageCount = this.pageRequests.size;
+        // Log tiến trình mỗi lần scroll
+        console.log(
+          `⌨️ [Space ${
+            scrollAttempts * SPACE_PRESSES_PER_BATCH
+          }] Trang: ${currentPageCount}${
+            noNewPagesCount > 0
+              ? ` (Không có trang mới: ${noNewPagesCount})`
+              : ""
+          }`
+        );
 
         if (currentPageCount > lastPageCount) {
           console.log(
@@ -683,29 +682,34 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           noNewPagesCount++;
         }
 
-        // Nếu đã phát hiện nhiều trang và không có trang mới, thoát sớm
-        if (currentPageCount > 20 && noNewPagesCount > 0) {
+        // Dừng sớm nếu đã phát hiện được trang và không có trang mới
+        if (currentPageCount > 0 && noNewPagesCount >= MAX_NO_NEW_PAGES) {
           console.log(
-            `🎯 Đã phát hiện ${currentPageCount} trang, có thể kết thúc sớm`
+            `🎯 Đã phát hiện ${currentPageCount} trang và không có trang mới sau ${MAX_NO_NEW_PAGES} lần thử, dừng scroll...`
           );
           break;
         }
       }
 
+      // Kiểm tra cuối cùng
+      if (scrollAttempts >= MAX_SCROLL_ATTEMPTS) {
+        console.log(`⚠️ Đã đạt giới hạn ${MAX_SCROLL_ATTEMPTS} lần scroll`);
+      }
+
       console.log(
-        `✅ Hoàn tất với ${this.pageRequests.size} trang sau ${
+        `✅ Hoàn tất với ${pageRequests.size} trang sau ${
           scrollAttempts * SPACE_PRESSES_PER_BATCH
         } lần nhấn Space`
       );
 
-      // Thêm bước kiểm tra cuối cùng
-      console.log(`\n🔍 Kiểm tra lần cuối để đảm bảo không còn trang mới...`);
-      const finalPageCount = this.pageRequests.size;
-      for (let i = 0; i < 3; i++) {
-        await page.keyboard.press("Space");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
-      const newPageCount = this.pageRequests.size;
+      // Kiểm tra cuối cùng với thời gian dài hơn
+      console.log(`\n🔍 Kiểm tra lần cuối...`);
+      const finalPageCount = pageRequests.size;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await page.keyboard.press("Space");
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const newPageCount = pageRequests.size;
       if (newPageCount > finalPageCount) {
         console.log(
           `🌟 Phát hiện thêm ${
@@ -716,7 +720,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         console.log(`✅ Không có trang mới trong lần kiểm tra cuối`);
       }
 
-      console.log(`📊 Tổng số trang: ${this.pageRequests.size}`);
+      console.log(`📊 Tổng số trang: ${pageRequests.size}`);
     } catch (error) {
       console.error(`❌ Lỗi khi scroll:`, error);
       throw error;
@@ -1482,5 +1486,4 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 }
 
-module.exports = DriveAPIPDFDownloader;
 module.exports = DriveAPIPDFDownloader;
