@@ -443,9 +443,11 @@ async function main(folderUrl) {
       console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
 
       const confirm = await askQuestion(
-        "\nBạn có muốn tiếp tục không? (y/n): "
+        "\nBạn có muốn tiếp tục không? (y/n, mặc định: y): "
       );
-      if (confirm.toLowerCase() !== "y") {
+      if (confirm.trim() === "" || confirm.toLowerCase() === "y") {
+        // Tiếp tục thực thi
+      } else {
         console.log("❌ Đã hủy thao tác");
         return;
       }
@@ -571,55 +573,4 @@ if (process.pkg) {
 } else {
   // Khi chạy từ source
   process.env.APP_PATH = process.cwd();
-}
-
-async function selectDrive() {
-  try {
-    // Lấy danh sách ổ đĩa
-    const drives = await getDrives();
-
-    // Hiển thị danh sách
-    console.log("\nDanh sách ổ đĩa:");
-    drives.forEach((drive, index) => {
-      console.log(
-        `${index + 1}. ${drive.path} (${drive.label || "Không tên"})`
-      );
-    });
-
-    // Chọn ổ đĩa
-    const choice = await question("\nChọn ổ đĩa (nhập số thứ tự): ");
-    const index = parseInt(choice) - 1;
-
-    if (index >= 0 && index < drives.length) {
-      const selectedDrive = drives[index];
-
-      // Kiểm tra đặc biệt cho ổ đĩa mạng
-      try {
-        fs.accessSync(selectedDrive.path, fs.constants.W_OK);
-      } catch (error) {
-        console.log(`⚠️ Ổ đĩa ${selectedDrive.path} có thể là ổ đĩa mạng`);
-        console.log("💡 Đang kiểm tra kết nối...");
-
-        // Đợi một chút để đảm bảo kết nối được thiết lập
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-
-      const targetPath = path.join(selectedDrive.path, "drive-clone");
-      console.log(`\n📂 Thư mục đích: ${targetPath}`);
-
-      return targetPath;
-    } else {
-      throw new Error("Lựa chọn không hợp lệ");
-    }
-  } catch (error) {
-    console.error("❌ Lỗi khi chọn ổ đĩa:", error.message);
-    // Fallback về Documents
-    const documentsPath = path.join(
-      require("os").homedir(),
-      "Documents",
-      "drive-clone"
-    );
-    console.log(`↪️ Sử dụng thư mục mặc định: ${documentsPath}`);
-    return documentsPath;
-  }
 }

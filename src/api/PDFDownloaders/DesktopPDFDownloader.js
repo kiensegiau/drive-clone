@@ -3,42 +3,58 @@ const fs = require("fs");
 const PDFDocument = require("pdfkit");
 const axios = require("axios");
 const ChromeManager = require("../ChromeManager.js");
-const os = require('os');
-const { sanitizePath } = require('../../utils/pathUtils');
+const os = require("os");
+const { sanitizePath } = require("../../utils/pathUtils");
+const BasePDFDownloader = require("./BasePDFDownloader");
 
-
-class PDFDownloader {
+class PDFDownloader extends BasePDFDownloader {
   constructor(driveAPI, tempDir, processLogger) {
+    super();
     this.driveAPI = driveAPI;
-    this.tempDir = path.join(os.tmpdir(), 'drive-clone-pdfs');
+    this.tempDir = path.join(os.tmpdir(), "drive-clone-pdfs");
     this.processLogger = processLogger;
     this.pageRequests = new Map();
     this.cookies = null;
     this.userAgent = null;
     this.browser = null;
     this.page = null;
-    this.chromeManager = ChromeManager.getInstance('pdf');
-    
+    this.chromeManager = ChromeManager.getInstance("pdf");
+
     // Đảm bảo downloadOnly luôn là true cho desktop version
     this.downloadOnly = true;
-    
+
+    // Thêm các cấu hình mới
+    this.MAX_CONCURRENT_CHECKS = 10;
+    this.BATCH_SIZE = 20;
+    this.MAX_CONCURRENT_BATCHES = 5;
+
     console.log(`📥 PDF Downloader mode: download only`);
 
-    // Tạo thư mục temp nếu chưa tồn tại
-    if (!fs.existsSync(this.tempDir)) {
-      fs.mkdirSync(this.tempDir, { recursive: true });
-    }
+    // Khởi tạo thư mục temp
+    this.initTempDir();
+  }
 
+  async initTempDir() {
     try {
       if (!fs.existsSync(this.tempDir)) {
         fs.mkdirSync(this.tempDir, { recursive: true });
       }
+
+      // Tạo các thư mục con cần thiết
+      const subDirs = ["cache", "images", "output"];
+      for (const dir of subDirs) {
+        const subDirPath = path.join(this.tempDir, dir);
+        if (!fs.existsSync(subDirPath)) {
+          fs.mkdirSync(subDirPath, { recursive: true });
+        }
+      }
+
       // Kiểm tra quyền ghi
       fs.accessSync(this.tempDir, fs.constants.W_OK);
     } catch (error) {
-      console.error('❌ Không thể tạo/ghi vào thư mục temp:', error.message);
+      console.error("❌ Không thể tạo/ghi vào thư mục temp:", error.message);
       // Thử dùng thư mục temp khác
-      this.tempDir = path.join(process.cwd(), 'temp', 'drive-clone-pdfs');
+      this.tempDir = path.join(process.cwd(), "temp", "drive-clone-pdfs");
       if (!fs.existsSync(this.tempDir)) {
         fs.mkdirSync(this.tempDir, { recursive: true });
       }
@@ -48,36 +64,71 @@ class PDFDownloader {
   async downloadPDF(fileId, fileName, targetPath) {
     const startTime = new Date();
     const safeFileName = sanitizePath(fileName);
-    
+
     // Tạo đường dẫn tạm thời với timestamp
-    const tempPath = path.join(this.tempDir, `temp_${Date.now()}_${safeFileName}`);
-    
+    const tempPath = path.join(
+      this.tempDir,
+      `temp_${Date.now()}_${safeFileName}`
+    );
+
     // Tạo đường dẫn đích cuối cùng trong thư mục đích
     const finalPath = path.join(targetPath, safeFileName);
-    
+
     const tempFiles = [tempPath];
 
     try {
       console.log(`📑 Phát hiện file PDF: ${fileName}`);
       console.log(`📂 Thư mục đích: ${targetPath}`);
-      
+
       // Tạo thư mục đích nếu chưa tồn tại
       const finalDir = path.dirname(finalPath);
       if (!fs.existsSync(finalDir)) {
         fs.mkdirSync(finalDir, { recursive: true });
       }
 
-      // Tải PDF vào thư mục tạm
-      const result = await this.downloadFromDriveAPI(fileId, tempPath);
-      
-      if (result.success) {
-        // Thay thế rename bằng copy + unlink
-        if (fs.existsSync(tempPath)) {
-          console.log(`📦 Copy PDF vào thư mục đích: ${finalPath}`);
-          await fs.promises.copyFile(tempPath, finalPath);
-          await fs.promises.unlink(tempPath); // Xóa file tạm sau khi copy
-          console.log(`✅ Hoàn thành: ${fileName}`);
+      // Kiểm tra file đã tồn tại
+      if (fs.existsSync(finalPath)) {
+        const stats = fs.statSync(finalPath);
+        if (stats.size > 0) {
+          console.log(`⏭️ File đã tồn tại, bỏ qua: ${fileName}`);
+          return { success: true, filePath: finalPath };
+        } else {
+          fs.unlinkSync(finalPath);
         }
+      }
+
+      // Thử tải trực tiếp trước
+      try {
+        console.log(`\n📥 Thử tải trực tiếp từ Drive API...`);
+        const result = await this.downloadFromDriveAPI(fileId, tempPath);
+
+        if (result.success) {
+          // Copy file từ temp vào thư mục đích
+          await fs.promises.copyFile(tempPath, finalPath);
+          console.log(`✅ Đã lưu PDF vào: ${finalPath}`);
+          return { success: true, filePath: finalPath };
+        }
+      } catch (apiError) {
+        // Nếu không tải được qua API, thử capture
+        if (
+          apiError.message.includes("403") ||
+          apiError.message.includes("cannotDownloadFile")
+        ) {
+          console.log(`\n🔄 Chuyển sang chế độ capture...`);
+          const captureResult = await this.captureAndCreatePDF(
+            fileId,
+            tempPath,
+            targetPath,
+            fileName
+          );
+
+          if (captureResult.success) {
+            await fs.promises.copyFile(tempPath, finalPath);
+            console.log(`✅ Đã lưu PDF vào: ${finalPath}`);
+            return { success: true, filePath: finalPath };
+          }
+        }
+        throw apiError;
       }
 
       return { success: true, filePath: finalPath };
@@ -136,14 +187,18 @@ class PDFDownloader {
                 const now = Date.now();
                 if (now - lastLogTime >= logInterval) {
                   const progress = (downloadedSize / originalSize) * 100;
-                  const downloadedMB = (downloadedSize / (1024 * 1024)).toFixed(2);
+                  const downloadedMB = (downloadedSize / (1024 * 1024)).toFixed(
+                    2
+                  );
                   console.log(
-                    `⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(1)}%)`
+                    `⏳ Đã tải: ${downloadedMB}MB / ${fileSizeMB}MB (${progress.toFixed(
+                      1
+                    )}%)`
                   );
                   lastLogTime = now;
                 }
               } catch (chunkError) {
-                console.error('⚠️ Lỗi xử lý chunk:', chunkError.message);
+                console.error("⚠️ Lỗi xử lý chunk:", chunkError.message);
               }
             })
             .on("end", async () => {
@@ -157,7 +212,7 @@ class PDFDownloader {
                   success: true,
                   filePath: outputPath,
                   originalSize,
-                  processedSize
+                  processedSize,
                 });
               } catch (error) {
                 reject(error);
@@ -177,14 +232,19 @@ class PDFDownloader {
     }
   }
 
-  async captureAndCreatePDF(fileId, outputPath, targetFolderId, profileId = null) {
-    const tempFiles = [];  // Track temp files for cleanup
-    
+  async captureAndCreatePDF(
+    fileId,
+    outputPath,
+    targetFolderId,
+    profileId = null
+  ) {
+    const tempFiles = []; // Track temp files for cleanup
+
     try {
       this.pageRequests.clear();
-      
+
       this.browser = await this.chromeManager.getBrowser();
-      
+
       const page = await this.browser.newPage();
       this.page = page;
       console.log("✅ Đã tạo tab mới");
@@ -261,7 +321,7 @@ class PDFDownloader {
       );
 
       downloadedImages.push(...results.filter(Boolean));
-      tempFiles.push(...downloadedImages);  // Track for cleanup
+      tempFiles.push(...downloadedImages); // Track for cleanup
 
       console.log(`\n📑 Tạo PDF...`);
       await this.createPDFFromImages(downloadedImages, outputPath, profileId);
@@ -295,7 +355,7 @@ class PDFDownloader {
       if (this.browser) {
         await this.browser.close();
         this.browser = null;
-        console.log('🔒 Đã đóng Chrome');
+        console.log("🔒 Đã đóng Chrome");
       }
     }
 
@@ -365,9 +425,11 @@ class PDFDownloader {
   }
 
   async downloadImage(url, pageNum, cookies, userAgent, profileId) {
-    const imagePath = path.join(this.tempDir, 
-      `page_${profileId || 'default'}_${Date.now()}_${pageNum}.png`);
-    
+    const imagePath = path.join(
+      this.tempDir,
+      `page_${profileId || "default"}_${Date.now()}_${pageNum}.png`
+    );
+
     try {
       // Đảm bảo thư mục tồn tại
       const imageDir = path.dirname(imagePath);
@@ -376,7 +438,7 @@ class PDFDownloader {
       }
 
       const cookieStr = cookies.map((c) => `${c.name}=${c.value}`).join("; ");
-      
+
       const response = await axios({
         method: "get",
         url: url,
@@ -478,7 +540,7 @@ class PDFDownloader {
   async downloadToLocal(fileId, fileName, targetDir) {
     try {
       console.log(`📑 Tải PDF: ${fileName}`);
-      
+
       const safeFileName = sanitizePath(fileName);
       const outputPath = path.join(targetDir, safeFileName);
 
@@ -494,23 +556,28 @@ class PDFDownloader {
           let progress = 0;
 
           response.data
-            .on('data', chunk => {
+            .on("data", (chunk) => {
               progress += chunk.length;
-              process.stdout.write(`\r⏳ Đã tải: ${(progress / 1024 / 1024).toFixed(2)}MB`);
+              process.stdout.write(
+                `\r⏳ Đã tải: ${(progress / 1024 / 1024).toFixed(2)}MB`
+              );
             })
-            .on('end', () => {
-              process.stdout.write('\n');
-              console.log('✅ Tải PDF hoàn tất');
+            .on("end", () => {
+              process.stdout.write("\n");
+              console.log("✅ Tải PDF hoàn tất");
               resolve();
             })
-            .on('error', err => reject(err))
+            .on("error", (err) => reject(err))
             .pipe(dest);
         });
 
         return { success: true, filePath: outputPath };
       } catch (error) {
         // Nếu không tải được qua API, thử capture
-        if (error?.error?.code === 403 || error.message.includes("cannotDownloadFile")) {
+        if (
+          error?.error?.code === 403 ||
+          error.message.includes("cannotDownloadFile")
+        ) {
           console.log(`⚠️ PDF bị khóa, chuyển sang chế độ capture...`);
           return await this.captureAndSaveLocal(fileId, outputPath);
         }
@@ -525,17 +592,17 @@ class PDFDownloader {
   async captureAndSaveLocal(fileId, outputPath) {
     let browser;
     const tempFiles = [];
-    
+
     try {
       browser = await this.chromeManager.getBrowser();
       const page = await browser.newPage();
-      
+
       // Capture từng trang PDF
       const images = await this.capturePDFPages(page, fileId);
-      
+
       // Tạo PDF từ các ảnh đã capture
       await this.createPDFFromImages(images, outputPath);
-      
+
       return { success: true, filePath: outputPath };
     } catch (error) {
       console.error(`❌ Lỗi capture PDF:`, error.message);
@@ -557,4 +624,3 @@ class PDFDownloader {
 }
 
 module.exports = PDFDownloader;
-
