@@ -458,19 +458,49 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           return;
         }
 
-        if (url.includes("viewer2/prod") && url.includes("page=")) {
-          const pageMatch = url.match(/page=(\d+)/);
+        // Kiểm tra cả 2 pattern: viewerng/img và viewer2/prod
+        const isViewerNg = url.includes("viewerng/img");
+        const isViewer2 = url.includes("viewer2/prod");
+
+        if ((isViewerNg || isViewer2) && url.includes("page=")) {
+          const pageMatch = url.match(/[?&]page=(\d+)/);
           if (pageMatch) {
             const pageNum = parseInt(pageMatch[1]);
             if (!pageRequests.has(pageNum)) {
               console.log(
-                `📄 [DriveAPIPDFDownloader] Phát hiện trang ${pageNum}`
+                `📄 [DriveAPIPDFDownloader] Phát hiện trang ${pageNum} (${
+                  isViewerNg ? "viewerng" : "viewer2"
+                })`
               );
               pageRequests.set(pageNum, request);
             }
           }
         }
         request.continue();
+      });
+
+      // Thêm response listener để log response
+      page.on("response", async (response) => {
+        const url = response.url();
+        const isViewerNg = url.includes("viewerng/img");
+        const isViewer2 = url.includes("viewer2/prod");
+
+        if ((isViewerNg || isViewer2) && url.includes("page=")) {
+          const status = response.status();
+          const headers = response.headers();
+          console.log(`\n📥 [Response] ${url}`);
+          console.log(`Pattern: ${isViewerNg ? "viewerng" : "viewer2"}`);
+          console.log(`Status: ${status}`);
+
+          if (status === 200) {
+            console.log(`Content-Type: ${headers["content-type"]}`);
+            const pageMatch = url.match(/[?&]page=(\d+)/);
+            if (pageMatch) {
+              const pageNum = parseInt(pageMatch[1]);
+              console.log(`✅ Trang ${pageNum} response OK`);
+            }
+          }
+        }
       });
 
       // Load PDF viewer
@@ -992,7 +1022,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       return results;
     } catch (error) {
       console.error("❌ Lỗi kiểm tra files:", error);
-      // Trả về Map với t���t cả file được đánh dấu là chưa tồn tại
+      // Trả về Map với tất cả file được đánh dấu là chưa tồn tại
       const results = new Map();
       files.forEach((file) => {
         results.set(file.name, null);
