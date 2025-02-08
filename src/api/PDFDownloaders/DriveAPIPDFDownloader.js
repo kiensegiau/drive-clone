@@ -2,6 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
 const PDFDocument = require("pdfkit");
+const sharp = require("sharp");
 const BasePDFDownloader = require("./BasePDFDownloader");
 const {
   sanitizePath,
@@ -131,8 +132,8 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       // Xử lý từng ảnh
       for (const imagePath of downloadedImages.filter(Boolean).sort((a, b) => {
-        const pageA = parseInt(a.match(/_(\d+)\.png$/)[1]);
-        const pageB = parseInt(b.match(/_(\d+)\.png$/)[1]);
+        const pageA = parseInt(a.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
+        const pageB = parseInt(b.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
         return pageA - pageB;
       })) {
         try {
@@ -140,10 +141,20 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             console.warn(`⚠️ Không tìm thấy file ảnh: ${imagePath}`);
             continue;
           }
-          const imageBuffer = await fs.promises.readFile(imagePath);
+
+          console.log(`📄 Đang xử lý ảnh: ${path.basename(imagePath)}`);
+          let imageBuffer = await fs.promises.readFile(imagePath);
+
+          // Nếu là WebP, chuyển sang PNG
+          if (imagePath.endsWith(".webp")) {
+            console.log(`🔄 Chuyển đổi WebP sang PNG...`);
+            imageBuffer = await sharp(imageBuffer).png().toBuffer();
+          }
+
           const img = doc.openImage(imageBuffer);
           doc.addPage({ size: [img.width, img.height] });
           doc.image(img, 0, 0);
+          console.log(`✅ Đã xử lý xong trang`);
         } catch (error) {
           console.warn(`⚠️ Lỗi xử lý ảnh ${imagePath}:`, error.message);
         }
@@ -308,11 +319,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     // Tạo sessionId duy nhất cho mỗi phiên tải
     const sessionId =
       Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
-    const imagePath = path.join(
-      this.tempDir,
-      "images",
-      `page_${sessionId}_${String(pageNum).padStart(3, "0")}.png`
-    );
 
     try {
       if (!cookies || !userAgent) {
@@ -329,7 +335,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             method: "get",
             url: url,
             responseType: "arraybuffer",
-            timeout: 10000, // Tăng timeout lên 10s
+            timeout: 10000,
             headers: {
               Cookie: cookieStr,
               "User-Agent": userAgent,
@@ -338,7 +344,28 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             },
           });
 
+          // Xác định định dạng ảnh từ Content-Type
+          const contentType = response.headers["content-type"];
+          let extension = "png"; // Mặc định là png
+
+          if (contentType) {
+            if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+              extension = "jpg";
+            } else if (contentType.includes("webp")) {
+              extension = "webp";
+            }
+          }
+
+          // Tạo tên file với đuôi phù hợp
+          const imagePath = path.join(
+            this.tempDir,
+            "images",
+            `page_${sessionId}_${String(pageNum).padStart(3, "0")}.${extension}`
+          );
+
+          // Lưu file
           await fs.promises.writeFile(imagePath, response.data);
+          console.log(`✅ Đã tải trang ${pageNum} (${extension})`);
           return imagePath;
         } catch (err) {
           lastError = err;
@@ -353,7 +380,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       throw lastError;
     } catch (error) {
-      await safeUnlink(imagePath);
       console.warn(`⚠️ Không thể tải trang ${pageNum}: ${error.message}`);
       return null;
     }
@@ -507,7 +533,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       console.log(`\n🌐 [DriveAPIPDFDownloader] Mở PDF viewer...`);
       await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
         waitUntil: "networkidle0",
-        timeout: 30000,
+        timeout: 60000, // Tăng timeout lên 60s
       });
 
       // Scroll để load tất cả trang

@@ -55,6 +55,7 @@
     "pdfkit": "^0.13.0",
     "puppeteer-core": "^21.11.0",
     "readline": "^1.3.0",
+    "sharp": "^0.33.5",
     "windows-drive-letters": "^4.0.0"
   },
   "scripts": {
