@@ -401,21 +401,50 @@ async function main(folderUrl) {
     const isDownloadMode = selectedChoice === "2";
 
     if (isDownloadMode) {
-      const nodeDiskInfo = require("node-disk-info");
+      const { execSync } = require("child_process");
       let disks;
       try {
-        disks = await nodeDiskInfo.getDiskInfo();
+        const output = execSync(
+          "powershell -command \"$drives = Get-WmiObject Win32_LogicalDisk; $drives | ForEach-Object { $drive = $_; $gPath = Join-Path $drive.DeviceID 'Google Drive'; $isGoogleDrive = Test-Path -Path $gPath -ErrorAction SilentlyContinue; [PSCustomObject]@{ DriveLetter=$drive.DeviceID.Replace(':',''); FileSystemLabel=$drive.VolumeName; DriveType=$drive.DriveType; SizeRemaining=$drive.FreeSpace; Size=$drive.Size; IsGoogleDrive=$isGoogleDrive } } | ConvertTo-Json\"",
+          { encoding: "utf8" }
+        );
+        disks = JSON.parse(output);
+        if (!Array.isArray(disks)) {
+          disks = [disks];
+        }
+
+        disks = disks.filter(
+          (disk) =>
+            disk.Size !== null &&
+            disk.SizeRemaining !== null &&
+            disk.DriveType !== 5 // Loại bỏ CD-ROM
+        );
+
+        disks.sort((a, b) => {
+          if (a.IsGoogleDrive && !b.IsGoogleDrive) return -1;
+          if (!a.IsGoogleDrive && b.IsGoogleDrive) return 1;
+          return 0;
+        });
       } catch (error) {
         console.error("Không thể lấy thông tin ổ đĩa:", error);
         throw new Error("Không thể lấy thông tin ổ đĩa");
       }
 
+      if (!disks || disks.length === 0) {
+        throw new Error("Không tìm thấy ổ đĩa nào");
+      }
+
       console.log("\n💾 Các ổ đĩa có sẵn:");
       disks.forEach((disk, index) => {
+        const label = disk.FileSystemLabel ? ` (${disk.FileSystemLabel})` : "";
+        const available = formatBytes(disk.SizeRemaining);
+        const total = formatBytes(disk.Size);
+        const driveType =
+          disk.DriveType === 4 ? "🌐 " : disk.IsGoogleDrive ? "☁️ " : "";
         console.log(
-          `${index + 1}. ${disk.mounted} (${
-            disk.filesystem
-          }, Còn trống: ${formatBytes(disk.available)})`
+          `${index + 1}. ${driveType}${
+            disk.DriveLetter
+          }:${label} - Còn trống: ${available}/${total}`
         );
       });
 
@@ -430,13 +459,16 @@ async function main(folderUrl) {
         throw new Error("Lựa chọn ổ đĩa không hợp lệ");
       }
 
-      const selectedDrive = disks[selectedDriveIndex].mounted;
+      const selectedDrive = disks[selectedDriveIndex].DriveLetter;
 
-      // Thêm My Drive nếu là ổ G:
-      if (selectedDrive.startsWith("G:")) {
-        defaultPath = path.join(selectedDrive, "My Drive", "drive-clone");
+      // Kiểm tra nếu là ổ Google Drive
+      if (
+        selectedDrive + ":" === "G:" ||
+        disks[selectedDriveIndex].IsGoogleDrive
+      ) {
+        defaultPath = path.join(selectedDrive + ":", "My Drive", "drive-clone");
       } else {
-        defaultPath = path.join(selectedDrive, "drive-clone");
+        defaultPath = path.join(selectedDrive + ":", "drive-clone");
       }
 
       await ensureDirectoryExists(defaultPath);
