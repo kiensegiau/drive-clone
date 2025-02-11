@@ -404,10 +404,14 @@ async function main(folderUrl) {
       const { execSync } = require("child_process");
       let disks;
       try {
-        const output = execSync(
-          "powershell -command \"$drives = Get-WmiObject Win32_LogicalDisk; $drives | ForEach-Object { $drive = $_; $gPath = Join-Path $drive.DeviceID 'Google Drive'; $isGoogleDrive = Test-Path -Path $gPath -ErrorAction SilentlyContinue; [PSCustomObject]@{ DriveLetter=$drive.DeviceID.Replace(':',''); FileSystemLabel=$drive.VolumeName; DriveType=$drive.DriveType; SizeRemaining=$drive.FreeSpace; Size=$drive.Size; IsGoogleDrive=$isGoogleDrive } } | ConvertTo-Json\"",
-          { encoding: "utf8" }
-        );
+        const powershellPath =
+          "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        const command = `"$drives = Get-WmiObject Win32_LogicalDisk; $drives | ForEach-Object { $drive = $_; $gPath = Join-Path $drive.DeviceID 'Google Drive'; $isGoogleDrive = Test-Path -Path $gPath -ErrorAction SilentlyContinue; [PSCustomObject]@{ DriveLetter=$drive.DeviceID.Replace(':',''); FileSystemLabel=$drive.VolumeName; DriveType=$drive.DriveType; SizeRemaining=$drive.FreeSpace; Size=$drive.Size; IsGoogleDrive=$isGoogleDrive } } | ConvertTo-Json"`;
+
+        const output = execSync(`"${powershellPath}" -Command ${command}`, {
+          encoding: "utf8",
+          shell: true,
+        });
         disks = JSON.parse(output);
         if (!Array.isArray(disks)) {
           disks = [disks];
