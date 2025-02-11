@@ -374,19 +374,21 @@ class DriveAPI {
       console.log(`\n🎯 Bắt đầu tải folder: ${folderInfo.data.name}`);
 
       // Cho phép nhập link folder đích (không bắt buộc)
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
+      // const rl = readline.createInterface({
+      //   input: process.stdin,
+      //   output: process.stdout,
+      // });
 
-      const targetUrl = await new Promise((resolve) => {
-        rl.question(
-          "\n🔗 Nhập link folder đích (Enter để bỏ qua): ",
-          (answer) => resolve(answer)
-        );
-      });
+      // const targetUrl = await new Promise((resolve) => {
+      //   rl.question(
+      //     "\n🔗 Nhập link folder đích (Enter để bỏ qua): ",
+      //     (answer) => resolve(answer)
+      //   );
+      // });
 
-      rl.close();
+      // rl.close();
+
+      const targetUrl = "";
 
       if (targetUrl.trim()) {
         const targetFolderId = this.extractFolderId(targetUrl);
@@ -401,15 +403,19 @@ class DriveAPI {
             supportsAllDrives: true,
           });
           console.log(`\n✅ Đã tìm thấy folder đích: ${targetInfo.data.name}`);
-          
+
           // Tạo folder con với tên giống folder nguồn trong folder đích
-          console.log(`\n📁 Tạo folder "${folderInfo.data.name}" trong folder đích...`);
+          console.log(
+            `\n📁 Tạo folder "${folderInfo.data.name}" trong folder đích...`
+          );
           const newFolder = await this.findOrCreateFolder(
             folderInfo.data.name,
             targetFolderId
           );
-          console.log(`✅ Đã tạo folder: "${newFolder.name}" (${newFolder.id})`);
-          
+          console.log(
+            `✅ Đã tạo folder: "${newFolder.name}" (${newFolder.id})`
+          );
+
           this.currentTargetFolderId = newFolder.id;
         } catch (error) {
           throw new Error(
