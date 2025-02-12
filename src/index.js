@@ -401,104 +401,36 @@ async function main(folderUrl) {
     const isDownloadMode = selectedChoice === "2";
 
     if (isDownloadMode) {
-      const { execSync } = require("child_process");
-      let disks;
+      // Hỏi người dùng chọn ổ đĩa
+      const driveLetter = await askQuestion(
+        "\n💾 Nhập chữ cái ổ đĩa muốn lưu (C/D/E...): "
+      );
+      const selectedDrive = driveLetter.trim().toUpperCase();
+
+      // Kiểm tra ổ đĩa có tồn tại không
       try {
-        // Tách thành 2 lệnh riêng biệt để dễ debug
-        const getDrivesCmd = `Get-WmiObject Win32_LogicalDisk | Select-Object DeviceID,VolumeName,DriveType,FreeSpace,Size | ConvertTo-Json`;
-        const output = execSync(getDrivesCmd, {
-          encoding: "utf8",
-          shell: "powershell.exe",
-        });
-
-        // Parse JSON output
-        const rawDisks = JSON.parse(output);
-        disks = (Array.isArray(rawDisks) ? rawDisks : [rawDisks])
-          .map((disk) => ({
-            DriveLetter: disk.DeviceID.replace(":", ""),
-            FileSystemLabel: disk.VolumeName || "",
-            Size: disk.Size,
-            SizeRemaining: disk.FreeSpace,
-            DriveType: disk.DriveType,
-            IsGoogleDrive: false,
-          }))
-          .filter(
-            (disk) =>
-              disk.Size !== null &&
-              disk.SizeRemaining !== null &&
-              disk.DriveType !== 5 // Loại bỏ CD-ROM
-          );
-
-        // Kiểm tra Google Drive riêng
-        for (const disk of disks) {
-          try {
-            const checkGDriveCmd = `Test-Path -Path "${disk.DriveLetter}:\\Google Drive" -ErrorAction SilentlyContinue`;
-            const result = execSync(checkGDriveCmd, {
-              encoding: "utf8",
-              shell: "powershell.exe",
-            })
-              .trim()
-              .toLowerCase();
-            disk.IsGoogleDrive = result === "true";
-          } catch (e) {
-            disk.IsGoogleDrive = false;
-          }
-        }
-
-        // Sắp xếp với Google Drive lên đầu
-        disks.sort((a, b) => {
-          if (a.IsGoogleDrive && !b.IsGoogleDrive) return -1;
-          if (!a.IsGoogleDrive && b.IsGoogleDrive) return 1;
-          return 0;
-        });
+        const testPath = selectedDrive + ":\\";
+        fs.accessSync(testPath);
       } catch (error) {
-        console.error("Không thể lấy thông tin ổ đĩa:", error);
-        throw new Error("Không thể lấy thông tin ổ đĩa");
-      }
-
-      if (!disks || disks.length === 0) {
-        throw new Error("Không tìm thấy ổ đĩa nào");
-      }
-
-      console.log("\n💾 Các ổ đĩa có sẵn:");
-      disks.forEach((disk, index) => {
-        const label = disk.FileSystemLabel ? ` (${disk.FileSystemLabel})` : "";
-        const available = formatBytes(disk.SizeRemaining);
-        const total = formatBytes(disk.Size);
-        const driveType =
-          disk.DriveType === 4 ? "🌐 " : disk.IsGoogleDrive ? "☁️ " : "";
-        console.log(
-          `${index + 1}. ${driveType}${
-            disk.DriveLetter
-          }:${label} - Còn trống: ${available}/${total}`
+        throw new Error(
+          `❌ Ổ đĩa ${selectedDrive}: không tồn tại hoặc không thể truy cập`
         );
-      });
-
-      const driveChoice = await askQuestion("\nChọn ổ đĩa (nhập số thứ tự): ");
-      const selectedDriveIndex = parseInt(driveChoice) - 1;
-
-      if (
-        isNaN(selectedDriveIndex) ||
-        selectedDriveIndex < 0 ||
-        selectedDriveIndex >= disks.length
-      ) {
-        throw new Error("Lựa chọn ổ đĩa không hợp lệ");
       }
 
-      const selectedDrive = disks[selectedDriveIndex].DriveLetter;
+      // Nếu là ổ L (Google Drive) thì thêm My Drive
+      defaultPath =
+        selectedDrive === "L"
+          ? path.join(selectedDrive + ":", "My Drive", "drive-clone")
+          : path.join(selectedDrive + ":", "drive-clone");
 
-      // Kiểm tra nếu là ổ Google Drive
-      if (
-        selectedDrive + ":" === "G:" ||
-        disks[selectedDriveIndex].IsGoogleDrive
-      ) {
-        defaultPath = path.join(selectedDrive + ":", "My Drive", "drive-clone");
-      } else {
-        defaultPath = path.join(selectedDrive + ":", "drive-clone");
+      try {
+        await ensureDirectoryExists(defaultPath);
+        console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
+      } catch (error) {
+        throw new Error(
+          `❌ Không thể tạo thư mục tại ${defaultPath}: ${error.message}`
+        );
       }
-
-      await ensureDirectoryExists(defaultPath);
-      console.log(`\n📂 Files sẽ được tải về thư mục: ${defaultPath}`);
 
       const confirm = await askQuestion(
         "\nBạn có muốn tiếp tục không? (y/n, mặc định: y): "
