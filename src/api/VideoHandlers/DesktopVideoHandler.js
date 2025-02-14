@@ -580,12 +580,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
       throw new Error("Không có formatData");
     }
 
-    const downloadWithChunksParallel = async (
-      url,
-      path,
-      headers,
-      maxParallelDownloads = 8
-    ) => {
+    const downloadWithChunksParallel = async (url, path, headers, maxParallelDownloads = 8) => {
       let fh = null;
       let isStuck = false;
 
@@ -597,7 +592,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
         const downloadHeaders = {
           ...headers,
           "User-Agent": headers["User-Agent"] || "Mozilla/5.0",
-          Accept: "*/*",
+          Accept: "*/*", 
           "Accept-Encoding": "identity",
           Connection: "keep-alive",
           "Sec-Fetch-Dest": "video",
@@ -607,19 +602,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
           Referer: "https://drive.google.com/",
         };
 
-        // Kiểm tra URL có tồn tại không
-        const testResponse = await axios({
-          method: "get",
-          url: url,
-          headers: {
-            ...downloadHeaders,
-            Range: "bytes=0-1024",
-          },
-          timeout: 10000,
-          validateStatus: (status) => status === 200 || status === 206,
-        });
-
-        // Lấy kích thước file
+        // Lấy kích thước file trước
         const headResponse = await axios.head(url, {
           headers: downloadHeaders,
           timeout: 30000,
@@ -629,8 +612,8 @@ class DesktopVideoHandler extends BaseVideoHandler {
         const totalSize = parseInt(headResponse.headers["content-length"], 10);
         if (!totalSize) throw new Error("Invalid content length");
 
-        // Chia chunks
-        const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB mỗi chunk
+        // Chia chunks lớn hơn
+        const CHUNK_SIZE = 25 * 1024 * 1024; // Tăng lên 25MB mỗi chunk
         const chunks = [];
         for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
           const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
@@ -638,73 +621,50 @@ class DesktopVideoHandler extends BaseVideoHandler {
         }
 
         console.log(
-          `${indent}⚙️ Chia thành ${chunks.length} chunks, mỗi chunk ${
-            CHUNK_SIZE / 1024 / 1024
-          }MB`
+          `${indent}⚙️ Chia thành ${chunks.length} chunks, mỗi chunk ${CHUNK_SIZE / 1024 / 1024}MB`
         );
 
-        // Progress tracking
-        let lastProgress = -1;
-        let noProgressCount = 0;
+        let downloadedSize = 0;
+        const startTime = Date.now();
+        let lastProgress = 0;
 
-        progressInterval = setInterval(() => {
+        // Tạo progress interval
+        const progressInterval = setInterval(() => {
           const progress = ((downloadedSize / totalSize) * 100).toFixed(1);
           const currentTime = ((Date.now() - startTime) / 1000).toFixed(2);
           const downloadedMB = (downloadedSize / 1024 / 1024).toFixed(2);
           const totalMB = (totalSize / 1024 / 1024).toFixed(2);
           const speed = (downloadedSize / 1024 / 1024 / currentTime).toFixed(2);
 
-          if (downloadedSize === lastProgress || downloadedSize === 0) {
-            noProgressCount++;
-            if (noProgressCount >= 15) {
-              console.log(
-                `${indent}⚠️ Download kẹt tại ${progress}%, chuyển sang phương án dự phòng...`
-              );
-              isStuck = true;
-              if (progressInterval) {
-                clearInterval(progressInterval);
-                progressInterval = null;
-              }
-            }
-          } else {
-            noProgressCount = 0;
-            lastProgress = downloadedSize;
+          if (progress > lastProgress) {
+            console.log(
+              `${indent}⏬ ${fileName} | ${progress}% (${downloadedMB}/${totalMB}MB) | ${speed}MB/s | ${currentTime}s`
+            );
+            lastProgress = Math.floor(progress);
           }
-
-          console.log(
-            `${indent}⏬ ${fileName} | ${progress}% (${downloadedMB}/${totalMB}MB) | ${speed}MB/s | ${currentTime}s`
-          );
         }, 2000);
 
-        // Download chunks song song
-        for (
-          let i = 0;
-          i < chunks.length && !isStuck;
-          i += maxParallelDownloads
-        ) {
-          const batch = chunks.slice(
-            i,
-            Math.min(i + maxParallelDownloads, chunks.length)
-          );
-
+        // Download chunks với số lượng song song ít hơn
+        const maxConcurrent = 4; // Giảm số lượng chunks song song
+        
+        for (let i = 0; i < chunks.length && !isStuck; i += maxConcurrent) {
+          const batch = chunks.slice(i, Math.min(i + maxConcurrent, chunks.length));
+          
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0 && !isStuck) {
               try {
-                const chunkHeaders = {
-                  ...downloadHeaders,
-                  Range: `bytes=${chunk.start}-${chunk.end}`,
-                };
-
                 const response = await axios({
                   method: "get",
                   url: url,
-                  headers: chunkHeaders,
+                  headers: {
+                    ...downloadHeaders,
+                    Range: `bytes=${chunk.start}-${chunk.end}`,
+                  },
                   responseType: "arraybuffer",
                   timeout: 30000,
                   maxContentLength: CHUNK_SIZE * 2,
                   maxBodyLength: CHUNK_SIZE * 2,
-                  validateStatus: (status) => status === 200 || status === 206,
                 });
 
                 if (!response.data) throw new Error("Empty response");
@@ -715,77 +675,32 @@ class DesktopVideoHandler extends BaseVideoHandler {
                 break;
               } catch (error) {
                 retries--;
-                failedChunksCount++;
-
-                console.log(`${indent}📝 Chi tiết lỗi chunk:
-                  - Mã lỗi: ${error.response?.status || "Không có"}
-                  - Message: ${error.message}
-                  - Chunk: ${chunk.start}-${chunk.end}
-                  - Retries còn lại: ${retries}
-                  - Số lần lỗi: ${failedChunksCount}
-                `);
-
-                if (error.message.includes("stream has been aborted")) {
-                  console.log(
-                    `${indent}⚠️ Phát hiện lỗi stream aborted, chuyển sang phương án dự phòng...`
-                  );
-                  isStuck = true;
-                  break;
-                }
-
-                if (failedChunksCount >= 3) {
-                  console.log(
-                    `${indent}⚠️ Quá nhiều lỗi chunk (${failedChunksCount}), chuyển sang phương án dự phòng...`
-                  );
-                  isStuck = true;
-                  break;
-                }
-
                 if (retries === 0) {
-                  isStuck = true;
-                  break;
+                  throw error;
                 }
-
-                console.log(`${indent}⚠️ Lỗi chunk, thử lại sau 5s...`);
-                await new Promise((r) => setTimeout(r, 5000));
+                await new Promise(r => setTimeout(r, 5000));
               }
             }
           });
 
-          try {
-            await Promise.all(downloadPromises);
-          } catch (error) {
-            console.error(`${indent}❌ Lỗi tải batch chunks:`, error.message);
-            isStuck = true;
-            break;
-          }
-
-          if (isStuck) break;
+          await Promise.all(downloadPromises);
         }
 
         // Dọn dẹp
-        if (progressInterval) {
-          clearInterval(progressInterval);
-          progressInterval = null;
-        }
+        clearInterval(progressInterval);
+        await fh.close();
+        fh = null;
 
-        if (fh) {
-          await fh.close();
-          fh = null;
-        }
-
-        if (isStuck) {
-          throw new Error("404_NOT_FOUND");
+        // Kiểm tra kết quả cuối cùng
+        const finalSize = fs.statSync(path).size;
+        if (finalSize !== totalSize) {
+          throw new Error(`Size mismatch: expected ${totalSize}, got ${finalSize}`);
         }
 
         return true;
       } catch (error) {
-        if (progressInterval) {
-          clearInterval(progressInterval);
-        }
-        if (fh) {
-          await fh.close();
-        }
+        if (progressInterval) clearInterval(progressInterval);
+        if (fh) await fh.close();
         throw error;
       }
     };
@@ -796,9 +711,18 @@ class DesktopVideoHandler extends BaseVideoHandler {
 
       try {
         await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
-        console.log(
-          `${indent}✅ Tải video thành công với phương pháp chunk song song`
-        );
+        
+        // Thêm kiểm tra cuối cùng trước khi trả về
+        const finalSize = fs.statSync(outputPath).size;
+        const finalSizeMB = (finalSize / 1024 / 1024).toFixed(2);
+        
+        if (finalSize < 1024 * 1024) { // Nhỏ hơn 1MB
+          throw new Error(`Final file size too small: ${finalSizeMB}MB`);
+        }
+
+        console.log(`${indent}✅ Tải video thành công:
+          - File: ${fileName}
+          - Kích thước: ${finalSizeMB}MB`);
         return;
       } catch (error) {
         if (
