@@ -79,7 +79,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
     super();
     this.MAX_RETRIES = 5;
     this.RETRY_DELAY = 5000;
-    this.MAX_STUCK_RETRIES = 5;
+    this.MAX_STUCK_RETRIES = 3;
 
     this.CHUNK_SIZE = 10 * 1024 * 1024;
     this.CONCURRENT_CHUNKS = 2;
@@ -807,15 +807,19 @@ class DesktopVideoHandler extends BaseVideoHandler {
     outputPath,
     headers,
     fileName,
-    depth
+    depth,
+    retryCount = 0
   ) {
     const indent = "  ".repeat(depth);
     let fileHandle = null;
     let downloadedSize = 0;
     const startTime = Date.now();
-    let stuckRetryCount = 0;
     let failedChunksCount = 0;
     let progressInterval = null;
+
+    if (retryCount >= this.MAX_STUCK_RETRIES) {
+      throw new Error(`Đã thử lại ${retryCount} lần không thành công`);
+    }
 
     if (!this.currentFormatData) {
       console.log(
@@ -982,7 +986,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
         ) {
           console.log(`${indent}⚠️ Lỗi tải thông thường: ${error.message}`);
           console.log(`${indent}🔄 Chuyển sang phương án dự phòng...`);
-          
+
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
 
@@ -1034,12 +1038,13 @@ class DesktopVideoHandler extends BaseVideoHandler {
       console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
 
       if (
-        stuckRetryCount < this.MAX_STUCK_RETRIES &&
+        retryCount < this.MAX_STUCK_RETRIES &&
         !error.message.includes("Không có formatData")
       ) {
-        stuckRetryCount++;
         console.log(
-          `${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`
+          `${indent}🔄 Thử lại lần ${retryCount + 1}/${
+            this.MAX_STUCK_RETRIES
+          }...`
         );
         await new Promise((r) => setTimeout(r, 5000));
         return this.downloadVideoWithChunks(
@@ -1047,7 +1052,8 @@ class DesktopVideoHandler extends BaseVideoHandler {
           outputPath,
           headers,
           fileName,
-          depth
+          depth,
+          retryCount + 1
         );
       }
 
