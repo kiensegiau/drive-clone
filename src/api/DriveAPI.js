@@ -1201,7 +1201,7 @@ class DriveAPI {
           q: `name = '${file.name.replace(/'/g, "\\'")}' and '${
             this.currentTargetFolderId
           }' in parents and trashed = false`,
-          fields: "files(id, name, size)",
+          fields: "files(id, name)",
           spaces: "drive",
           supportsAllDrives: true,
         });
@@ -1322,30 +1322,14 @@ class DriveAPI {
             q: `name = '${file.name.replace(/'/g, "\\'")}' and '${
               this.currentTargetFolderId
             }' in parents and trashed = false`,
-            fields: "files(id, name, size)",
+            fields: "files(id, name)",
             spaces: "drive",
             supportsAllDrives: true,
           });
 
           if (existingFile.data.files.length > 0) {
-            const existing = existingFile.data.files[0];
-            if (existing.size == file.size) {
-              console.log(`⏩ Đã tồn tại video: ${file.name}`);
-              console.log(
-                `   Kích thước: ${(file.size / (1024 * 1024)).toFixed(2)} MB`
-              );
-              return { success: true, file, skipped: true };
-            } else {
-              console.log(`⚠ Tồn tại video cùng tên nhưng khác dung lượng:`);
-              console.log(
-                `   - Hiện tại: ${(existing.size / (1024 * 1024)).toFixed(
-                  2
-                )} MB`
-              );
-              console.log(
-                `   - Cần tải: ${(file.size / (1024 * 1024)).toFixed(2)} MB`
-              );
-            }
+            console.log(`⏩ Đã tồn tại video: ${file.name}`);
+            return { success: true, file, skipped: true };
           } else {
             console.log(`🆕 Video chưa tồn tại, cần tải mới`);
           }
