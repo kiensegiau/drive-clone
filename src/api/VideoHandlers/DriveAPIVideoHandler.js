@@ -791,7 +791,6 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
             i,
             Math.min(i + maxParallelDownloads, chunks.length)
           );
-
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0 && !isStuck) {
@@ -822,20 +821,60 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                 retries--;
                 failedChunksCount++;
 
-                console.log(`${indent}📝 Chi tiết lỗi chunk:
-                  - Mã lỗi: ${error.response?.status || "Không có"}
-                  - Message: ${error.message}
-                  - Chunk: ${chunk.start}-${chunk.end}
-                  - Retries còn lại: ${retries}
-                  - Số lần lỗi: ${failedChunksCount}
-                `);
+                // Chi tiết lỗi
+                const errorDetails = {
+                  status: error.response?.status || "Không có",
+                  message: error.message,
+                  chunk: `${chunk.start}-${chunk.end}`,
+                  retries: retries,
+                  failCount: failedChunksCount,
+                };
 
-                if (error.message.includes("stream has been aborted")) {
+                console.log(
+                  `${indent}📝 Chi tiết lỗi chunk:
+                  - Mã lỗi: ${errorDetails.status}
+                  - Message: ${errorDetails.message}
+                  - Chunk: ${errorDetails.chunk}
+                  - Retries còn lại: ${errorDetails.retries}
+                  - Số lần lỗi: ${errorDetails.failCount}
+                `
+                );
+
+                // Xử lý các loại lỗi cụ thể
+                if (error.code === "ECONNRESET" || error.code === "ETIMEDOUT") {
+                  console.log(`${indent}⚠️ Lỗi kết nối, thử lại sau 10s...`);
+                  await new Promise((r) => setTimeout(r, 10000));
+                  continue;
+                }
+
+                if (error.response?.status === 403) {
                   console.log(
-                    `${indent}⚠️ Phát hiện lỗi stream aborted, chuyển sang phương án dự phòng...`
+                    `${indent}⚠️ Lỗi quyền truy cập (403), chuyển sang phương án dự phòng...`
                   );
                   isStuck = true;
                   break;
+                }
+
+                if (error.response?.status === 404) {
+                  console.log(
+                    `${indent}⚠️ File không tồn tại (404), chuyển sang phương án dự phòng...`
+                  );
+                  isStuck = true;
+                  break;
+                }
+
+                if (error.message.includes("stream has been aborted")) {
+                  console.log(
+                    `${indent}⚠️ Stream bị ngắt, chuyển sang phương án dự phòng...`
+                  );
+                  isStuck = true;
+                  break;
+                }
+
+                if (error.message.includes("network timeout")) {
+                  console.log(`${indent}⚠️ Timeout, thử lại sau 5s...`);
+                  await new Promise((r) => setTimeout(r, 5000));
+                  continue;
                 }
 
                 if (failedChunksCount >= 3) {
@@ -847,12 +886,19 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
                 }
 
                 if (retries === 0) {
+                  console.log(
+                    `${indent}⚠️ Hết số lần thử lại cho chunk này, chuyển sang phương án dự phòng...`
+                  );
                   isStuck = true;
                   break;
                 }
 
-                console.log(`${indent}⚠️ Lỗi chunk, thử lại sau 5s...`);
-                await new Promise((r) => setTimeout(r, 5000));
+                // Đợi thời gian tăng dần theo số lần retry
+                const waitTime = 5000 * (3 - retries);
+                console.log(
+                  `${indent}⏳ Đợi ${waitTime / 1000}s trước khi thử lại...`
+                );
+                await new Promise((r) => setTimeout(r, waitTime));
               }
             }
           });

@@ -974,15 +974,20 @@ class DesktopVideoHandler extends BaseVideoHandler {
           - Kích thước: ${finalSizeMB}MB`);
         return;
       } catch (error) {
+        // Nếu gặp lỗi size mismatch hoặc lỗi 404, chuyển sang phương án dự phòng ngay
         if (
+          error.message.includes("Size mismatch") ||
           error.message === "404_NOT_FOUND" ||
           error.response?.status === 404
         ) {
+          console.log(`${indent}⚠️ Lỗi tải thông thường: ${error.message}`);
+          console.log(`${indent}🔄 Chuyển sang phương án dự phòng...`);
+          
           const bestVideo = this.findBestAdaptiveVideo();
           const bestAudio = this.findBestAdaptiveAudio();
 
           if (!bestVideo || !bestAudio) {
-            throw new Error("Không tìm thấy URL");
+            throw new Error("Không tìm thấy URL dự phòng");
           }
 
           const tempVideoPath = `${outputPath}.video.tmp`;
@@ -1005,6 +1010,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
               3
             );
 
+            console.log(`${indent}🎬 Đang ghép video và audio...`);
             await this.mergeVideoAudio(
               tempVideoPath,
               tempAudioPath,
