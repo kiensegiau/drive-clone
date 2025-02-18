@@ -1587,79 +1587,87 @@ class DesktopVideoHandler extends BaseVideoHandler {
     }
   }
 
-  async moveVideoToTarget(tempPath, finalPath, indent = "") {
+  async ensureDirectoryAccess(dirPath) {
     try {
-      // Thử di chuyển với tên gốc trước
-      let normalizedTempPath = tempPath;
-      let normalizedFinalPath = finalPath;
-
-      if (process.platform === "win32") {
-        normalizedTempPath = path.resolve(normalizedTempPath);
-        normalizedFinalPath = path.resolve(normalizedFinalPath);
-
-        if (!normalizedTempPath.startsWith("\\\\?\\")) {
-          normalizedTempPath = `\\\\?\\${normalizedTempPath}`;
-        }
-        if (!normalizedFinalPath.startsWith("\\\\?\\")) {
-          normalizedFinalPath = `\\\\?\\${normalizedFinalPath}`;
-        }
+      // Tạo thư mục nếu chưa tồn tại
+      if (!fs.existsSync(dirPath)) {
+        await fs.promises.mkdir(dirPath, { recursive: true });
+        console.log(`📁 Đã tạo thư mục: ${dirPath}`);
       }
 
+      // Kiểm tra quyền truy cập
+      await fs.promises.access(dirPath, fs.constants.R_OK | fs.constants.W_OK);
+
+      // Thử tạo file test để xác nhận quyền ghi
+      const testFile = path.join(dirPath, ".test_write");
+      await fs.promises.writeFile(testFile, "");
+      await fs.promises.unlink(testFile);
+
+      return true;
+    } catch (error) {
+      console.error(
+        `❌ Không thể truy cập thư mục ${dirPath}: ${error.message}`
+      );
+      throw new Error(`Không thể truy cập thư mục: ${error.message}`);
+    }
+  }
+
+  async moveVideoToTarget(tempPath, finalPath, indent = "") {
+    try {
       // Kiểm tra file nguồn
-      if (!fs.existsSync(normalizedTempPath)) {
+      if (!fs.existsSync(tempPath)) {
         throw new Error(`File nguồn không tồn tại: ${tempPath}`);
       }
 
-      const sourceStats = await fs.promises.stat(normalizedTempPath);
+      const sourceStats = await fs.promises.stat(tempPath);
       if (sourceStats.size === 0) {
         throw new Error(`File nguồn rỗng: ${tempPath}`);
       }
 
-      const targetDir = path.dirname(normalizedFinalPath);
+      const targetDir = path.dirname(finalPath);
 
-      // Đảm bảo thư mục đích tồn tại
-      await ensureDirectoryExists(targetDir);
+      // Tạo thư mục đích nếu chưa tồn tại
+      if (!fs.existsSync(targetDir)) {
+        await fs.promises.mkdir(targetDir, { recursive: true });
+      }
 
       try {
         // Thử di chuyển với tên gốc
-        await this.tryMoveFile(
-          normalizedTempPath,
-          normalizedFinalPath,
-          sourceStats,
-          indent
-        );
+        await fs.promises.rename(tempPath, finalPath);
+        console.log(`${indent}✅ Đã di chuyển file vào: ${finalPath}`);
         return true;
       } catch (error) {
-        console.log(
-          `${indent}⚠️ Không thể di chuyển với tên gốc: ${error.message}`
-        );
-        console.log(`${indent}🔄 Thử lại với tên ngắn hơn...`);
+        // Kiểm tra nếu lỗi là do đường dẫn quá dài
+        if (
+          error.code === "ENAMETOOLONG" ||
+          finalPath.length > 250 ||
+          error.message.includes("name too long")
+        ) {
+          console.log(`${indent}⚠️ Đường dẫn quá dài, thử rút gọn tên file...`);
 
-        // Nếu thất bại, thử với tên ngắn
-        const shortenedFileName = this.shortenFileName(
-          path.basename(finalPath)
-        );
-        const shortenedFinalPath = path.join(
-          path.dirname(normalizedFinalPath),
-          shortenedFileName
-        );
+          // Tạo tên file ngắn hơn
+          const ext = path.extname(finalPath);
+          const baseNameWithoutExt = path.basename(finalPath, ext);
+          const shortName = baseNameWithoutExt.slice(0, 30) + ext;
 
-        try {
-          await this.tryMoveFile(
-            normalizedTempPath,
-            shortenedFinalPath,
-            sourceStats,
-            indent
-          );
-          console.log(
-            `${indent}✅ Đã di chuyển thành công với tên ngắn: ${shortenedFileName}`
-          );
-          return true;
-        } catch (moveError) {
-          console.error(
-            `${indent}❌ Vẫn không thể di chuyển với tên ngắn:`,
-            moveError.message
-          );
+          // Tạo đường dẫn mới với tên ngắn
+          const newPath = path.join(targetDir, shortName);
+
+          try {
+            await fs.promises.rename(tempPath, newPath);
+            console.log(
+              `${indent}✅ Đã di chuyển thành công với tên ngắn: ${shortName}`
+            );
+            return true;
+          } catch (moveError) {
+            console.error(
+              `${indent}❌ Vẫn không thể di chuyển file:`,
+              moveError.message
+            );
+            return false;
+          }
+        } else {
+          console.log(`${indent}❌ Lỗi di chuyển file: ${error.message}`);
           return false;
         }
       }
@@ -1790,24 +1798,9 @@ class DesktopVideoHandler extends BaseVideoHandler {
   }
 
   getTargetFilePath(fileName, targetPath) {
-    // Xử lý tên file trước
+    // Chỉ thay thế các ký tự không hợp lệ trong tên file
     const safeFileName = sanitizePath(fileName);
-    const shortenedFileName = this.shortenFileName(safeFileName);
-    let fullPath = path.join(targetPath, shortenedFileName);
-    fullPath = path.normalize(fullPath);
-
-    // Xử lý đường dẫn dài trên Windows
-    if (process.platform === "win32") {
-      // Đảm bảo đường dẫn là absolute
-      fullPath = path.resolve(fullPath);
-
-      // Thêm prefix \\?\ nếu cần
-      if (!fullPath.startsWith("\\\\?\\")) {
-        fullPath = `\\\\?\\${fullPath}`;
-      }
-    }
-
-    return fullPath;
+    return path.join(targetPath, safeFileName);
   }
 
   async checkDiskSpace(dirPath) {
