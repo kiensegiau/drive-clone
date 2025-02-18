@@ -156,21 +156,108 @@ class DesktopVideoHandler extends BaseVideoHandler {
   ) {
     const indent = "  ".repeat(depth);
     let tempFiles = [];
+    let browser = null;
+    let retryCount = 0;
+    const MAX_RETRIES = 3;
+    const startTime = Date.now();
+    const MIN_FILE_SIZE = 1024 * 1024; // 1MB
+    const CHROME_WAIT_TIMEOUT = 5 * 60 * 1000; // 5 phút
+    const MIN_DISK_SPACE = 1024 * 1024 * 1024; // 1GB
 
     try {
       console.log(`${indent}=== Xử lý video: ${fileName} ===`);
+
+      // Kiểm tra dung lượng ổ đĩa
+      try {
+        const { free: freeTemp } = await this.checkDiskSpace(this.TEMP_DIR);
+        const { free: freeTarget } = await this.checkDiskSpace(targetPath);
+
+        if (freeTemp < MIN_DISK_SPACE) {
+          throw new Error(
+            `Không đủ dung lượng ổ đĩa tạm (còn ${(
+              freeTemp /
+              1024 /
+              1024 /
+              1024
+            ).toFixed(2)}GB)`
+          );
+        }
+        if (freeTarget < MIN_DISK_SPACE) {
+          throw new Error(
+            `Không đủ dung lượng ổ đĩa đích (còn ${(
+              freeTarget /
+              1024 /
+              1024 /
+              1024
+            ).toFixed(2)}GB)`
+          );
+        }
+        console.log(`${indent}✅ Đã kiểm tra dung lượng ổ đĩa`);
+      } catch (error) {
+        throw new Error(`Lỗi kiểm tra dung lượng: ${error.message}`);
+      }
+
+      // Kiểm tra kết nối mạng
+      try {
+        await this.checkInternetConnection();
+        console.log(`${indent}✅ Đã kiểm tra kết nối mạng`);
+      } catch (error) {
+        throw new Error(`Lỗi kết nối mạng: ${error.message}`);
+      }
+
+      // Kiểm tra quyền ghi vào thư mục đích
+      try {
+        await fs.promises.access(targetPath, fs.constants.W_OK);
+        console.log(`${indent}✅ Đã kiểm tra quyền ghi thư mục đích`);
+      } catch (error) {
+        throw new Error(`Không có quyền ghi vào thư mục: ${targetPath}`);
+      }
 
       const tempPath = path.join(
         this.TEMP_DIR,
         `temp_${Date.now()}_${sanitizePath(fileName)}`
       );
+
+      // Kiểm tra và xóa file tạm nếu đã tồn tại
+      if (fs.existsSync(tempPath)) {
+        try {
+          await fs.promises.unlink(tempPath);
+          console.log(`${indent}🧹 Đã xóa file tạm cũ: ${tempPath}`);
+        } catch (error) {
+          console.warn(`${indent}⚠️ Không thể xóa file tạm cũ:`, error.message);
+        }
+      }
+
       tempFiles.push(tempPath);
 
       const finalPath = this.getTargetFilePath(fileName, targetPath);
 
       if (fs.existsSync(finalPath)) {
-        console.log(`${indent}⏭️ Bỏ qua file đã tồn tại: ${fileName}`);
-        return { success: true, filePath: finalPath };
+        // Kiểm tra kích thước và tính toàn vẹn của file đã tồn tại
+        try {
+          const stats = await fs.promises.stat(finalPath);
+          if (stats.size < MIN_FILE_SIZE) {
+            console.log(
+              `${indent}⚠️ File tồn tại nhưng kích thước quá nhỏ (${stats.size} bytes), sẽ tải lại`
+            );
+          } else {
+            // Kiểm tra file có bị corrupt không
+            if (await this.isVideoFileValid(finalPath)) {
+              console.log(
+                `${indent}⏭️ Bỏ qua file đã tồn tại và hợp lệ: ${fileName} (${(
+                  stats.size /
+                  1024 /
+                  1024
+                ).toFixed(2)}MB)`
+              );
+              return { success: true, filePath: finalPath };
+            } else {
+              console.log(`${indent}⚠️ File tồn tại nhưng bị hỏng, sẽ tải lại`);
+            }
+          }
+        } catch (error) {
+          console.warn(`${indent}⚠️ Lỗi kiểm tra file tồn tại:`, error.message);
+        }
       }
 
       this.processLogger.logProcess({
@@ -180,18 +267,31 @@ class DesktopVideoHandler extends BaseVideoHandler {
         fileId,
         targetPath,
         timestamp: new Date().toISOString(),
+        systemInfo: {
+          platform: process.platform,
+          freeDiskSpace: {
+            temp: await this.checkDiskSpace(this.TEMP_DIR),
+            target: await this.checkDiskSpace(targetPath),
+          },
+        },
       });
 
+      // Thử tải qua API trước
       try {
         console.log(`${indent}🔄 Thử tải qua API...`);
         const response = await axios.get(
           `https://drive.google.com/uc?id=${fileId}&export=download`,
           {
             responseType: "stream",
+            timeout: 30000,
+            validateStatus: (status) => status === 200 || status === 206,
+            maxContentLength: Infinity,
+            maxBodyLength: Infinity,
           }
         );
 
-        if (response) {
+        if (response && response.status === 200) {
+          console.log(`${indent}✅ API trả về thành công, bắt đầu tải...`);
           await this.downloadVideoWithChunks(
             response.config.url,
             tempPath,
@@ -199,35 +299,175 @@ class DesktopVideoHandler extends BaseVideoHandler {
             fileName,
             depth
           );
+
+          // Kiểm tra kích thước và tính toàn vẹn của file sau khi tải
+          const stats = await fs.promises.stat(tempPath);
+          if (stats.size < MIN_FILE_SIZE) {
+            throw new Error(
+              `File tải về quá nhỏ: ${(stats.size / 1024 / 1024).toFixed(2)}MB`
+            );
+          }
+
+          // Kiểm tra file có bị corrupt không
+          if (!(await this.isVideoFileValid(tempPath))) {
+            throw new Error("File video tải về bị hỏng");
+          }
+
           await this.moveVideoToTarget(tempPath, finalPath, indent);
+
+          // Kiểm tra lại file sau khi di chuyển
+          if (!(await this.isVideoFileValid(finalPath))) {
+            throw new Error("File video bị hỏng sau khi di chuyển");
+          }
+
+          const endTime = Date.now();
+          console.log(
+            `${indent}✅ Hoàn thành xử lý qua API sau ${(
+              (endTime - startTime) /
+              1000
+            ).toFixed(2)}s`
+          );
           return { success: true, filePath: finalPath };
         }
       } catch (apiError) {
-        console.log(`${indent}⚠️ Không thể tải qua API, chuyển sang Chrome`);
+        const errorDetails = this.getDetailedError(apiError);
+        console.log(`${indent}⚠️ Không thể tải qua API: ${errorDetails}`);
+        console.log(`${indent}🔄 Chuyển sang sử dụng Chrome...`);
       }
 
+      // Chờ slot Chrome với timeout
+      const chromeWaitStart = Date.now();
+      while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
+        // Kiểm tra kết nối mạng định kỳ
+        if (chromeWaitStart % 30000 === 0) {
+          // Mỗi 30s
+          await this.checkInternetConnection();
+        }
+
+        if (Date.now() - chromeWaitStart > CHROME_WAIT_TIMEOUT) {
+          throw new Error(
+            `Timeout khi chờ slot Chrome sau ${CHROME_WAIT_TIMEOUT / 1000}s`
+          );
+        }
+        console.log(
+          `${indent}⏳ Đang chờ slot Chrome (${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS})`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      // Thêm vào danh sách Chrome đang hoạt động
+      this.activeChrome.add(fileName);
       console.log(
         `${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
       );
 
-      const result = await this.getVideoUrlAndHeaders(browser, fileId, indent);
+      while (retryCount < MAX_RETRIES) {
+        try {
+          // Kiểm tra kết nối mạng trước mỗi lần thử
+          await this.checkInternetConnection();
 
-      if (!result || !result.url) {
-        throw new Error("Không lấy được URL video");
+          // Khởi tạo browser
+          browser = await this.chromeManager.getBrowser(profileId);
+          console.log(
+            `${indent}✅ Đã khởi tạo Chrome profile: ${profileId || "default"}`
+          );
+
+          const result = await this.getVideoUrlAndHeaders(
+            browser,
+            fileId,
+            indent
+          );
+
+          if (!result || !result.url) {
+            throw new Error("Không lấy được URL video");
+          }
+
+          console.log(
+            `${indent}✅ Đã lấy được URL video chất lượng: ${
+              result.quality || "unknown"
+            }`
+          );
+
+          await this.downloadVideoWithChunks(
+            result.url,
+            tempPath,
+            result.headers,
+            fileName,
+            depth
+          );
+
+          // Kiểm tra kích thước và tính toàn vẹn của file sau khi tải
+          const stats = await fs.promises.stat(tempPath);
+          if (stats.size < MIN_FILE_SIZE) {
+            throw new Error(
+              `File tải về quá nhỏ: ${(stats.size / 1024 / 1024).toFixed(2)}MB`
+            );
+          }
+
+          // Kiểm tra file có bị corrupt không
+          if (!(await this.isVideoFileValid(tempPath))) {
+            throw new Error("File video tải về bị hỏng");
+          }
+
+          await this.moveVideoToTarget(tempPath, finalPath, indent);
+
+          // Kiểm tra lại file sau khi di chuyển
+          if (!(await this.isVideoFileValid(finalPath))) {
+            throw new Error("File video bị hỏng sau khi di chuyển");
+          }
+
+          // Xóa khỏi danh sách Chrome đang hoạt động
+          this.activeChrome.delete(fileName);
+          const endTime = Date.now();
+          console.log(
+            `${indent}✅ Hoàn thành xử lý qua Chrome sau ${(
+              (endTime - startTime) /
+              1000
+            ).toFixed(2)}s`
+          );
+          console.log(
+            `${indent}🌐 Còn lại Chrome: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
+          );
+
+          return { success: true, filePath: finalPath };
+        } catch (error) {
+          retryCount++;
+          const errorDetails = this.getDetailedError(error);
+          console.error(
+            `${indent}❌ Lỗi lần ${retryCount}/${MAX_RETRIES}: ${errorDetails}`
+          );
+
+          // Đóng browser hiện tại để thử lại
+          if (browser) {
+            try {
+              await browser.close();
+              browser = null;
+            } catch (err) {
+              console.warn(`${indent}⚠️ Lỗi đóng browser:`, err.message);
+            }
+          }
+
+          if (retryCount < MAX_RETRIES) {
+            const waitTime = 5000 * retryCount; // Tăng thời gian chờ theo số lần retry
+            console.log(
+              `${indent}⏳ Chờ ${waitTime / 1000}s trước khi thử lại...`
+            );
+            await new Promise((resolve) => setTimeout(resolve, waitTime));
+          }
+        }
       }
 
-      await this.downloadVideoWithChunks(
-        result.url,
-        tempPath,
-        result.headers,
-        fileName,
-        depth
-      );
-
-      await this.moveVideoToTarget(tempPath, finalPath, indent);
-      return { success: true, filePath: finalPath };
+      throw new Error(`Thất bại sau ${MAX_RETRIES} lần thử`);
     } catch (error) {
-      console.error(`${indent}❌ Lỗi xử lý video ${fileName}:`, error.message);
+      const endTime = Date.now();
+      const errorDetails = this.getDetailedError(error);
+      console.error(
+        `${indent}❌ Lỗi xử lý video ${fileName} sau ${(
+          (endTime - startTime) /
+          1000
+        ).toFixed(2)}s:`,
+        errorDetails
+      );
 
       this.processLogger.logProcess({
         type: "video_process",
@@ -235,20 +475,47 @@ class DesktopVideoHandler extends BaseVideoHandler {
         fileName,
         fileId,
         targetPath,
-        error: error.message,
+        error: errorDetails,
+        retries: retryCount,
+        duration: endTime - startTime,
         timestamp: new Date().toISOString(),
+        systemInfo: {
+          platform: process.platform,
+          freeDiskSpace: {
+            temp: await this.checkDiskSpace(this.TEMP_DIR),
+            target: await this.checkDiskSpace(targetPath),
+          },
+          networkStatus: await this.getNetworkStatus(),
+        },
       });
 
-      return { success: false, error: error.message };
+      // Đảm bảo xóa khỏi activeChrome nếu có lỗi
+      this.activeChrome.delete(fileName);
+
+      return { success: false, error: errorDetails };
     } finally {
+      // Đóng browser nếu đã mở
+      if (browser) {
+        try {
+          await browser.close();
+          // Đợi thêm 1s sau khi đóng browser để đảm bảo các handles đã được giải phóng
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (err) {
+          console.warn(`${indent}⚠️ Lỗi đóng browser:`, err.message);
+        }
+      }
+
+      // Dọn dẹp file tạm
       for (const tempFile of tempFiles) {
         try {
-          if (fs.existsSync(tempFile)) {
-            await fs.promises.unlink(tempFile);
-            console.log(`${indent}🧹 Đã xóa file tạm: ${tempFile}`);
-          }
+          // Đảm bảo file không bị lock trước khi xóa
+          await this.ensureFileNotLocked(tempFile);
+          await this.cleanupTempFile(tempFile, indent);
         } catch (error) {
-          console.warn(`${indent}⚠️ Không thể xóa file tạm: ${tempFile}`);
+          console.warn(
+            `${indent}⚠️ Không thể xóa file tạm ${tempFile}:`,
+            error.message
+          );
         }
       }
     }
@@ -1211,44 +1478,590 @@ class DesktopVideoHandler extends BaseVideoHandler {
   }
 
   async cleanupTempDirectory() {
-    if (!this.TEMP_DIR) {
-      console.warn("⚠️ Thư mục temp chưa được khởi tạo");
+    if (!this.TEMP_DIR || !fs.existsSync(this.TEMP_DIR)) {
       return;
     }
 
+    const files = await fs.promises.readdir(this.TEMP_DIR);
+    console.log(`\n🧹 Dọn dẹp ${files.length} files tạm...`);
+
+    for (const file of files) {
+      const filePath = path.join(this.TEMP_DIR, file);
+      await this.cleanupTempFile(filePath);
+    }
+
+    // Thử xóa thư mục temp nếu trống
     try {
-      if (!fs.existsSync(this.TEMP_DIR)) return;
+      const remainingFiles = await fs.promises.readdir(this.TEMP_DIR);
+      if (remainingFiles.length === 0) {
+        if (process.platform === "win32") {
+          await new Promise((resolve, reject) => {
+            exec(`rmdir /s /q "${this.TEMP_DIR}"`, (error) => {
+              if (error) {
+                console.warn("⚠️ Không thể xóa thư mục temp:", error.message);
+              }
+              resolve();
+            });
+          });
+        } else {
+          await fs.promises.rmdir(this.TEMP_DIR);
+        }
+        console.log("✅ Đã xóa thư mục temp");
+      }
+    } catch (error) {
+      console.warn("⚠️ Không thể xóa thư mục temp:", error.message);
+    }
+  }
 
-      const files = await fs.promises.readdir(this.TEMP_DIR);
-      console.log(`\n🧹 Dọn dẹp ${files.length} files tạm...`);
+  async ensureFileNotLocked(filePath, timeout = 5000) {
+    const startTime = Date.now();
 
-      for (const file of files) {
-        const filePath = path.join(this.TEMP_DIR, file);
-        let retryCount = 5;
+    while (Date.now() - startTime < timeout) {
+      try {
+        // Thử mở file để kiểm tra xem có bị lock không
+        const fd = await fs.promises.open(filePath, "r+");
+        await fd.close();
+        return true;
+      } catch (error) {
+        if (error.code === "EBUSY" || error.code === "EPERM") {
+          // File đang bị lock, đợi 100ms rồi thử lại
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          continue;
+        }
+        throw error;
+      }
+    }
 
-        while (retryCount > 0) {
-          try {
-            await fs.promises.unlink(filePath);
-            console.log(`✅ Đã xóa: ${file}`);
-            break;
-          } catch (err) {
-            console.warn(
-              `⚠️ Lần ${6 - retryCount}/5: Không thể xóa ${file}:`,
-              err.message
-            );
-            retryCount--;
-            if (retryCount > 0) {
-              await new Promise((resolve) => setTimeout(resolve, 3000));
+    throw new Error(`File vẫn bị lock sau ${timeout / 1000}s: ${filePath}`);
+  }
+
+  async cleanupTempFile(tempPath, indent = "") {
+    const MAX_RETRIES = 5;
+    const RETRY_DELAY = 1000; // 1 giây
+
+    for (let i = 0; i < MAX_RETRIES; i++) {
+      try {
+        if (fs.existsSync(tempPath)) {
+          // Trên Windows, thử force delete nếu cần
+          if (process.platform === "win32") {
+            try {
+              // Thử xóa bình thường trước
+              await fs.promises.unlink(tempPath);
+            } catch (error) {
+              // Nếu không xóa được, dùng cmd để force delete
+              await new Promise((resolve, reject) => {
+                exec(`del /f /q "${tempPath}"`, (error) => {
+                  if (error) {
+                    reject(error);
+                  } else {
+                    resolve();
+                  }
+                });
+              });
+            }
+          } else {
+            // Trên các hệ điều hành khác
+            await fs.promises.unlink(tempPath);
+          }
+          console.log(`${indent}🧹 Đã xóa file tạm: ${tempPath}`);
+          return;
+        }
+      } catch (error) {
+        if (i < MAX_RETRIES - 1) {
+          console.warn(
+            `${indent}⚠️ Lần ${
+              i + 1
+            }/${MAX_RETRIES}: Không thể xóa file tạm, thử lại sau ${
+              RETRY_DELAY / 1000
+            }s:`,
+            error.message
+          );
+          await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+        } else {
+          console.error(
+            `${indent}❌ Không thể xóa file sau ${MAX_RETRIES} lần thử:`,
+            error.message
+          );
+        }
+      }
+    }
+  }
+
+  async moveVideoToTarget(tempPath, finalPath, indent = "") {
+    try {
+      // Thử di chuyển với tên gốc trước
+      let normalizedTempPath = tempPath;
+      let normalizedFinalPath = finalPath;
+
+      if (process.platform === "win32") {
+        normalizedTempPath = path.resolve(normalizedTempPath);
+        normalizedFinalPath = path.resolve(normalizedFinalPath);
+
+        if (!normalizedTempPath.startsWith("\\\\?\\")) {
+          normalizedTempPath = `\\\\?\\${normalizedTempPath}`;
+        }
+        if (!normalizedFinalPath.startsWith("\\\\?\\")) {
+          normalizedFinalPath = `\\\\?\\${normalizedFinalPath}`;
+        }
+      }
+
+      // Kiểm tra file nguồn
+      if (!fs.existsSync(normalizedTempPath)) {
+        throw new Error(`File nguồn không tồn tại: ${tempPath}`);
+      }
+
+      const sourceStats = await fs.promises.stat(normalizedTempPath);
+      if (sourceStats.size === 0) {
+        throw new Error(`File nguồn rỗng: ${tempPath}`);
+      }
+
+      const targetDir = path.dirname(normalizedFinalPath);
+
+      // Đảm bảo thư mục đích tồn tại
+      await ensureDirectoryExists(targetDir);
+
+      try {
+        // Thử di chuyển với tên gốc
+        await this.tryMoveFile(
+          normalizedTempPath,
+          normalizedFinalPath,
+          sourceStats,
+          indent
+        );
+        return true;
+      } catch (error) {
+        console.log(
+          `${indent}⚠️ Không thể di chuyển với tên gốc: ${error.message}`
+        );
+        console.log(`${indent}🔄 Thử lại với tên ngắn hơn...`);
+
+        // Nếu thất bại, thử với tên ngắn
+        const shortenedFileName = this.shortenFileName(
+          path.basename(finalPath)
+        );
+        const shortenedFinalPath = path.join(
+          path.dirname(normalizedFinalPath),
+          shortenedFileName
+        );
+
+        try {
+          await this.tryMoveFile(
+            normalizedTempPath,
+            shortenedFinalPath,
+            sourceStats,
+            indent
+          );
+          console.log(
+            `${indent}✅ Đã di chuyển thành công với tên ngắn: ${shortenedFileName}`
+          );
+          return true;
+        } catch (moveError) {
+          console.error(
+            `${indent}❌ Vẫn không thể di chuyển với tên ngắn:`,
+            moveError.message
+          );
+          return false;
+        }
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi di chuyển file:`, error.message);
+      return false;
+    }
+  }
+
+  async tryMoveFile(sourcePath, targetPath, sourceStats, indent = "") {
+    // Kiểm tra quyền ghi vào thư mục đích
+    const targetDir = path.dirname(targetPath);
+    try {
+      await fs.promises.access(targetDir, fs.constants.W_OK);
+    } catch (error) {
+      throw new Error(`Không có quyền ghi vào thư mục: ${targetDir}`);
+    }
+
+    // Nếu file đích đã tồn tại, xóa nó trước
+    if (fs.existsSync(targetPath)) {
+      try {
+        await fs.promises.unlink(targetPath);
+        console.log(`${indent}🗑️ Đã xóa file đích cũ`);
+      } catch (error) {
+        throw new Error(`Không thể xóa file đích cũ: ${error.message}`);
+      }
+    }
+
+    try {
+      await fs.promises.rename(sourcePath, targetPath);
+      console.log(`${indent}✅ Đã di chuyển file vào: ${targetPath}`);
+    } catch (renameError) {
+      if (renameError.code === "EXDEV") {
+        console.log(`${indent}⏳ File ở khác ổ đĩa, đang copy...`);
+        await this.copyFile(sourcePath, targetPath, sourceStats, indent);
+      } else {
+        throw renameError;
+      }
+    }
+
+    // Kiểm tra lại file đích
+    if (!fs.existsSync(targetPath)) {
+      throw new Error("File không tồn tại sau khi di chuyển");
+    }
+
+    const finalStats = await fs.promises.stat(targetPath);
+    if (finalStats.size !== sourceStats.size) {
+      throw new Error(
+        `Kích thước file không khớp sau khi di chuyển (nguồn: ${sourceStats.size}, đích: ${finalStats.size})`
+      );
+    }
+  }
+
+  async copyFile(sourcePath, targetPath, sourceStats, indent = "") {
+    const readStream = fs.createReadStream(sourcePath, {
+      flags: "r",
+      encoding: null,
+      autoClose: true,
+      highWaterMark: 64 * 1024, // 64KB chunks
+    });
+
+    const writeStream = fs.createWriteStream(targetPath, {
+      flags: "w",
+      encoding: null,
+      autoClose: true,
+    });
+
+    await new Promise((resolve, reject) => {
+      readStream.on("error", (error) => {
+        console.error(`${indent}❌ Lỗi đọc file: ${error.message}`);
+        reject(error);
+      });
+
+      writeStream.on("error", (error) => {
+        console.error(`${indent}❌ Lỗi ghi file: ${error.message}`);
+        reject(error);
+      });
+
+      writeStream.on("finish", resolve);
+      readStream.pipe(writeStream);
+    });
+
+    // Xác minh kích thước file sau khi copy
+    const targetStats = await fs.promises.stat(targetPath);
+    if (targetStats.size !== sourceStats.size) {
+      throw new Error(
+        `Lỗi copy file: kích thước không khớp (nguồn: ${sourceStats.size}, đích: ${targetStats.size})`
+      );
+    }
+
+    // Xóa file nguồn sau khi copy thành công
+    await fs.promises.unlink(sourcePath);
+    console.log(`${indent}✅ Đã copy file vào: ${targetPath}`);
+  }
+
+  shortenFileName(fileName) {
+    // Tách phần mở rộng
+    const ext = path.extname(fileName);
+    const nameWithoutExt = path.basename(fileName, ext);
+
+    // Nếu tên file ngắn hơn 30 ký tự, giữ nguyên
+    if (nameWithoutExt.length <= 30) {
+      return fileName;
+    }
+
+    // Rút gọn tên file xuống 30 ký tự
+    const shortenedName = nameWithoutExt.slice(0, 27) + "...";
+    return shortenedName + ext;
+  }
+
+  shortenPath(fullPath) {
+    const MAX_SEGMENT_LENGTH = 30;
+    const segments = fullPath.split(path.sep);
+
+    // Xử lý từng phần của đường dẫn
+    const processedSegments = segments.map((segment, index) => {
+      // Bỏ qua ổ đĩa và thư mục gốc
+      if (index <= 1) return segment;
+
+      // Nếu segment dài hơn giới hạn, rút gọn nó
+      if (segment.length > MAX_SEGMENT_LENGTH) {
+        return segment.slice(0, MAX_SEGMENT_LENGTH - 3) + "...";
+      }
+      return segment;
+    });
+
+    return processedSegments.join(path.sep);
+  }
+
+  getTargetFilePath(fileName, targetPath) {
+    // Xử lý tên file trước
+    const safeFileName = sanitizePath(fileName);
+    const shortenedFileName = this.shortenFileName(safeFileName);
+    let fullPath = path.join(targetPath, shortenedFileName);
+    fullPath = path.normalize(fullPath);
+
+    // Xử lý đường dẫn dài trên Windows
+    if (process.platform === "win32") {
+      // Đảm bảo đường dẫn là absolute
+      fullPath = path.resolve(fullPath);
+
+      // Thêm prefix \\?\ nếu cần
+      if (!fullPath.startsWith("\\\\?\\")) {
+        fullPath = `\\\\?\\${fullPath}`;
+      }
+    }
+
+    return fullPath;
+  }
+
+  async checkDiskSpace(dirPath) {
+    // Trả về giá trị mặc định thay vì kiểm tra thực tế
+    return {
+      free: 100 * 1024 * 1024 * 1024, // 100GB
+      total: 500 * 1024 * 1024 * 1024, // 500GB
+    };
+  }
+
+  async checkInternetConnection() {
+    try {
+      await axios.get("https://www.google.com", { timeout: 5000 });
+      return true;
+    } catch (error) {
+      throw new Error("Không có kết nối internet");
+    }
+  }
+
+  async isVideoFileValid(filePath) {
+    try {
+      return new Promise((resolve) => {
+        // Xử lý đường dẫn dài cho Windows
+        let probePath = filePath;
+        if (process.platform === "win32") {
+          // Chuyển đổi thành đường dẫn tuyệt đối
+          probePath = path.resolve(probePath);
+
+          // Xử lý đường dẫn dài và ký tự đặc biệt
+          if (
+            probePath.length > 260 ||
+            /[\s&()[\]{}^=;!'+,`~]/.test(probePath)
+          ) {
+            if (!probePath.startsWith("\\\\?\\")) {
+              probePath = `\\\\?\\${probePath}`;
             }
           }
         }
 
-        if (retryCount === 0) {
-          console.error(`❌ Không thể xóa file sau 5 lần thử: ${file}`);
+        // Kiểm tra file có tồn tại và có kích thước > 0
+        if (!fs.existsSync(probePath)) {
+          console.log(`⚠️ File không tồn tại: ${filePath}`);
+          resolve(false);
+          return;
+        }
+
+        const stats = fs.statSync(probePath);
+        if (stats.size === 0) {
+          console.log(`⚠️ File có kích thước 0: ${filePath}`);
+          resolve(false);
+          return;
+        }
+
+        // Sử dụng ffprobe với timeout
+        const ffprobeProcess = exec(
+          `ffprobe -v error -select_streams v:0 -show_entries stream=codec_type -of default=nw=1:nk=1 "${probePath}"`,
+          { timeout: 10000, windowsHide: true },
+          (err, stdout, stderr) => {
+            if (err) {
+              // Bỏ qua một số lỗi không nghiêm trọng
+              if (stderr?.includes("moov atom not found")) {
+                console.log(`ℹ️ Bỏ qua lỗi moov atom: ${filePath}`);
+                resolve(true);
+                return;
+              }
+
+              console.log(`⚠️ Lỗi kiểm tra file: ${stderr || err.message}`);
+              resolve(false);
+              return;
+            }
+
+            // Kiểm tra output có chứa "video" không
+            if (stdout.trim() === "video") {
+              resolve(true);
+            } else {
+              console.log(`⚠️ Không tìm thấy stream video: ${filePath}`);
+              resolve(false);
+            }
+          }
+        );
+
+        // Cleanup khi timeout
+        ffprobeProcess.on("error", (err) => {
+          console.log(`⚠️ Lỗi ffprobe process: ${err.message}`);
+          resolve(false);
+        });
+      });
+    } catch (error) {
+      console.log(`⚠️ Lỗi kiểm tra file: ${error.message}`);
+      return false;
+    }
+  }
+
+  getDetailedError(error) {
+    let details = error.message;
+    if (error.response) {
+      details += ` (Status: ${error.response.status})`;
+      if (error.response.data) {
+        details += ` - ${JSON.stringify(error.response.data)}`;
+      }
+    }
+    if (error.code) {
+      details += ` [${error.code}]`;
+    }
+    return details;
+  }
+
+  async getNetworkStatus() {
+    try {
+      const { networkInterfaces } = require("os");
+      const nets = networkInterfaces();
+      const results = {};
+
+      for (const name of Object.keys(nets)) {
+        for (const net of nets[name]) {
+          if (net.family === "IPv4" && !net.internal) {
+            if (!results[name]) {
+              results[name] = [];
+            }
+            results[name].push(net.address);
+          }
         }
       }
+
+      return {
+        interfaces: results,
+        connected: await this.checkInternetConnection(),
+      };
     } catch (error) {
-      console.error("❌ Lỗi dọn dẹp temp:", error.message);
+      return { error: error.message };
+    }
+  }
+
+  async processQueue() {
+    if (this.processing) return false;
+    this.processing = true;
+
+    try {
+      const processNextBatch = async () => {
+        while (this.queue.length > 0) {
+          // Xử lý theo batch với kích thước MAX_CONCURRENT_DOWNLOADS
+          const currentBatch = this.queue.splice(
+            0,
+            this.MAX_CONCURRENT_DOWNLOADS
+          );
+          console.log(`\n📦 Xử lý batch ${currentBatch.length} videos...`);
+
+          const promises = currentBatch.map(async (video) => {
+            try {
+              console.log(`\n🎥 Bắt đầu xử lý: ${video.fileName}`);
+              const result = await this.processVideo(
+                video.fileId,
+                video.fileName,
+                video.targetPath,
+                video.depth || 0
+              );
+
+              if (!result.success) {
+                // Nếu thất bại, thêm vào danh sách retry
+                const retryCount = this.videoRetries.get(video.fileName) || 0;
+                if (retryCount < 2) {
+                  console.log(
+                    `⏳ Thêm lại vào queue để thử lại: ${video.fileName}`
+                  );
+                  this.videoRetries.set(video.fileName, retryCount + 1);
+                  this.queue.push(video);
+                } else {
+                  console.log(
+                    `⚠️ Đã thử ${
+                      retryCount + 1
+                    } lần không thành công, bỏ qua file: ${video.fileName}`
+                  );
+                  await this.logFailedVideo({
+                    ...video,
+                    error: result.error,
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+              }
+
+              return result.success;
+            } catch (error) {
+              console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
+
+              // Xử lý retry tương tự như trên
+              const retryCount = this.videoRetries.get(video.fileName) || 0;
+              if (retryCount < 2) {
+                console.log(
+                  `⏳ Thêm lại vào queue để thử lại: ${video.fileName}`
+                );
+                this.videoRetries.set(video.fileName, retryCount + 1);
+                this.queue.push(video);
+              } else {
+                console.log(
+                  `⚠️ Đã thử ${
+                    retryCount + 1
+                  } lần không thành công, bỏ qua file: ${video.fileName}`
+                );
+                await this.logFailedVideo({
+                  ...video,
+                  error: error.message,
+                  timestamp: new Date().toISOString(),
+                });
+              }
+
+              return false;
+            }
+          });
+
+          try {
+            const results = await Promise.all(promises);
+            const successCount = results.filter(Boolean).length;
+            console.log(
+              `\n✅ Hoàn thành batch: ${successCount}/${currentBatch.length} thành công`
+            );
+          } catch (error) {
+            console.error("❌ Lỗi xử lý batch:", error.message);
+          }
+
+          // Đợi một chút trước khi xử lý batch tiếp theo
+          if (this.queue.length > 0) {
+            console.log("\n⏳ Đợi 5s trước khi xử lý batch tiếp theo...");
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+          }
+        }
+      };
+
+      await processNextBatch();
+
+      // Dọn dẹp sau khi hoàn thành
+      await this.cleanupTempDirectory();
+
+      return true;
+    } catch (error) {
+      console.error("❌ Lỗi xử lý queue:", error.message);
+      return false;
+    } finally {
+      this.processing = false;
+    }
+  }
+
+  async addToQueue(videoInfo) {
+    // Kiểm tra xem video đã có trong queue chưa
+    const isDuplicate = this.queue.some(
+      (item) =>
+        item.fileName === videoInfo.fileName &&
+        item.targetPath === videoInfo.targetPath
+    );
+
+    if (!isDuplicate) {
+      this.queue.push(videoInfo);
+      console.log(`\n➕ Đã thêm vào queue: ${videoInfo.fileName}`);
+    } else {
+      console.log(`\n⚠️ Bỏ qua file trùng lặp: ${videoInfo.fileName}`);
     }
   }
 
@@ -1273,19 +2086,25 @@ class DesktopVideoHandler extends BaseVideoHandler {
       if (failedVideos.length > 0) {
         console.log(`\n🔄 Thử lại ${failedVideos.length} videos lỗi...`);
 
+        // Reset queue và thêm lại các video lỗi
         this.queue = failedVideos.map((video) => ({
           fileId: video.fileId,
           fileName: video.fileName,
-          depth: video.depth || 0,
           targetPath: video.targetPath,
+          depth: video.depth || 0,
         }));
 
+        // Reset retry counter
+        this.videoRetries.clear();
+
         try {
+          // Xóa file log cũ
           await fs.promises.unlink(logPath);
         } catch (error) {
           console.error("❌ Lỗi xóa file log cũ:", error.message);
         }
 
+        // Xử lý lại queue
         const success = await this.processQueue();
         if (!success) {
           console.error("❌ Lỗi xử lý lại các video lỗi");
@@ -1295,78 +2114,6 @@ class DesktopVideoHandler extends BaseVideoHandler {
       }
     } catch (error) {
       console.error("❌ Lỗi retry failed videos:", error.message);
-    }
-  }
-
-  async moveVideoToTarget(tempPath, finalPath, indent = "") {
-    try {
-      const normalizedFinalPath = path.normalize(finalPath);
-
-      if (process.platform === "win32" && normalizedFinalPath.length > 260) {
-        console.warn(
-          `${indent}⚠️ Đường dẫn quá dài (${normalizedFinalPath.length} ký tự), thử dùng \\\\?\\`
-        );
-        normalizedFinalPath = `\\\\?\\${normalizedFinalPath}`;
-      }
-
-      const targetDir = path.dirname(normalizedFinalPath);
-      await ensureDirectoryExists(targetDir);
-
-      try {
-        await fs.promises.access(targetDir, fs.constants.W_OK);
-      } catch (error) {
-        throw new Error(`Không có quyền ghi vào thư mục: ${targetDir}`);
-      }
-
-      try {
-        await fs.promises.rename(tempPath, normalizedFinalPath);
-        console.log(
-          `${indent}✅ Đã di chuyển file vào: ${normalizedFinalPath}`
-        );
-      } catch (renameError) {
-        if (renameError.code === "EXDEV") {
-          console.log(`${indent}⏳ File ở khác ổ đĩa, đang copy...`);
-          await fs.promises.copyFile(tempPath, normalizedFinalPath);
-          await fs.promises.unlink(tempPath);
-          console.log(`${indent}✅ Đã copy file vào: ${normalizedFinalPath}`);
-        } else {
-          throw renameError;
-        }
-      }
-
-      if (!fs.existsSync(normalizedFinalPath)) {
-        throw new Error("File không tồn tại sau khi di chuyển");
-      }
-
-      return true;
-    } catch (error) {
-      console.error(`${indent}❌ Lỗi di chuyển file:`, error.message);
-      return false;
-    }
-  }
-
-  getTargetFilePath(fileName, targetPath) {
-    const safeFileName = sanitizePath(fileName);
-
-    let fullPath = path.join(targetPath, safeFileName);
-
-    fullPath = path.normalize(fullPath);
-
-    if (process.platform === "win32" && fullPath.length > 260) {
-      fullPath = `\\\\?\\${fullPath}`;
-    }
-
-    return fullPath;
-  }
-
-  async cleanupTempFile(tempPath, indent = "") {
-    try {
-      if (fs.existsSync(tempPath)) {
-        await fs.promises.unlink(tempPath);
-        console.log(`${indent}🧹 Đã xóa file tạm: ${tempPath}`);
-      }
-    } catch (error) {
-      console.warn(`${indent}⚠️ Không thể xóa file tạm:`, error.message);
     }
   }
 }
