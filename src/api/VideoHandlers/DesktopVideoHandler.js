@@ -361,16 +361,18 @@ class DesktopVideoHandler extends BaseVideoHandler {
         `${indent}🌐 Chrome đang mở: ${this.activeChrome.size}/${this.MAX_CONCURRENT_DOWNLOADS}`
       );
 
+      // Khởi tạo browser nếu chưa có
+      if (!browser) {
+        browser = await this.chromeManager.getBrowser(profileId);
+        console.log(
+          `${indent}✅ Đã khởi tạo Chrome profile: ${profileId || "default"}`
+        );
+      }
+
       while (retryCount < MAX_RETRIES) {
         try {
           // Kiểm tra kết nối mạng trước mỗi lần thử
           await this.checkInternetConnection();
-
-          // Khởi tạo browser
-          browser = await this.chromeManager.getBrowser(profileId);
-          console.log(
-            `${indent}✅ Đã khởi tạo Chrome profile: ${profileId || "default"}`
-          );
 
           const result = await this.getVideoUrlAndHeaders(
             browser,
@@ -437,13 +439,21 @@ class DesktopVideoHandler extends BaseVideoHandler {
             `${indent}❌ Lỗi lần ${retryCount}/${MAX_RETRIES}: ${errorDetails}`
           );
 
-          // Đóng browser hiện tại để thử lại
-          if (browser) {
-            try {
-              await browser.close();
-              browser = null;
-            } catch (err) {
-              console.warn(`${indent}⚠️ Lỗi đóng browser:`, err.message);
+          // Chỉ đóng và tạo lại browser nếu có lỗi nghiêm trọng
+          if (
+            error.message.includes("disconnected") ||
+            error.message.includes("Target closed")
+          ) {
+            if (browser) {
+              try {
+                await browser.close();
+                browser = null;
+                console.log(
+                  `${indent}🔄 Đã đóng và sẽ tạo lại browser do lỗi kết nối`
+                );
+              } catch (err) {
+                console.warn(`${indent}⚠️ Lỗi đóng browser:`, err.message);
+              }
             }
           }
 
@@ -494,10 +504,16 @@ class DesktopVideoHandler extends BaseVideoHandler {
 
       return { success: false, error: errorDetails };
     } finally {
-      // Đóng browser nếu đã mở
-      if (browser) {
+      // Chỉ đóng browser nếu có lỗi nghiêm trọng hoặc khi cần thiết
+      if (
+        browser &&
+        (retryCount >= MAX_RETRIES || this.activeChrome.size === 0)
+      ) {
         try {
           await browser.close();
+          console.log(
+            `${indent}🔄 Đã đóng browser do hoàn thành hoặc quá số lần thử`
+          );
           // Đợi thêm 1s sau khi đóng browser để đảm bảo các handles đã được giải phóng
           await new Promise((resolve) => setTimeout(resolve, 1000));
         } catch (err) {
@@ -752,7 +768,12 @@ class DesktopVideoHandler extends BaseVideoHandler {
           console.log(`${indent}✅ Đã lưu formatData thành công`);
         }
 
-        await currentPage.close();
+        // Đóng tab hiện tại thay vì đóng browser
+        if (currentPage) {
+          await currentPage.close();
+          console.log(`${indent}✅ Đã đóng tab`);
+        }
+
         return result;
       } catch (error) {
         console.error(
@@ -761,11 +782,13 @@ class DesktopVideoHandler extends BaseVideoHandler {
         );
         retries--;
 
+        // Đóng tab nếu có lỗi
         if (currentPage) {
           try {
             await currentPage.close();
+            console.log(`${indent}✅ Đã đóng tab sau khi gặp lỗi`);
           } catch (e) {
-            console.warn(`${indent}⚠️ Không thể đóng page:`, e.message);
+            console.warn(`${indent}⚠️ Không thể đóng tab:`, e.message);
           }
         }
 
