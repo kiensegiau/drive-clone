@@ -1353,7 +1353,11 @@ class DriveAPI {
           this.lastProgressUpdate = Date.now();
 
           // Tạo temporary file để lưu video tạm thời
-          const tempFilePath = path.join(this.tempDir, `temp_${file.id}.mp4`);
+          const tempDir = path.join(process.cwd(), "temp");
+          if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+          }
+          const tempFilePath = path.join(tempDir, `temp_${file.id}.mp4`);
 
           // Tối ưu cho mạng 1Gbps
           const BUFFER_SIZE = 1024 * 1024 * 32; // 32MB buffer - phù hợp với tốc độ cao
