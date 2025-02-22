@@ -854,29 +854,15 @@ class DriveAPI {
                     supportsAllDrives: true,
                   });
 
-                  // Vô hiệu hóa quyền sau khi upload thành công
-                  try {
-                    await this.targetDrive.files.update({
-                      fileId: uploadResponse.data.id,
-                      requestBody: {
-                        copyRequiresWriterPermission: true,
-                        viewersCanCopyContent: false,
-                        writersCanShare: false,
-                        sharingUser: null,
-                        permissionIds: [],
-                      },
-                      supportsAllDrives: true,
-                    });
-
-                    console.log(
-                      `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
-                    );
-                  } catch (permError) {
-                    console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
-                  }
-
-                  console.log(`✅ Đã tải xong: ${uploadResponse.data.name}`);
+                  console.log(
+                    `\n✅ Upload thành công: ${uploadResponse.data.name}`
+                  );
                   this.stats.filesProcessed++;
+
+                  return {
+                    success: true,
+                    uploadedFile: uploadResponse.data,
+                  };
                 } catch (fileError) {
                   console.error(
                     `❌ Lỗi tải file "${file.name}":`,
@@ -1054,26 +1040,7 @@ class DriveAPI {
         supportsAllDrives: true,
       });
 
-      // Vô hiệu hóa quyền sau khi upload thành công
-      try {
-        await this.targetDrive.files.update({
-          fileId: uploadResponse.data.id,
-          requestBody: {
-            copyRequiresWriterPermission: true,
-            viewersCanCopyContent: false,
-            writersCanShare: false,
-            sharingUser: null,
-            permissionIds: [],
-          },
-          supportsAllDrives: true,
-        });
-
-        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`);
-      } catch (permError) {
-        console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
-      }
-
-      console.log(`✅ Đã tải xong: ${uploadResponse.data.name}`);
+      console.log(`\n✅ Upload thành công: ${uploadResponse.data.name}`);
       this.stats.filesProcessed++;
 
       return {
@@ -1131,7 +1098,9 @@ class DriveAPI {
         .push();
 
       await tokenRef.set(tokenData);
-    } catch (error) {}
+    } catch (error) {
+      console.error(`❌ Lỗi lưu token vào Firebase:`, error);
+    }
   }
 
   async checkFileAccess(fileId, fileName) {
@@ -1147,11 +1116,8 @@ class DriveAPI {
         fileName: fileName,
       };
     } catch (error) {
-      console.log(`⚠️ Không có quyền truy cập file: ${fileName}`);
-      return {
-        canDownload: false,
-        fileName: fileName,
-      };
+      console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error);
+      return null;
     }
   }
 
@@ -1473,27 +1439,6 @@ class DriveAPI {
           fs.unlinkSync(tempFilePath);
           this.stats.videosProcessed++;
 
-          // Vô hiệu hóa quyền sau khi upload thành công
-          try {
-            await this.targetDrive.files.update({
-              fileId: uploadResponse.data.id,
-              requestBody: {
-                copyRequiresWriterPermission: true,
-                viewersCanCopyContent: false,
-                writersCanShare: false,
-                sharingUser: null,
-                permissionIds: [],
-              },
-              supportsAllDrives: true,
-            });
-
-            console.log(
-              `🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${file.name}`
-            );
-          } catch (permError) {
-            console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
-          }
-
           return { success: true, file };
         } catch (error) {
           attempt++;
@@ -1598,73 +1543,6 @@ class DriveAPI {
     } catch (error) {
       console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error.message);
       return null;
-    }
-  }
-
-  // Thêm hàm downloadChunksParallel
-  async downloadChunksParallel(videoId, chunks, maxParallelDownloads = 3) {
-    const results = [];
-
-    // Chia chunks thành các nhóm để tải song song
-    for (let i = 0; i < chunks.length; i += maxParallelDownloads) {
-      const batch = chunks.slice(i, i + maxParallelDownloads);
-
-      // Tải song song các chunk trong batch
-      const downloadPromises = batch.map(async (chunk, index) => {
-        try {
-          const chunkData = await this.downloadChunk(videoId, chunk);
-          results[i + index] = chunkData;
-          console.log(`✅ Đã tải chunk ${i + index + 1}/${chunks.length}`);
-        } catch (error) {
-          console.error(`❌ Lỗi tải chunk ${i + index + 1}:`, error);
-          throw error;
-        }
-      });
-
-      // Đợi tất cả chunk trong batch hoàn thành
-      await Promise.all(downloadPromises);
-    }
-
-    return results;
-  }
-
-  // Sửa hàm downloadVideo để sử dụng downloadChunksParallel
-  async downloadVideo(videoId, savePath) {
-    try {
-      // ... existing code ...
-
-      // Lấy danh sách chunks
-      const chunks = await this.getVideoChunks(videoId);
-
-      // Tải song song các chunk với tối đa 3 chunk cùng lúc
-      const chunkResults = await this.downloadChunksParallel(
-        videoId,
-        chunks,
-        3
-      );
-
-      // Ghép các chunk lại
-      await this.mergeChunks(chunkResults, savePath);
-
-      // ... existing code ...
-    } catch (error) {
-      console.error(`❌ Lỗi tải video ${videoId}:`, error);
-      throw error;
-    }
-  }
-
-  // Thêm phương thức checkFileExists vào class
-  async checkFileExists(fileName, folderId) {
-    try {
-      const response = await this.targetDrive.files.list({
-        q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
-        fields: "files(id, name)",
-        supportsAllDrives: true,
-      });
-      return response.data.files.length > 0;
-    } catch (error) {
-      console.error(`⚠️ Lỗi kiểm tra file tồn tại:`, error.message);
-      return false;
     }
   }
 }

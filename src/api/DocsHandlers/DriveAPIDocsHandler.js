@@ -11,7 +11,6 @@ class DriveAPIDocsHandler {
     this.tempDir = tempDir;
     this.config = config;
     this.chromeManager = ChromeManager.getInstance("pdf");
-   
   }
 
   async convertDocsToPDF(fileId, outputPath, targetFolderId, originalFileName) {
@@ -19,24 +18,23 @@ class DriveAPIDocsHandler {
     let page = null;
 
     try {
-      
       browser = await this.chromeManager.getBrowser();
       page = await browser.newPage();
 
       // 1. Truy cập URL edit trước
       const editUrl = `https://docs.google.com/document/d/${fileId}/edit`;
       await page.goto(editUrl);
-      
+
       // 2. Đợi 1 giây cho tài liệu load
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      
+
       // 3. Tắt JavaScript
       await page.setJavaScriptEnabled(false);
-      
+
       // 4. Chuyển sang mobile view
       const mobileUrl = `https://docs.google.com/document/d/${fileId}/mobilebasic`;
       await page.goto(mobileUrl);
-      
+
       // 5. Lấy HTML và CSS
       const content = await page.evaluate(() => {
         const styles = Array.from(document.querySelectorAll("style"))
@@ -118,7 +116,7 @@ class DriveAPIDocsHandler {
         `;
 
       await fs.promises.writeFile(tempHtmlPath, htmlContent);
-      
+
       // 7. Mở file HTML và chuyển sang PDF
       await page.goto(`file://${tempHtmlPath}`);
 
@@ -147,7 +145,7 @@ class DriveAPIDocsHandler {
 
       // Upload file PDF lên Drive với tên gốc và vào folder đích
       const uploadResult = await this.uploadToDrive(
-        outputPath, 
+        outputPath,
         targetFolderId,
         originalFileName
       );
@@ -171,7 +169,10 @@ class DriveAPIDocsHandler {
         await fs.promises.unlink(tempHtmlPath);
         console.log(`🗑️ Đã xóa file HTML tạm: ${tempHtmlPath}`);
       } catch (error) {
-        console.error(`⚠️ Lỗi xóa file HTML tạm ${tempHtmlPath}:`, error.message);
+        console.error(
+          `⚠️ Lỗi xóa file HTML tạm ${tempHtmlPath}:`,
+          error.message
+        );
       }
 
       return uploadResult;
@@ -263,7 +264,10 @@ class DriveAPIDocsHandler {
       const fileName = customFileName || path.basename(filePath);
 
       // Kiểm tra xem file đã tồn tại trong thư mục đích chưa
-      const existingFile = await this.checkExistingFile(fileName, targetFolderId);
+      const existingFile = await this.checkExistingFile(
+        fileName,
+        targetFolderId
+      );
       if (existingFile) {
         console.log(`📁 File đã tồn tại: ${fileName}`);
         return {
@@ -292,26 +296,6 @@ class DriveAPIDocsHandler {
       });
 
       console.log(`\n✅ Upload thành công: ${uploadResponse.data.name}`);
-
-      // Thay đổi phần set permissions sau khi upload thành công
-      try {
-        // Sau đó cập nhật file để vô hiệu hóa các quyền
-        await this.targetDrive.files.update({
-          fileId: uploadResponse.data.id,
-          requestBody: {
-            copyRequiresWriterPermission: true,
-            viewersCanCopyContent: false,
-            writersCanShare: false,
-            sharingUser: null,
-            permissionIds: [],
-          },
-          supportsAllDrives: true,
-        });
-
-        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${fileName}`);
-      } catch (permError) {
-        console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
-      }
 
       return {
         success: true,

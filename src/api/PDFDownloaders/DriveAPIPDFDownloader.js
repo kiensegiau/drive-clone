@@ -493,7 +493,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           if (pageMatch) {
             const pageNum = parseInt(pageMatch[1]);
             if (!pageRequests.has(pageNum)) {
-             
               pageRequests.set(pageNum, request);
             }
           }
@@ -510,8 +509,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         if ((isViewerNg || isViewer2) && url.includes("page=")) {
           const status = response.status();
           const headers = response.headers();
-          
-          
         }
       });
 
@@ -838,26 +835,6 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       });
 
       console.log(`\n✅ Upload thành công: ${uploadResponse.data.name}`);
-
-      // Thay đổi phần set permissions sau khi upload thành công
-      try {
-        // Sau đó cập nhật file để vô hiệu hóa các quyền
-        await this.targetDrive.files.update({
-          fileId: uploadResponse.data.id,
-          requestBody: {
-            copyRequiresWriterPermission: true,
-            viewersCanCopyContent: false,
-            writersCanShare: false,
-            sharingUser: null,
-            permissionIds: [],
-          },
-          supportsAllDrives: true,
-        });
-
-        console.log(`🔒 Đã vô hiệu hóa các quyền chia sẻ cho: ${fileName}`);
-      } catch (permError) {
-        console.error(`⚠️ Lỗi cấu hình quyền:`, permError.message);
-      }
 
       return {
         success: true,

@@ -91,7 +91,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
 
     // Cấu hình chunks cho mạng tốc độ cao
     this.CHUNK_SIZE = 25 * 1024 * 1024; // Giảm xuống 25MB mỗi chunk
-    this.CONCURRENT_CHUNKS = 4; // Giảm xuống 4 chunks đồng thời
+    this.CONCURRENT_CHUNKS = 20; // Giảm xuống 4 chunks đồng thời
     this.MAX_CHUNK_RETRIES = 5; // Tăng số lần retry cho chunk
 
     this.sourceDrive = sourceDrive;
@@ -676,6 +676,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
     let stuckRetryCount = 0;
     let failedChunksCount = 0;
     let progressInterval = null;
+    let retryAttempt = 0; // Thêm biến đếm số lần thử
 
     // Kiểm tra xem có formatData không
     if (!this.currentFormatData) {
@@ -689,7 +690,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       url,
       path,
       headers,
-      maxParallelDownloads = 8
+      maxParallelDownloads = 20
     ) => {
       let fh = null;
       let isStuck = false;
@@ -782,15 +783,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }, 2000);
 
         // Download chunks song song
-        for (
-          let i = 0;
-          i < chunks.length && !isStuck;
-          i += maxParallelDownloads
-        ) {
-          const batch = chunks.slice(
-            i,
-            Math.min(i + maxParallelDownloads, chunks.length)
-          );
+        for (let i = 0; i < chunks.length && !isStuck; i += 32) {
+          const batch = chunks.slice(i, Math.min(i + 32, chunks.length));
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0 && !isStuck) {
@@ -941,98 +935,96 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       }
     };
 
-    try {
-      await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
-      console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
-
+    while (retryAttempt < this.MAX_STUCK_RETRIES) {
       try {
-        await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
-        console.log(
-          `${indent}✅ Tải video thành công với phương pháp chunk song song`
-        );
-        return;
-      } catch (error) {
-        if (
-          error.message === "404_NOT_FOUND" ||
-          error.response?.status === 404
-        ) {
-          const bestVideo = this.findBestAdaptiveVideo();
-          const bestAudio = this.findBestAdaptiveAudio();
+        await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
+        console.log(`${indent}📁 Đã tạo thư mục: ${path.dirname(outputPath)}`);
 
-          if (!bestVideo || !bestAudio) {
-            throw new Error("Không tìm thấy URL");
+        try {
+          await downloadWithChunksParallel(videoUrl, outputPath, headers, 3);
+          console.log(
+            `${indent}✅ Tải video thành công với phương pháp chunk song song`
+          );
+          return true;
+        } catch (error) {
+          if (
+            error.message === "404_NOT_FOUND" ||
+            error.response?.status === 404
+          ) {
+            const bestVideo = this.findBestAdaptiveVideo();
+            const bestAudio = this.findBestAdaptiveAudio();
+
+            if (!bestVideo || !bestAudio) {
+              throw new Error("Không tìm thấy URL");
+            }
+
+            const tempVideoPath = `${outputPath}.video.tmp`;
+            const tempAudioPath = `${outputPath}.audio.tmp`;
+
+            try {
+              console.log(`${indent}📥 Đang tải video...`);
+              await downloadWithChunksParallel(
+                bestVideo.url,
+                tempVideoPath,
+                headers,
+                3
+              );
+
+              console.log(`${indent}🔊 Đang tải audio...`);
+              await downloadWithChunksParallel(
+                bestAudio.url,
+                tempAudioPath,
+                headers,
+                3
+              );
+
+              await this.mergeVideoAudio(
+                tempVideoPath,
+                tempAudioPath,
+                outputPath
+              );
+
+              await fs.promises.unlink(tempVideoPath).catch(() => {});
+              await fs.promises.unlink(tempAudioPath).catch(() => {});
+
+              return true;
+            } catch (innerError) {
+              await fs.promises.unlink(tempVideoPath).catch(() => {});
+              await fs.promises.unlink(tempAudioPath).catch(() => {});
+              throw innerError;
+            }
+          } else {
+            throw error;
           }
-
-          const tempVideoPath = `${outputPath}.video.tmp`;
-          const tempAudioPath = `${outputPath}.audio.tmp`;
-
-          try {
-            console.log(`${indent}📥 Đang tải video...`);
-            await downloadWithChunksParallel(
-              bestVideo.url,
-              tempVideoPath,
-              headers,
-              3
-            );
-
-            console.log(`${indent}🔊 Đang tải audio...`);
-            await downloadWithChunksParallel(
-              bestAudio.url,
-              tempAudioPath,
-              headers,
-              3
-            );
-
-            await this.mergeVideoAudio(
-              tempVideoPath,
-              tempAudioPath,
-              outputPath
-            );
-
-            await fs.promises.unlink(tempVideoPath).catch(() => {});
-            await fs.promises.unlink(tempAudioPath).catch(() => {});
-
-            return;
-          } catch (innerError) {
-            await fs.promises.unlink(tempVideoPath).catch(() => {});
-            await fs.promises.unlink(tempAudioPath).catch(() => {});
-            throw innerError;
-          }
-        } else {
-          throw error;
         }
-      }
-    } catch (error) {
-      console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
+      } catch (error) {
+        console.error(`${indent}❌ Lỗi tải xuống: ${error.message}`);
 
-      if (
-        stuckRetryCount < this.MAX_STUCK_RETRIES &&
-        !error.message.includes("Không có formatData")
-      ) {
-        stuckRetryCount++;
-        console.log(
-          `${indent}🔄 Thử lại lần ${stuckRetryCount}/${this.MAX_STUCK_RETRIES}...`
-        );
-        await new Promise((r) => setTimeout(r, 5000));
-        return this.downloadVideoWithChunks(
-          videoUrl,
-          outputPath,
-          headers,
+        retryAttempt++;
+        if (
+          retryAttempt < this.MAX_STUCK_RETRIES &&
+          !error.message.includes("Không có formatData")
+        ) {
+          console.log(
+            `${indent}🔄 Thử lại lần ${retryAttempt}/${this.MAX_STUCK_RETRIES}...`
+          );
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
+
+        await this.logFailedVideo({
           fileName,
-          depth
-        );
+          fileId: this.currentVideoId,
+          targetFolderId: null,
+          error: error.message,
+          timestamp: new Date().toISOString(),
+        });
+
+        return false;
       }
-
-      await this.logFailedVideo({
-        fileName,
-        fileId: this.currentVideoId,
-        targetFolderId: null,
-        error: error.message,
-        timestamp: new Date().toISOString(),
-      });
-
-      return false;
     }
+
+    return false;
   }
 
   // Thêm các phương thức khác từ VideoHandler

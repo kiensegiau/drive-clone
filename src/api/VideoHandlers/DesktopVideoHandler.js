@@ -896,7 +896,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
           }
         }, 2000);
 
-        const maxConcurrent = 2;
+        const maxConcurrent = 32;
 
         for (let i = 0; i < chunks.length && !isStuck; i += maxConcurrent) {
           const batch = chunks.slice(
