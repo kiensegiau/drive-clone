@@ -783,8 +783,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }, 2000);
 
         // Download chunks song song
-        for (let i = 0; i < chunks.length && !isStuck; i += 32) {
-          const batch = chunks.slice(i, Math.min(i + 32, chunks.length));
+        for (let i = 0; i < chunks.length && !isStuck; i += 16) {
+          const batch = chunks.slice(i, Math.min(i + 16, chunks.length));
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0 && !isStuck) {
