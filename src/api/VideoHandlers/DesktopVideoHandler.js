@@ -81,8 +81,8 @@ class DesktopVideoHandler extends BaseVideoHandler {
     this.RETRY_DELAY = 5000;
     this.MAX_STUCK_RETRIES = 3;
 
-    this.CHUNK_SIZE = 20 * 1024 * 1024;
-    this.CONCURRENT_CHUNKS = 16;
+    this.CHUNK_SIZE = 10 * 1024 * 1024;
+    this.CONCURRENT_CHUNKS = 25;
     this.MAX_CHUNK_RETRIES = 3;
 
     this.MAX_CONCURRENT_DOWNLOADS = Math.max(1, Math.min(maxConcurrent, 3));
@@ -864,7 +864,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
         const totalSize = parseInt(headResponse.headers["content-length"], 10);
         if (!totalSize) throw new Error("Invalid content length");
 
-        const CHUNK_SIZE = 20 * 1024 * 1024;
+        const CHUNK_SIZE = 10 * 1024 * 1024;
         const chunks = [];
         for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
           const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
@@ -896,7 +896,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
           }
         }, 2000);
 
-        const maxConcurrent = 16;
+        const maxConcurrent = 25;
 
         for (let i = 0; i < chunks.length && !isStuck; i += maxConcurrent) {
           const batch = chunks.slice(

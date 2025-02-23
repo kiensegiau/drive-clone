@@ -736,7 +736,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         if (!totalSize) throw new Error("Invalid content length");
 
         // Chia chunks
-        const CHUNK_SIZE = 20 * 1024 * 1024; // 20MB mỗi chunk
+        const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB mỗi chunk
         const chunks = [];
         for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
           const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
@@ -783,8 +783,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }, 2000);
 
         // Download chunks song song
-        for (let i = 0; i < chunks.length && !isStuck; i += 16) {
-          const batch = chunks.slice(i, Math.min(i + 16, chunks.length));
+        for (let i = 0; i < chunks.length && !isStuck; i += 25) {
+          const batch = chunks.slice(i, Math.min(i + 25, chunks.length));
           const downloadPromises = batch.map(async (chunk) => {
             let retries = 3;
             while (retries > 0 && !isStuck) {
