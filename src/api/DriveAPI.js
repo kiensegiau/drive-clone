@@ -797,33 +797,22 @@ class DriveAPI {
             }
           }
 
-          // Thêm hàm kiểm tra file tồn tại
-          async function checkFileExists(fileName, folderId) {
-            try {
-              const response = await this.targetDrive.files.list({
-                q: `name = '${fileName}' and '${folderId}' in parents and trashed = false`,
-                fields: "files(id, name)",
-                supportsAllDrives: true,
-              });
-              return response.data.files.length > 0;
-            } catch (error) {
-              console.error(`⚠️ Lỗi kiểm tra file tồn tại:`, error.message);
-              return false;
-            }
-          }
-
           // Xử lý other files
           if (otherFiles.length > 0) {
             try {
               console.log(`\n📄 Xử lý ${otherFiles.length} file khác...`);
+
+              // Lưu this context
+              const self = this;
+
               for (const file of otherFiles) {
                 try {
                   // Kiểm tra file đã tồn tại chưa
-                  const exists = await this.checkFileExists(
+                  const exists = await self.checkExistingFile(
                     file.name,
-                    this.currentTargetFolderId
+                    self.currentTargetFolderId
                   );
-                  if (exists) {
+                  if (exists && exists.success) {
                     console.log(`⏩ File đã tồn tại, bỏ qua: ${file.name}`);
                     continue;
                   }

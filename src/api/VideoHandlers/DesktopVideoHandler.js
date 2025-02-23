@@ -82,7 +82,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
     this.MAX_STUCK_RETRIES = 3;
 
     this.CHUNK_SIZE = 10 * 1024 * 1024;
-    this.CONCURRENT_CHUNKS = 2;
+    this.CONCURRENT_CHUNKS = 16;
     this.MAX_CHUNK_RETRIES = 3;
 
     this.MAX_CONCURRENT_DOWNLOADS = Math.max(1, Math.min(maxConcurrent, 3));
@@ -896,7 +896,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
           }
         }, 2000);
 
-        const maxConcurrent =16;
+        const maxConcurrent = 16;
 
         for (let i = 0; i < chunks.length && !isStuck; i += maxConcurrent) {
           const batch = chunks.slice(
