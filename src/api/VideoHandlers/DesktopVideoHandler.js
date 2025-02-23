@@ -81,7 +81,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
     this.RETRY_DELAY = 5000;
     this.MAX_STUCK_RETRIES = 3;
 
-    this.CHUNK_SIZE = 10 * 1024 * 1024;
+    this.CHUNK_SIZE = 20 * 1024 * 1024;
     this.CONCURRENT_CHUNKS = 16;
     this.MAX_CHUNK_RETRIES = 3;
 
@@ -864,7 +864,7 @@ class DesktopVideoHandler extends BaseVideoHandler {
         const totalSize = parseInt(headResponse.headers["content-length"], 10);
         if (!totalSize) throw new Error("Invalid content length");
 
-        const CHUNK_SIZE = 10 * 1024 * 1024;
+        const CHUNK_SIZE = 20 * 1024 * 1024;
         const chunks = [];
         for (let start = 0; start < totalSize; start += CHUNK_SIZE) {
           const end = Math.min(start + CHUNK_SIZE - 1, totalSize - 1);
