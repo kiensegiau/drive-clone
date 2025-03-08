@@ -128,6 +128,16 @@ class DriveAPI {
       this.processedFiles = 0;
       this.totalSize = 0;
       this.maxConcurrent = maxConcurrent;
+
+      // Thêm khởi tạo stats để theo dõi tiến trình
+      this.stats = {
+        processedFiles: 0,
+        failedFiles: 0,
+        processedFolders: 0,
+        failedFolders: 0,
+        totalSize: 0,
+        startTime: Date.now(),
+      };
     } catch (error) {
       console.error("❌ Lỗi khởi tạo:", error.message);
       throw error;
@@ -140,11 +150,8 @@ class DriveAPI {
       const parts = normalizedPath.split(path.sep);
       let currentPath = "";
 
-      // Xử lý đặc biệt cho ổ đĩa network/cloud
+      // Xử lý đặc biệt cho ổ đĩa Windows (ví dụ: C:)
       if (parts[0].endsWith(":")) {
-        // Thêm delay 2 giây trước khi kiểm tra ổ đĩa
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-
         const rootPath = parts[0] + path.sep;
         try {
           fs.accessSync(rootPath, fs.constants.W_OK);
@@ -156,22 +163,46 @@ class DriveAPI {
         parts.shift();
       }
 
-      // Tạo từng thư mục con với delay
+      // Tạo từng thư mục con
       for (const part of parts) {
         if (!part) continue;
-        currentPath = path.join(currentPath, part);
+
+        // Chuẩn hóa tên thư mục để loại bỏ các ký tự không hợp lệ
+        const safePart = sanitizePath(part);
+        currentPath = path.join(currentPath, safePart);
 
         if (!fs.existsSync(currentPath)) {
           try {
-            // Thêm delay 1 giây trước khi tạo mỗi thư mục
-            await new Promise((resolve) => setTimeout(resolve, 1000));
             fs.mkdirSync(currentPath);
+            console.log(`✅ Đã tạo thư mục: ${currentPath}`);
           } catch (error) {
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            // Kiểm tra lại sau khi thử tạo (để xử lý race condition)
+            await new Promise((resolve) => setTimeout(resolve, 500));
             if (!fs.existsSync(currentPath)) {
               console.error(
                 `❌ Không thể tạo thư mục ${currentPath}: ${error.message}`
               );
+
+              // Nếu không thể tạo thư mục, thử sử dụng tên không dấu
+              const fallbackName = safePart
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "");
+              if (fallbackName !== safePart) {
+                const fallbackPath = path.join(
+                  path.dirname(currentPath),
+                  fallbackName
+                );
+                try {
+                  fs.mkdirSync(fallbackPath);
+                  console.log(`✅ Đã tạo thư mục dự phòng: ${fallbackPath}`);
+                  currentPath = fallbackPath;
+                  continue;
+                } catch (fallbackError) {
+                  console.error(
+                    `❌ Cũng không thể tạo thư mục dự phòng: ${fallbackError.message}`
+                  );
+                }
+              }
               return false;
             }
           }
@@ -323,18 +354,49 @@ class DriveAPI {
       const folderName = await this.getFolderName(sourceFolderId);
       console.log(`\n🎯 Bắt đầu tải folder: ${folderName}`);
 
-      const targetDir = path.join(this.BASE_DIR, folderName);
-      if (!fs.existsSync(targetDir)) {
-        fs.mkdirSync(targetDir, { recursive: true });
-      }
+      // Tạo thư mục mục tiêu an toàn
+      const safeFolderName = sanitizePath(folderName);
+      const targetDir = path.join(this.BASE_DIR, safeFolderName);
 
-      await this.processFolder(sourceFolderId, targetDir);
+      if (!(await this.ensureDirectoryExists(targetDir))) {
+        // Thử tạo với tên đơn giản hơn nếu không thành công
+        const simpleName = folderName.replace(/[^a-zA-Z0-9]/g, "_");
+        const fallbackDir = path.join(this.BASE_DIR, simpleName);
+        console.log(`\n🔄 Thử tạo thư mục với tên đơn giản: ${simpleName}`);
+
+        if (!(await this.ensureDirectoryExists(fallbackDir))) {
+          throw new Error(`Không thể tạo thư mục gốc: ${folderName}`);
+        }
+
+        console.log(`\n✅ Sử dụng thư mục dự phòng: ${fallbackDir}`);
+        await this.processFolder(sourceFolderId, fallbackDir);
+      } else {
+        await this.processFolder(sourceFolderId, targetDir);
+      }
 
       console.log(`\n✅ Đã tải xong toàn bộ files vào thư mục:`);
       console.log(`📂 ${targetDir}`);
+
+      this.logFinalStats();
+      return true;
     } catch (error) {
-      console.error("❌ Lỗi xử lý folder gốc:", error.message);
-      throw error;
+      console.error("\n❌ Lỗi chương trình:", error.message);
+
+      // Ghi log lỗi
+      try {
+        const errorLogPath = path.join(this.BASE_DIR, "error_log.txt");
+        fs.appendFileSync(
+          errorLogPath,
+          `[${new Date().toISOString()}] LỖI CHÍNH: ${error.message}\n`,
+          "utf8"
+        );
+        console.log(`\n💾 Chi tiết lỗi đã được ghi vào: ${errorLogPath}`);
+      } catch (logError) {
+        console.error("Không thể ghi log lỗi:", logError.message);
+      }
+
+      this.logFinalStats();
+      return false;
     }
   }
 
@@ -457,7 +519,12 @@ class DriveAPI {
 
     try {
       const folderName = await this.getFolderName(sourceFolderId);
-      console.log(`${indent}📂 Xử lý folder: ${folderName}`);
+      console.log(`${indent}🎯 Bắt đầu tải folder: ${folderName}`);
+
+      // Đảm bảo thư mục mục tiêu tồn tại
+      if (!(await this.ensureDirectoryExists(targetPath))) {
+        throw new Error(`Không thể tạo hoặc truy cập thư mục: ${targetPath}`);
+      }
 
       const parentFolderName = path.basename(targetPath);
       const currentFolderPath =
@@ -465,12 +532,26 @@ class DriveAPI {
           ? targetPath // Nếu tên trùng thì dùng thư mục cha
           : path.join(targetPath, sanitizePath(folderName)); // Nếu khác tên thì tạo thư mục con
 
-      if (
-        parentFolderName !== folderName &&
-        !fs.existsSync(currentFolderPath)
-      ) {
+      // Tạo thư mục con an toàn
+      if (parentFolderName !== folderName) {
         console.log(`${indent}📁 Tạo thư mục: ${folderName}`);
-        fs.mkdirSync(currentFolderPath, { recursive: true });
+        if (!(await this.ensureDirectoryExists(currentFolderPath))) {
+          // Nếu không thể tạo thư mục với tên gốc, thử dùng tên đơn giản hơn
+          const simpleName = folderName.replace(/[^a-zA-Z0-9]/g, "_");
+          const fallbackPath = path.join(targetPath, simpleName);
+          console.log(
+            `${indent}🔄 Thử tạo thư mục với tên đơn giản: ${simpleName}`
+          );
+
+          if (!(await this.ensureDirectoryExists(fallbackPath))) {
+            throw new Error(`Không thể tạo thư mục cho: ${folderName}`);
+          }
+          // Sử dụng đường dẫn dự phòng
+          console.log(
+            `${indent}✅ Sử dụng đường dẫn dự phòng: ${fallbackPath}`
+          );
+          currentFolderPath = fallbackPath;
+        }
       }
 
       const response = await this.drive.files.list({
@@ -494,8 +575,14 @@ class DriveAPI {
       // Xử lý các files trong thư mục hiện tại
       if (videoFiles.length > 0) {
         console.log(`${indent}🎥 Xử lý ${videoFiles.length} video files...`);
-        const videoHandler = new VideoHandler(3, 4); // Mặc định 3 chrome đồng thời, 4 download đồng thời
 
+        // Thử tải qua API trước
+        console.log(`${indent}🌐 Thử tải tất cả file qua API trước...`);
+
+        // Danh sách các file cần tải bằng VideoHandler
+        const remainingFiles = [];
+
+        // Xử lý từng file qua API
         for (const file of videoFiles) {
           const videoPath = path.join(
             currentFolderPath,
@@ -514,15 +601,45 @@ class DriveAPI {
             }
           }
 
-          videoHandler.addToQueue({
-            fileId: file.id,
-            fileName: file.name,
-            targetPath: currentFolderPath,
-            depth,
-          });
+          // Thử tải qua API
+          const apiResult = await this.tryDownloadViaAPI(
+            file.id,
+            file.name,
+            currentFolderPath,
+            depth
+          );
+
+          if (!apiResult.success) {
+            // Nếu không thành công qua API, thêm vào danh sách để tải qua Chrome
+            console.log(
+              `${indent}🔄 Thêm vào hàng đợi tải qua Chrome: ${file.name}`
+            );
+            remainingFiles.push(file);
+          }
         }
 
-        await videoHandler.processQueue();
+        // Nếu còn file cần tải qua Chrome
+        if (remainingFiles.length > 0) {
+          console.log(
+            `${indent}🌐 Còn ${remainingFiles.length}/${videoFiles.length} file cần tải qua Chrome...`
+          );
+          const videoHandler = new VideoHandler(3, 4); // Mặc định 3 chrome đồng thời, 4 download đồng thời
+
+          for (const file of remainingFiles) {
+            videoHandler.addToQueue({
+              fileId: file.id,
+              fileName: file.name,
+              targetPath: currentFolderPath,
+              depth,
+            });
+          }
+
+          await videoHandler.processQueue();
+        } else if (videoFiles.length > 0) {
+          console.log(
+            `${indent}✨ Đã tải thành công tất cả ${videoFiles.length} file qua API!`
+          );
+        }
       }
 
       if (pdfFiles.length > 0) {
@@ -564,17 +681,34 @@ class DriveAPI {
           await this.processFolder(folder.id, currentFolderPath, depth + 1);
         } catch (error) {
           console.error(
-            `${indent}❌ Lỗi xử lý folder ${folder.name}:`,
+            `${indent}❌ Lỗi xử lý folder con ${folder.name}:`,
             error.message
           );
+          // Ghi nhật ký lỗi nhưng tiếp tục với các folder khác
+          this.stats.failedFolders++;
+
+          // Thêm thông tin lỗi vào log
+          fs.appendFileSync(
+            path.join(this.targetPath, "error_log.txt"),
+            `[${new Date().toISOString()}] Lỗi xử lý folder ${folder.name}: ${
+              error.message
+            }\n`,
+            "utf8"
+          );
+
+          // Tiếp tục với folder khác mà không dừng toàn bộ quy trình
           continue;
         }
       }
+
+      // Đã xử lý xong folder này, tăng biến đếm
+      this.stats.processedFolders++;
+
+      return true;
     } catch (error) {
-      console.error(
-        `${indent}❌ Lỗi trong quá trình xử lý folder:`,
-        error.message
-      );
+      console.error(`${indent}❌ Lỗi xử lý folder:`, error.message);
+      this.stats.failedFolders++;
+      return false;
     }
   }
 
@@ -595,12 +729,13 @@ class DriveAPI {
   async downloadFile(fileId, outputPath) {
     const MAX_RETRIES = 3;
     let retryCount = 0;
+    const fileName = path.basename(outputPath);
 
     // Kiểm tra lại một lần nữa trước khi tải
     if (fs.existsSync(outputPath)) {
       const stats = fs.statSync(outputPath);
       if (stats.size > 0) {
-        console.log(`⏩ Đã tồn tại, bỏ qua: ${path.basename(outputPath)}`);
+        console.log(`⏩ Đã tồn tại, bỏ qua: ${fileName}`);
         return outputPath;
       } else {
         fs.unlinkSync(outputPath);
@@ -609,11 +744,11 @@ class DriveAPI {
 
     while (retryCount < MAX_RETRIES) {
       try {
-        console.log(`📥 Tải file: ${path.basename(outputPath)}`);
+        console.log(`📥 Bắt đầu tải: ${fileName}`);
 
         const fileMetadata = await this.drive.files.get({
           fileId: fileId,
-          fields: "mimeType,name",
+          fields: "mimeType,name,size",
           supportsAllDrives: true,
         });
 
@@ -622,28 +757,36 @@ class DriveAPI {
           return null;
         }
 
+        // Hiển thị kích thước tổng cộng của file (nếu có)
+        if (fileMetadata.data.size) {
+          const fileSizeMB = parseInt(fileMetadata.data.size) / (1024 * 1024);
+          console.log(`ℹ️ Kích thước file: ${fileSizeMB.toFixed(2)} MB`);
+        }
+
         const parentDir = path.dirname(outputPath);
         if (!fs.existsSync(parentDir)) {
           fs.mkdirSync(parentDir, { recursive: true });
         }
 
+        const startTime = Date.now();
         const response = await this.drive.files.get(
           { fileId, alt: "media" },
           { responseType: "stream" }
         );
 
         await this.saveResponseToFile(response, outputPath);
-        console.log(`✅ Đã tải xong: ${path.basename(outputPath)}`);
 
-        this.processedFiles++;
+        // Cập nhật thống kê
+        this.stats.processedFiles++;
         const stats = fs.statSync(outputPath);
-        this.totalSize += stats.size;
+        this.stats.totalSize += stats.size;
 
         return outputPath;
       } catch (error) {
         retryCount++;
         if (retryCount === MAX_RETRIES) {
           console.error(`❌ Lỗi tải file:`, error.message);
+          this.stats.failedFiles++;
           throw error;
         }
         console.log(`⚠️ Lỗi, thử lại lần ${retryCount}/${MAX_RETRIES}...`);
@@ -658,27 +801,71 @@ class DriveAPI {
     return new Promise((resolve, reject) => {
       const dest = fs.createWriteStream(tempPath);
       let progress = 0;
+      let lastProgress = 0;
+      let lastLogTime = Date.now();
+      let startTime = Date.now();
+      const LOG_INTERVAL = 1000; // Log mỗi 1 giây
+      const fileName = path.basename(outputPath);
+
+      // Đặt kết quả vào đầu dòng lệnh
+      process.stdout.write(`⏳ Đang tải: ${fileName} - 0 MB - 0 MB/s    \r`);
 
       response.data
         .on("data", (chunk) => {
           progress += chunk.length;
-          process.stdout.write(
-            `\r⏳ Đã tải: ${(progress / 1024 / 1024).toFixed(2)}MB`
-          );
+          const now = Date.now();
+
+          if (now - lastLogTime >= LOG_INTERVAL) {
+            const elapsedSecs = (now - startTime) / 1000;
+            const progressMB = progress / (1024 * 1024);
+            const chunkMB = (progress - lastProgress) / (1024 * 1024);
+            const speedMBps = chunkMB / ((now - lastLogTime) / 1000);
+            const avgSpeedMBps = progressMB / elapsedSecs;
+
+            // Hiển thị tốc độ hiện tại và tốc độ trung bình
+            process.stdout.write(
+              `⏳ Đang tải: ${fileName} - ${progressMB.toFixed(
+                2
+              )} MB - Tốc độ: ${speedMBps.toFixed(
+                2
+              )} MB/s (TB: ${avgSpeedMBps.toFixed(2)} MB/s)       \r`
+            );
+
+            lastLogTime = now;
+            lastProgress = progress;
+          }
         })
         .on("end", () => {
+          // Xuống dòng sau khi tiến trình hoàn tất
           process.stdout.write("\n");
+
           try {
             if (fs.existsSync(outputPath)) {
               fs.unlinkSync(outputPath);
             }
             fs.renameSync(tempPath, outputPath);
+
+            // Hiển thị tốc độ trung bình
+            const stats = fs.statSync(outputPath);
+            const fileSizeMB = stats.size / (1024 * 1024);
+            const totalTime = (Date.now() - startTime) / 1000;
+            const avgSpeed = fileSizeMB / totalTime;
+
+            console.log(
+              `✅ Đã tải xong: ${fileName} (${fileSizeMB.toFixed(
+                2
+              )} MB, Tốc độ TB: ${avgSpeed.toFixed(2)} MB/s)`
+            );
+
             resolve();
           } catch (error) {
             reject(error);
           }
         })
         .on("error", (error) => {
+          // Xuống dòng sau khi có lỗi
+          process.stdout.write("\n");
+
           if (fs.existsSync(tempPath)) {
             fs.unlinkSync(tempPath);
           }
@@ -720,15 +907,78 @@ class DriveAPI {
   }
 
   logFinalStats() {
-    console.log("\n📊 Thống kê:");
-    console.log(`- Tổng số file đã xử lý: ${this.processedFiles || 0}`);
-    console.log(
-      `- Tổng dung lượng: ${
-        this.totalSize
-          ? (this.totalSize / 1024 / 1024).toFixed(2) + "MB"
-          : "N/A"
-      }`
+    const elapsedSeconds = Math.floor(
+      (Date.now() - this.stats.startTime) / 1000
     );
+    const hours = Math.floor(elapsedSeconds / 3600);
+    const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+    const seconds = elapsedSeconds % 60;
+    const timeString = `${
+      hours > 0 ? hours + "h " : ""
+    }${minutes}m ${seconds}s`;
+
+    // Tính toán thông số chi tiết
+    const totalSizeMB = this.stats.totalSize / (1024 * 1024);
+    const totalSizeGB = totalSizeMB / 1024;
+    let speedMBps = 0;
+
+    if (elapsedSeconds > 0) {
+      speedMBps = totalSizeMB / elapsedSeconds;
+    }
+
+    // Tỷ lệ thành công
+    const totalFiles = this.stats.processedFiles + this.stats.failedFiles;
+    const successRate =
+      totalFiles > 0
+        ? ((this.stats.processedFiles / totalFiles) * 100).toFixed(1)
+        : 100;
+
+    console.log("\n📊 THỐNG KÊ CHI TIẾT:");
+    console.log(`┌─────────────────────────────────────────────────────┐`);
+    console.log(`│ 🕒 Thời gian: ${timeString.padEnd(38)} │`);
+    console.log(`├─────────────────────────────────────────────────────┤`);
+    console.log(
+      `│ 📦 Files đã tải: ${this.stats.processedFiles.toString().padEnd(33)} │`
+    );
+    console.log(
+      `│ ❌ Files lỗi: ${this.stats.failedFiles.toString().padEnd(36)} │`
+    );
+    console.log(
+      `│ 📂 Thư mục đã xử lý: ${this.stats.processedFolders
+        .toString()
+        .padEnd(27)} │`
+    );
+    console.log(
+      `│ ❌ Thư mục lỗi: ${this.stats.failedFolders.toString().padEnd(34)} │`
+    );
+    console.log(`│ ✅ Tỷ lệ thành công: ${successRate}%`.padEnd(45) + ` │`);
+    console.log(`├─────────────────────────────────────────────────────┤`);
+    console.log(
+      `│ 💾 Tổng dung lượng: ${totalSizeGB.toFixed(2)} GB`.padEnd(45) + ` │`
+    );
+    console.log(
+      `│ ⚡ Tốc độ trung bình: ${speedMBps.toFixed(2)} MB/s`.padEnd(45) + ` │`
+    );
+
+    // Ước tính thời gian tải 1GB
+    const timeFor1GB = speedMBps > 0 ? 1024 / speedMBps : 0;
+    const minutesFor1GB = Math.floor(timeFor1GB / 60);
+    const secondsFor1GB = Math.floor(timeFor1GB % 60);
+    const timeFor1GBStr = `${minutesFor1GB}m ${secondsFor1GB}s`;
+
+    console.log(`│ ⏱️ Thời gian tải 1GB: ${timeFor1GBStr}`.padEnd(45) + ` │`);
+    console.log(`└─────────────────────────────────────────────────────┘`);
+
+    // Thêm mẹo
+    if (speedMBps < 2) {
+      console.log(
+        `\n💡 Mẹo: Tốc độ tải khá chậm. Thử giảm số lượng tải đồng thời để cải thiện.`
+      );
+    } else if (this.stats.failedFiles > 5) {
+      console.log(
+        `\n💡 Mẹo: Có nhiều file tải thất bại. Kiểm tra kết nối mạng và quyền truy cập.`
+      );
+    }
   }
 
   async processFile(file, targetPath, depth = 0) {
@@ -759,6 +1009,205 @@ class DriveAPI {
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý file ${file.name}:`, error.message);
     }
+  }
+
+  async isVideoFileValid(filePath) {
+    return new Promise((resolve) => {
+      try {
+        // Kiểm tra file có tồn tại không
+        if (!fs.existsSync(filePath)) {
+          return resolve(false);
+        }
+
+        // Kiểm tra kích thước tối thiểu
+        const stats = fs.statSync(filePath);
+        if (stats.size < 1024 * 1024) {
+          // Nhỏ hơn 1MB
+          return resolve(false);
+        }
+
+        // Đọc magic bytes đầu tiên để kiểm tra định dạng
+        const fd = fs.openSync(filePath, "r");
+        const buffer = Buffer.alloc(12);
+        fs.readSync(fd, buffer, 0, 12, 0);
+        fs.closeSync(fd);
+
+        // Magic bytes cho một số định dạng video phổ biến
+        const mp4Signature = Buffer.from("ftyp", "ascii");
+        const aviSignature = Buffer.from("RIFF", "ascii");
+        const mkvSignature = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+
+        // Kiểm tra các định dạng phổ biến
+        if (
+          buffer.includes(mp4Signature, 4) || // MP4/MOV
+          buffer.includes(aviSignature, 0) || // AVI
+          buffer.includes(mkvSignature, 0) // MKV
+        ) {
+          return resolve(true);
+        }
+
+        // Không đạt tiêu chí nào, trả về false
+        resolve(false);
+      } catch (error) {
+        console.error(`❌ Lỗi kiểm tra file video: ${error.message}`);
+        resolve(false);
+      }
+    });
+  }
+
+  async tryDownloadViaAPI(fileId, fileName, targetPath, depth = 0) {
+    const indent = "  ".repeat(depth);
+    const MAX_RETRIES = 1;
+    let retryCount = 0;
+    const safeFileName = sanitizePath(fileName);
+    const outputPath = path.join(targetPath, safeFileName);
+
+    // Kiểm tra nếu file đã tồn tại
+    if (fs.existsSync(outputPath)) {
+      const stats = fs.statSync(outputPath);
+      if (stats.size > 0) {
+        // Kiểm tra file có hợp lệ không
+        if (await this.isVideoFileValid(outputPath)) {
+          console.log(
+            `${indent}⏩ File đã tồn tại và hợp lệ, bỏ qua: ${fileName}`
+          );
+          return { success: true, filePath: outputPath };
+        } else {
+          console.log(
+            `${indent}⚠️ File tồn tại nhưng không hợp lệ, tải lại: ${fileName}`
+          );
+          fs.unlinkSync(outputPath);
+        }
+      } else {
+        // Xóa file rỗng
+        fs.unlinkSync(outputPath);
+      }
+    }
+
+    // Đảm bảo thư mục đích tồn tại
+    const outputDir = path.dirname(outputPath);
+    if (!fs.existsSync(outputDir)) {
+      await this.ensureDirectoryExists(outputDir);
+    }
+
+    // Thử tải trực tiếp qua API
+    while (retryCount < MAX_RETRIES) {
+      try {
+        console.log(`${indent}📥 Thử tải qua API: ${fileName}`);
+
+        const response = await this.drive.files.get(
+          {
+            fileId,
+            alt: "media",
+            supportsAllDrives: true,
+          },
+          { responseType: "stream" }
+        );
+
+        // Tạo file tạm thời
+        const tempPath = `${outputPath}.temp`;
+
+        await new Promise((resolve, reject) => {
+          const dest = fs.createWriteStream(tempPath);
+          let progress = 0;
+          let lastLogTime = Date.now();
+          let startTime = Date.now();
+          let lastProgress = 0;
+          const LOG_INTERVAL = 1000; // Log mỗi 1 giây
+
+          // Đặt kết quả vào đầu dòng lệnh
+          process.stdout.write(
+            `${indent}⏳ Đang tải qua API: ${fileName} - 0 MB - 0 MB/s    \r`
+          );
+
+          response.data
+            .on("data", (chunk) => {
+              progress += chunk.length;
+              const now = Date.now();
+              if (now - lastLogTime > LOG_INTERVAL) {
+                const elapsedSecs = (now - startTime) / 1000;
+                const progressMB = progress / (1024 * 1024);
+                const chunkMB = (progress - lastProgress) / (1024 * 1024);
+                const speedMBps = chunkMB / ((now - lastLogTime) / 1000);
+                const avgSpeedMBps = progressMB / elapsedSecs;
+
+                // Hiển thị tốc độ hiện tại và tốc độ trung bình
+                process.stdout.write(
+                  `${indent}⏳ Đang tải qua API: ${fileName} - ${progressMB.toFixed(
+                    2
+                  )} MB - Tốc độ: ${speedMBps.toFixed(
+                    2
+                  )} MB/s (TB: ${avgSpeedMBps.toFixed(2)} MB/s)       \r`
+                );
+
+                lastLogTime = now;
+                lastProgress = progress;
+              }
+            })
+            .on("end", () => {
+              // Xuống dòng sau khi tiến trình hoàn tất
+              process.stdout.write("\n");
+              try {
+                if (fs.existsSync(outputPath)) {
+                  fs.unlinkSync(outputPath);
+                }
+                fs.renameSync(tempPath, outputPath);
+                resolve();
+              } catch (error) {
+                reject(error);
+              }
+            })
+            .on("error", (error) => {
+              // Xuống dòng sau khi có lỗi
+              process.stdout.write("\n");
+              if (fs.existsSync(tempPath)) {
+                fs.unlinkSync(tempPath);
+              }
+              reject(error);
+            })
+            .pipe(dest);
+        });
+
+        // Kiểm tra file có hợp lệ không
+        if (!(await this.isVideoFileValid(outputPath))) {
+          throw new Error("File tải về không phải là video hợp lệ");
+        }
+
+        // Lấy kích thước file đã tải và tính toán tốc độ trung bình
+        const stats = fs.statSync(outputPath);
+        const fileSizeMB = stats.size / (1024 * 1024);
+        const totalTime = (Date.now() - this.stats.startTime) / 1000;
+        const avgSpeed = fileSizeMB / totalTime;
+
+        console.log(
+          `${indent}✅ Đã tải thành công qua API: ${fileName} (${fileSizeMB.toFixed(
+            2
+          )} MB, Tốc độ TB: ${avgSpeed.toFixed(2)} MB/s)`
+        );
+
+        // Cập nhật thống kê
+        this.stats.processedFiles++;
+        this.stats.totalSize += stats.size;
+
+        return { success: true, filePath: outputPath };
+      } catch (error) {
+        retryCount++;
+        if (retryCount === MAX_RETRIES) {
+          console.log(`${indent}❌ Không thể tải qua API: ${error.message}`);
+          // Xóa file nếu tồn tại nhưng có lỗi
+          if (fs.existsSync(outputPath)) {
+            fs.unlinkSync(outputPath);
+          }
+          return { success: false, error: error.message };
+        }
+        console.log(
+          `${indent}⚠️ Lỗi, thử lại API lần ${retryCount}/${MAX_RETRIES}...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    return { success: false, error: "Đã thử tối đa số lần qua API" };
   }
 }
 

@@ -276,65 +276,6 @@ class DesktopVideoHandler extends BaseVideoHandler {
         },
       });
 
-      // Thử tải qua API trước
-      try {
-        console.log(`${indent}🔄 Thử tải qua API...`);
-        const response = await axios.get(
-          `https://drive.google.com/uc?id=${fileId}&export=download`,
-          {
-            responseType: "stream",
-            timeout: 30000,
-            validateStatus: (status) => status === 200 || status === 206,
-            maxContentLength: Infinity,
-            maxBodyLength: Infinity,
-          }
-        );
-
-        if (response && response.status === 200) {
-          console.log(`${indent}✅ API trả về thành công, bắt đầu tải...`);
-          await this.downloadVideoWithChunks(
-            response.config.url,
-            tempPath,
-            response.config.headers,
-            fileName,
-            depth
-          );
-
-          // Kiểm tra kích thước và tính toàn vẹn của file sau khi tải
-          const stats = await fs.promises.stat(tempPath);
-          if (stats.size < MIN_FILE_SIZE) {
-            throw new Error(
-              `File tải về quá nhỏ: ${(stats.size / 1024 / 1024).toFixed(2)}MB`
-            );
-          }
-
-          // Kiểm tra file có bị corrupt không
-          if (!(await this.isVideoFileValid(tempPath))) {
-            throw new Error("File video tải về bị hỏng");
-          }
-
-          await this.moveVideoToTarget(tempPath, finalPath, indent);
-
-          // Kiểm tra lại file sau khi di chuyển
-          if (!(await this.isVideoFileValid(finalPath))) {
-            throw new Error("File video bị hỏng sau khi di chuyển");
-          }
-
-          const endTime = Date.now();
-          console.log(
-            `${indent}✅ Hoàn thành xử lý qua API sau ${(
-              (endTime - startTime) /
-              1000
-            ).toFixed(2)}s`
-          );
-          return { success: true, filePath: finalPath };
-        }
-      } catch (apiError) {
-        const errorDetails = this.getDetailedError(apiError);
-        console.log(`${indent}⚠️ Không thể tải qua API: ${errorDetails}`);
-        console.log(`${indent}🔄 Chuyển sang sử dụng Chrome...`);
-      }
-
       // Chờ slot Chrome với timeout
       const chromeWaitStart = Date.now();
       while (this.activeChrome.size >= this.MAX_CONCURRENT_DOWNLOADS) {
