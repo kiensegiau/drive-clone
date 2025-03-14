@@ -894,71 +894,344 @@ class VideoQualityChecker {
 
       let renamedCount = 0;
       let processedCount = 0;
+      let errorCount = 0;
+      let retryCount = 0;
+      const MAX_RETRIES = 3;
+      const RETRY_DELAY = 5000; // 5 giây
+      const BATCH_SIZE = 5; // Số file xử lý cùng lúc
 
-      // Xử lý các files
-      for (const file of files) {
-        processedCount++;
-        const originalName = file.name;
-        let newName = originalName;
+      // Xử lý các files theo batch
+      for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        const batch = files.slice(i, i + BATCH_SIZE);
+        console.log(
+          `${indent}🔄 Xử lý batch ${
+            Math.floor(i / BATCH_SIZE) + 1
+          }/${Math.ceil(files.length / BATCH_SIZE)} (${batch.length} files)`
+        );
 
-        // 1. Xóa "Bản sao của" và các biến thể của nó
-        newName = newName.replace(/^Bản sao của\s+/i, "");
-        newName = newName.replace(/^Copy of\s+/i, "");
-        
-        // 3. Xử lý các đuôi file bị lặp lại
-        const extensions = [".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v", ".mp3", ".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx"];
-        
-        for (const ext of extensions) {
-          // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
-          const extRegex = new RegExp(`(${ext.replace('.', '\\.')}){2,}$`, 'i');
-          if (extRegex.test(newName)) {
-            // Tìm đuôi file thực tế
-            const match = newName.match(new RegExp(`${ext.replace('.', '\\.')}`, 'i'));
-            if (match) {
-              // Lấy vị trí đầu tiên của đuôi file
-              const firstExtPos = newName.toLowerCase().indexOf(ext.toLowerCase());
-              // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
-              if (firstExtPos !== -1) {
-                newName = newName.substring(0, firstExtPos) + ext;
+        try {
+          // Chuẩn bị danh sách các files cần đổi tên
+          const renameOperations = [];
+
+          for (const file of batch) {
+            processedCount++;
+            const originalName = file.name;
+            let newName = originalName;
+
+            // 1. Xóa "Bản sao của" và các biến thể của nó
+            newName = newName.replace(/^Bản sao của\s+/i, "");
+            newName = newName.replace(/^Copy of\s+/i, "");
+
+            // 2. Thay thế gạch chân (_) và gạch ngang (-) bằng khoảng trắng
+            newName = newName.replace(/[_-]+/g, " ");
+
+            // 3. Xử lý các đuôi file bị lặp lại
+            const extensions = [
+              ".mp4",
+              ".mkv",
+              ".avi",
+              ".mov",
+              ".flv",
+              ".wmv",
+              ".webm",
+              ".m4v",
+              ".mp3",
+              ".jpg",
+              ".jpeg",
+              ".png",
+              ".pdf",
+              ".doc",
+              ".docx",
+            ];
+
+            for (const ext of extensions) {
+              // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
+              const extRegex = new RegExp(
+                `(${ext.replace(".", "\\.")}){2,}$`,
+                "i"
+              );
+              if (extRegex.test(newName)) {
+                // Tìm đuôi file thực tế
+                const match = newName.match(
+                  new RegExp(`${ext.replace(".", "\\.")}`, "i")
+                );
+                if (match) {
+                  // Lấy vị trí đầu tiên của đuôi file
+                  const firstExtPos = newName
+                    .toLowerCase()
+                    .indexOf(ext.toLowerCase());
+                  // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
+                  if (firstExtPos !== -1) {
+                    newName = newName.substring(0, firstExtPos) + ext;
+                  }
+                }
               }
             }
-          }
-        }
-        
-        // 4. Xử lý khoảng trắng thừa
-        newName = newName.replace(/\s+/g, " ").trim();
 
-        // Nếu tên đã thay đổi, tiến hành đổi tên file
-        if (newName !== originalName) {
-          try {
-            await this.withRetry(async () => {
-              await this.drive.files.update({
+            // 4. Xử lý khoảng trắng thừa
+            newName = newName.replace(/\s+/g, " ").trim();
+
+            // Nếu tên đã thay đổi, thêm vào danh sách đổi tên
+            if (newName !== originalName) {
+              renameOperations.push({
                 fileId: file.id,
-                requestBody: {
-                  name: newName,
-                },
-                supportsAllDrives: true,
+                originalName,
+                newName,
               });
-            });
-            renamedCount++;
-            console.log(`${indent}✅ Đổi tên: "${originalName}" -> "${newName}"`);
-          } catch (error) {
-            console.log(`${indent}❌ Không thể đổi tên file: ${error.message}`);
+            } else {
+              console.log(`${indent}⏩ Bỏ qua "${originalName}" (đã chuẩn)`);
+            }
+          }
+
+          // Thực hiện đổi tên song song
+          if (renameOperations.length > 0) {
+            await Promise.all(
+              renameOperations.map(async (op) => {
+                try {
+                  await this.withRetry(async () => {
+                    await this.drive.files.update({
+                      fileId: op.fileId,
+                      requestBody: {
+                        name: op.newName,
+                      },
+                      supportsAllDrives: true,
+                    });
+                  });
+                  renamedCount++;
+                  console.log(
+                    `${indent}✅ Đổi tên: "${op.originalName}" -> "${op.newName}"`
+                  );
+                } catch (error) {
+                  errorCount++;
+                  console.log(
+                    `${indent}❌ Không thể đổi tên file "${op.originalName}": ${error.message}`
+                  );
+                }
+              })
+            );
+          }
+
+          retryCount = 0; // Reset retryCount nếu thành công
+        } catch (batchError) {
+          // Xử lý lỗi batch
+          console.error(`${indent}⚠️ Lỗi xử lý batch: ${batchError.message}`);
+
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            console.log(
+              `${indent}⏳ Nghỉ ${
+                RETRY_DELAY / 1000
+              }s trước khi thử lại (lần ${retryCount}/${MAX_RETRIES})...`
+            );
+            await this.delay(RETRY_DELAY);
+            i -= BATCH_SIZE; // Lùi lại để xử lý lại batch hiện tại
+            continue;
+          } else {
+            console.log(
+              `${indent}⚠️ Đã thử lại ${MAX_RETRIES} lần, bỏ qua batch này.`
+            );
+            errorCount += Math.min(BATCH_SIZE, files.length - i);
+            retryCount = 0;
           }
         }
 
-        // Thêm delay nhỏ giữa các file để tránh quá tải API
-        if (processedCount % 10 === 0) {
+        // Delay giữa các batch để tránh quá tải API
+        if (i + BATCH_SIZE < files.length) {
           await this.delay(this.REQUEST_DELAY);
         }
       }
 
-      console.log(`${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files`);
+      console.log(
+        `${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files, lỗi ${errorCount} files`
+      );
 
       // Đệ quy vào các thư mục con
       for (const folder of folders) {
         console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
         await this.cleanFileNames(folder.id, depth + 1);
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
+
+  // Thêm phương thức để tổ chức lại cấu trúc khóa học
+  async organizeCourseMaterials(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để tổ chức lại tài liệu...`);
+
+      // Lấy thông tin của folder hiện tại
+      const folderInfo = await this.withRetry(async () => {
+        return this.drive.files.get({
+          fileId: folderId,
+          fields: "name",
+          supportsAllDrives: true,
+        });
+      });
+
+      const folderName = folderInfo.data.name;
+      console.log(`${indent}📁 Đang xử lý: ${folderName}`);
+
+      // Lấy danh sách files và folders trong thư mục hiện tại
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, size)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+
+      // Phân loại items
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      // Kiểm tra xem folder này có phải là "chương" trong khóa học không
+      const isChapterFolder = folders.length > 0 && files.length > 0;
+
+      if (isChapterFolder) {
+        console.log(`${indent}📋 Folder này có thể là một chương của khóa học`);
+
+        // Kiểm tra xem đã có thư mục "Tài liệu" chưa bằng checkFileExists
+        let materialsFolder = null;
+
+        // Danh sách các tên thư mục tài liệu có thể có
+        const materialsFolderNames = [
+          "Tài liệu",
+          "tai lieu",
+          "materials",
+          "documents",
+        ];
+
+        // Kiểm tra từng tên thư mục
+        for (const folderName of materialsFolderNames) {
+          console.log(`${indent}🔍 Kiểm tra thư mục "${folderName}"...`);
+          const existingFolder = await this.checkFileExists(
+            folderName,
+            folderId,
+            "application/vnd.google-apps.folder"
+          );
+
+          if (existingFolder) {
+            materialsFolder = existingFolder;
+            console.log(`${indent}✅ Đã tìm thấy thư mục "${folderName}"`);
+            break;
+          }
+        }
+
+        // Nếu chưa có, tạo mới thư mục "Tài liệu"
+        if (!materialsFolder) {
+          console.log(`${indent}📁 Đang tạo thư mục "Tài liệu"...`);
+
+          const newFolder = await this.withRetry(async () => {
+            return this.drive.files.create({
+              requestBody: {
+                name: "Tài liệu",
+                mimeType: "application/vnd.google-apps.folder",
+                parents: [folderId],
+              },
+              supportsAllDrives: true,
+            });
+          });
+
+          materialsFolder = newFolder.data;
+          console.log(`${indent}✅ Đã tạo thư mục "Tài liệu"`);
+        }
+
+        // Danh sách các định dạng file được coi là tài liệu
+        const documentFormats = [
+          "application/pdf",
+          "application/vnd.google-apps.document",
+          "application/msword",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          "application/vnd.ms-excel",
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.ms-powerpoint",
+          "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          "text/plain",
+          "application/x-zip-compressed",
+          "application/zip",
+          "application/x-rar-compressed",
+          "application/rar",
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+        ];
+
+        // Các định dạng file video
+        const videoFormats = [
+          "video/mp4",
+          "video/quicktime",
+          "video/x-msvideo",
+          "video/x-ms-wmv",
+          "video/webm",
+          "video/x-matroska",
+        ];
+
+        // Lọc ra các file tài liệu (không phải video) để di chuyển
+        const filesToMove = files.filter(
+          (file) => !videoFormats.includes(file.mimeType)
+        );
+
+        console.log(
+          `${indent}🔎 Tìm thấy ${filesToMove.length} file tài liệu cần di chuyển`
+        );
+
+        // Di chuyển từng file vào thư mục "Tài liệu"
+        let movedCount = 0;
+        let errorCount = 0;
+
+        for (const file of filesToMove) {
+          try {
+            await this.withRetry(async () => {
+              await this.drive.files.update({
+                fileId: file.id,
+                removeParents: [folderId],
+                addParents: [materialsFolder.id],
+                supportsAllDrives: true,
+              });
+            });
+
+            movedCount++;
+            console.log(`${indent}✅ Đã di chuyển: ${file.name}`);
+
+            // Thêm delay nhỏ giữa các request
+            await this.delay(this.REQUEST_DELAY);
+          } catch (error) {
+            errorCount++;
+            console.log(
+              `${indent}❌ Không thể di chuyển file "${file.name}": ${error.message}`
+            );
+          }
+        }
+
+        console.log(
+          `${indent}📊 Tổng kết: Đã di chuyển ${movedCount}/${filesToMove.length} file, lỗi: ${errorCount}`
+        );
+      }
+
+      // Đệ quy vào các thư mục con (ngoại trừ thư mục "Tài liệu" vừa tạo)
+      for (const folder of folders) {
+        // Bỏ qua thư mục "Tài liệu" để tránh xử lý lặp
+        if (
+          folder.name === "Tài liệu" ||
+          folder.name.toLowerCase() === "tai lieu" ||
+          folder.name.toLowerCase() === "materials" ||
+          folder.name.toLowerCase() === "documents"
+        ) {
+          continue;
+        }
+
+        console.log(`${indent}📁 Đang xử lý thư mục con: ${folder.name}`);
+        await this.organizeCourseMaterials(folder.id, depth + 1);
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
@@ -1029,6 +1302,7 @@ if (require.main === module) {
       console.log("3. Xóa files trùng lặp trong folder");
       console.log("4. Kiểm tra chất lượng video");
       console.log("5. Làm sạch tên file");
+      console.log("6. Tổ chức lại tài liệu khóa học");
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -1036,7 +1310,7 @@ if (require.main === module) {
       });
 
       const mode = await new Promise((resolve) => {
-        rl.question("\nChọn chế độ (1-5): ", (answer) => {
+        rl.question("\nChọn chế độ (1-6): ", (answer) => {
           rl.close();
           resolve(answer.trim());
         });
@@ -1113,8 +1387,12 @@ if (require.main === module) {
         console.log("🧹 Bắt đầu làm sạch tên file...");
         await checker.cleanFileNames(sourceFolderId);
         console.log("✅ Hoàn thành làm sạch tên file!");
+      } else if (mode === "6") {
+        console.log("🗂️ Bắt đầu tổ chức lại tài liệu khóa học...");
+        await checker.organizeCourseMaterials(sourceFolderId);
+        console.log("✅ Hoàn thành tổ chức lại tài liệu!");
       } else {
-        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-5.");
+        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-6.");
       }
     } catch (error) {
       console.error("❌ Lỗi:", error.message);

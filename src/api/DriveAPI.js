@@ -636,7 +636,7 @@ class DriveAPI {
                 targetFolderId: this.currentTargetFolderId,
               });
             } else if (
-              file.name.toLowerCase().match(/\.(mp4|mkv|avi|mov|m2ts)$/)
+              file.name.toLowerCase().match(/\.(mp4|mkv|avi|mov|m2ts|ts)$/)
             ) {
               videoFiles.push({
                 id: file.id,
@@ -1264,7 +1264,7 @@ class DriveAPI {
           // Kiểm tra chắc chắn đây là file video
           const isVideo = file.name
             .toLowerCase()
-            .match(/\.(mp4|mkv|avi|mov|m2ts)$/);
+            .match(/\.(mp4|mkv|avi|mov|m2ts|ts)$/);
           if (!isVideo) {
             console.log(`⚠️ Không phải file video: ${file.name}`);
             return { success: false, file, error: "Không phải file video" };
