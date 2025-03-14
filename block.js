@@ -72,7 +72,7 @@ class VideoQualityChecker {
         console.log("\n📱 Hướng dẫn lấy mã xác thực:");
         console.log("1. Truy cập URL sau trong trình duyệt:");
         console.log(authUrl);
-        console.log("\n2. Đăng nhập và c���p quyền cho ứng dụng");
+        console.log("\n2. Đăng nhập và cấp quyền cho ứng dụng");
         console.log('3. Copy mã từ URL (phần sau "code=")');
 
         // Tạo interface để nhập mã
@@ -360,18 +360,62 @@ class VideoQualityChecker {
   // Thêm phương thức mới để khóa quyền truy cập
   async lockFileAccess(fileId) {
     try {
-      // Cập nhật trực tiếp settings mà không cần xóa permissions cũ
-      await this.withRetry(async () => {
-        await this.drive.files.update({
+      // Lấy thông tin file để kiểm tra mimeType
+      const fileInfo = await this.withRetry(async () => {
+        return this.drive.files.get({
           fileId: fileId,
-          requestBody: {
-            writersCanShare: false,
-            copyRequiresWriterPermission: true,
-            viewersCanCopyContent: false,
-          },
+          fields: "mimeType, name",
           supportsAllDrives: true,
         });
       });
+
+      const mimeType = fileInfo.data.mimeType;
+      const fileName = fileInfo.data.name;
+
+      // Kiểm tra loại file
+      if (mimeType.includes("video/")) {
+        // Đối với video: chặn tải xuống
+        console.log(`🔒 Khoá quyền tải xuống cho video: ${fileName}`);
+        await this.withRetry(async () => {
+          await this.drive.files.update({
+            fileId: fileId,
+            requestBody: {
+              writersCanShare: false,
+              copyRequiresWriterPermission: true,
+              viewersCanCopyContent: false,
+            },
+            supportsAllDrives: true,
+          });
+        });
+      } else if (mimeType.includes("pdf") || mimeType === "application/pdf") {
+        // Đối với PDF: cho phép tải xuống
+        console.log(`🔓 Cho phép tải xuống cho PDF: ${fileName}`);
+        await this.withRetry(async () => {
+          await this.drive.files.update({
+            fileId: fileId,
+            requestBody: {
+              writersCanShare: true,
+              copyRequiresWriterPermission: false,
+              viewersCanCopyContent: true,
+            },
+            supportsAllDrives: true,
+          });
+        });
+      } else {
+        // Các loại file khác: khoá mặc định
+        console.log(`🔒 Áp dụng quyền mặc định cho file: ${fileName}`);
+        await this.withRetry(async () => {
+          await this.drive.files.update({
+            fileId: fileId,
+            requestBody: {
+              writersCanShare: false,
+              copyRequiresWriterPermission: true,
+              viewersCanCopyContent: false,
+            },
+            supportsAllDrives: true,
+          });
+        });
+      }
     } catch (error) {
       console.error(`❌ Lỗi khóa file ${fileId}:`, error.message);
     }
@@ -496,7 +540,7 @@ class VideoQualityChecker {
       // Xử lý tên file trước khi nhóm
       const normalizedFiles = files.map((file) => {
         let normalizedName = file.name;
-        // Xóa "Bản sao của" và các biến thể c���a nó
+        // Xóa "Bản sao của" và các biến thể của nó
         normalizedName = normalizedName.replace(/^Bản sao của\s+/i, "");
         normalizedName = normalizedName.replace(/^Copy of\s+/i, "");
         normalizedName = normalizedName.replace(/\s*\(\d+\)$/, ""); // Xóa (1), (2), etc. ở cuối

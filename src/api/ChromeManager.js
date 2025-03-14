@@ -1,73 +1,59 @@
 const puppeteer = require("puppeteer-core");
 const { exec } = require("child_process");
-const util = require('util');
-const path = require('path');
-const fs = require('fs');
+const util = require("util");
+const path = require("path");
+const fs = require("fs");
 const execAsync = util.promisify(exec);
 const {
   sanitizePath,
   ensureDirectoryExists,
   getTempPath,
-  getConfigPath
-} = require('../utils/pathUtils');
+  getConfigPath,
+} = require("../utils/pathUtils");
 
 class ChromeManager {
   constructor(maxInstances = 3) {
-    this.browsers = new Map();
+    this.browser = null;
+    this.pages = new Map(); // Map profileId -> page
     this.maxInstances = maxInstances;
-    this.isLaunching = new Set();
-    this.queues = new Map();
+    this.isLaunching = false;
+    this.launchQueue = [];
     this.currentProfile = 0;
     this.MAX_INSTANCES = 6;
-    this.activeInstances = new Map();
-    
+    this.activeInstances = new Map(); // Map profileId -> timestamp
+
     try {
       // 1. Tạo thư mục temp
       this.tempDir = getTempPath();
       if (!this.tempDir) {
-        throw new Error('Không thể khởi tạo thư mục temp');
+        throw new Error("Không thể khởi tạo thư mục temp");
       }
-      console.log('📁 Tạo thư mục temp:', this.tempDir);
+      console.log("📁 Tạo thư mục temp:", this.tempDir);
       ensureDirectoryExists(this.tempDir);
-      
+
       // 2. Tạo thư mục gốc cho chrome profiles
-      this.profilesDir = path.join(getConfigPath(), 'chrome-profiles');
-      console.log('📁 Tạo thư mục chrome profiles:', this.profilesDir);
+      this.profilesDir = path.join(getConfigPath(), "chrome-profiles");
+      console.log("📁 Tạo thư mục chrome profiles:", this.profilesDir);
       ensureDirectoryExists(this.profilesDir);
-      
-      // 3. Tạo thư mục cho PDF và Video profiles
-      this.pdfProfilesDir = path.join(this.profilesDir, 'pdf');
-      this.videoProfilesDir = path.join(this.profilesDir, 'video');
-      
-      console.log('📁 Tạo thư mục PDF profiles:', this.pdfProfilesDir);
-      ensureDirectoryExists(this.pdfProfilesDir);
-      
-      console.log('📁 Tạo thư mục Video profiles:', this.videoProfilesDir);
+
+      // 3. Tạo thư mục video profile
+      this.videoProfilesDir = path.join(this.profilesDir, "video");
+      console.log("📁 Tạo thư mục Video profiles:", this.videoProfilesDir);
       ensureDirectoryExists(this.videoProfilesDir);
-      
-      // 4. Tạo các profile con
-      console.log('📁 Tạo các profile con...');
-      for (let i = 0; i < this.maxInstances; i++) {
-        // Tạo profile cho PDF
-        const pdfProfile = path.join(this.pdfProfilesDir, `profile_${i}`);
-        ensureDirectoryExists(pdfProfile);
-        console.log(`✅ Đã tạo PDF profile ${i}: ${pdfProfile}`);
-        
-        // Tạo profile cho Video
-        const videoProfile = path.join(this.videoProfilesDir, `profile_${i}`);
-        ensureDirectoryExists(videoProfile);
-        console.log(`✅ Đã tạo Video profile ${i}: ${videoProfile}`);
-      }
-      
-      console.log('✅ Đã khởi tạo xong tất cả thư mục profile');
-      
+
+      // 4. Tạo profile chính
+      const mainProfile = path.join(this.videoProfilesDir, "profile_0");
+      ensureDirectoryExists(mainProfile);
+      console.log(`✅ Đã tạo profile chính: ${mainProfile}`);
+
+      console.log("✅ Đã khởi tạo xong thư mục profile");
     } catch (error) {
-      console.error('❌ Lỗi khởi tạo ChromeManager:', error.message);
+      console.error("❌ Lỗi khởi tạo ChromeManager:", error.message);
       throw error;
     }
   }
 
-  static getInstance(type = 'video') {
+  static getInstance(type = "video") {
     const key = `instance_${type}`;
     if (!ChromeManager[key]) {
       ChromeManager[key] = new ChromeManager();
@@ -80,160 +66,228 @@ class ChromeManager {
     return this.activeInstances.size;
   }
 
+  async _ensureBrowser() {
+    if (this.browser) {
+      try {
+        const pages = await this.browser.pages();
+        if (pages.length > 0) return this.browser;
+        console.log("⚠️ Browser không có page nào, khởi động lại...");
+        this.browser = null;
+      } catch (error) {
+        console.log("⚠️ Browser không còn hoạt động, khởi động lại...");
+        this.browser = null;
+      }
+      this.pages.clear();
+      this.activeInstances.clear();
+    }
+
+    if (this.isLaunching) {
+      return new Promise((resolve) => this.launchQueue.push(resolve));
+    }
+
+    this.isLaunching = true;
+    let retries = 3;
+
+    while (retries > 0) {
+      try {
+        // Luôn sử dụng profile_0 làm profile chính
+        const profilePath = this.getProfilePath(0);
+        console.log(`🌐 Khởi động Chrome với profile chính: ${profilePath}`);
+
+        const browser = await puppeteer.launch({
+          headless: false,
+          channel: "chrome",
+          executablePath:
+            "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+          args: [
+            "--start-maximized",
+            `--user-data-dir=${profilePath}`,
+            "--enable-extensions",
+            "--remote-debugging-port=9222",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+            "--disable-site-isolation-trials",
+            "--disable-features=BlockInsecurePrivateNetworkRequests",
+            "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-popup-blocking",
+            "--disable-notifications",
+            "--disable-infobars",
+            "--disable-translate",
+            "--allow-running-insecure-content",
+            "--disable-sync",
+            "--password-store=basic",
+          ],
+          defaultViewport: null,
+          ignoreDefaultArgs: [
+            "--enable-automation",
+            "--enable-blink-features=IdleDetection",
+          ],
+        });
+
+        // Đợi browser khởi động hoàn tất
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Kiểm tra xem browser có hoạt động không
+        const pages = await browser.pages();
+        if (!pages || pages.length === 0) {
+          throw new Error("Browser khởi động không thành công");
+        }
+
+        browser.on("disconnected", () => {
+          console.log("⚠️ Browser đã ngắt kết nối");
+          this.browser = null;
+          this.pages.clear();
+          this.activeInstances.clear();
+        });
+
+        this.browser = browser;
+        this.isLaunching = false;
+
+        // Xử lý hàng đợi
+        while (this.launchQueue.length > 0) {
+          const resolve = this.launchQueue.shift();
+          resolve(browser);
+        }
+
+        return browser;
+      } catch (error) {
+        console.error(
+          `❌ Lỗi khởi động browser (còn ${retries - 1} lần thử):`,
+          error.message
+        );
+        if (this.browser) {
+          try {
+            await this.browser.close();
+          } catch {}
+          this.browser = null;
+        }
+        retries--;
+        if (retries > 0) {
+          console.log("⏳ Đợi 5s trước khi thử lại...");
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+      }
+    }
+
+    this.isLaunching = false;
+    throw new Error("Không thể khởi động Chrome sau nhiều lần thử");
+  }
+
   async getBrowser(preferredProfile = null) {
     try {
-      const prefix = this.type === 'pdf' ? 'pdf_' : 'video_';
+      const prefix = this.type === "pdf" ? "pdf_" : "video_";
       const profileIndex = this.currentProfile;
       const profileId = preferredProfile || `${prefix}profile_${profileIndex}`;
-      
-      // Đảm bảo profile tồn tại
-      const userDataDir = await this.ensureProfileExists(profileId);
-      
+
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 
-      if (this.browsers.has(profileId)) {
+      // Kiểm tra xem đã có page cho profile này chưa
+      if (this.pages.has(profileId)) {
         try {
-          const browser = this.browsers.get(profileId);
-          await browser.pages();
-          return browser;
-        } catch (error) {
-          console.error(`❌ Lỗi kiểm tra browser hiện tại:`, error.message);
-          this.browsers.delete(profileId);
-        }
-      }
-
-      if (this.isLaunching.has(profileId)) {
-        try {
-          if (!this.queues.has(profileId)) {
-            this.queues.set(profileId, []);
-          }
-          return new Promise(resolve => this.queues.get(profileId).push(resolve));
-        } catch (error) {
-          console.error(`❌ Lỗi xử lý queue:`, error.message);
-          throw error;
-        }
-      }
-
-      this.isLaunching.add(profileId);
-
-      let retries = 3;
-      let lastError = null;
-
-      while (retries > 0) {
-        try {
-          console.log(`🌐 Khởi động Chrome với profile: ${profileId} (${userDataDir})`);
-          const debuggingPort = 9222 + profileIndex;
-
-          const browser = await puppeteer.launch({
-            headless: false,
-            channel: "chrome",
-            executablePath: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-            args: [
-              "--start-maximized",
-              `--user-data-dir=${userDataDir}`,
-              "--enable-extensions",
-              `--remote-debugging-port=${debuggingPort}`,
-              "--no-sandbox",
-              "--disable-setuid-sandbox",
-              "--disable-web-security",
-              "--disable-features=IsolateOrigins,site-per-process",
-              "--disable-site-isolation-trials",
-              "--disable-features=BlockInsecurePrivateNetworkRequests",
-              "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure",
-              "--no-first-run",
-              "--no-default-browser-check",
-              "--disable-popup-blocking",
-              "--disable-notifications",
-              "--disable-infobars",
-              "--disable-translate",
-              "--allow-running-insecure-content",
-              "--disable-sync",
-              "--password-store=basic"
-            ],
-            defaultViewport: null,
-            ignoreDefaultArgs: [
-              "--enable-automation",
-              "--enable-blink-features=IdleDetection"
-            ]
-          });
-
-          browser.on('disconnected', () => {
-            try {
-              this.browsers.delete(profileId);
-              this.isLaunching.delete(profileId);
-            } catch (error) {
-              console.error(`❌ Lỗi xử lý disconnect:`, error.message);
-            }
-          });
-
-          this.browsers.set(profileId, browser);
-          this.isLaunching.delete(profileId);
-
-          if (this.queues.has(profileId)) {
-            try {
-              while (this.queues.get(profileId).length > 0) {
-                const resolve = this.queues.get(profileId).shift();
-                resolve(browser);
-              }
-            } catch (error) {
-              console.error(`❌ Lỗi xử lý queue sau launch:`, error.message);
-            }
-          }
-
+          const page = this.pages.get(profileId);
+          // Kiểm tra page còn hoạt động không
+          await page.evaluate(() => true);
           this.activeInstances.set(profileId, Date.now());
-          return browser;
-
+          return this._wrapBrowser(page, profileId);
         } catch (error) {
-          console.error(`❌ Lỗi khởi động browser (còn ${retries-1} lần thử):`, error.message);
-          lastError = error;
-          retries--;
-          if (retries > 0) {
-            console.log(`🔄 Thử lại sau 5 giây...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-          }
+          console.log(
+            `⚠️ Page của profile ${profileId} không còn hoạt động, tạo mới...`
+          );
+          this.pages.delete(profileId);
+          this.activeInstances.delete(profileId);
         }
       }
 
-      this.isLaunching.delete(profileId);
-      throw new Error(lastError.message);
+      // Đảm bảo browser đã được khởi động
+      const browser = await this._ensureBrowser();
 
+      // Tạo page mới cho profile này
+      console.log(`📄 Tạo tab mới cho profile: ${profileId}`);
+
+      // Đợi một chút trước khi tạo page mới
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const page = await browser.newPage();
+
+      // Đợi page load xong
+      await page.evaluate(() => true).catch(() => {});
+
+      // Thiết lập sự kiện đóng page
+      page.on("close", () => {
+        console.log(`🔒 Tab của profile ${profileId} đã đóng`);
+        this.pages.delete(profileId);
+        this.activeInstances.delete(profileId);
+      });
+
+      this.pages.set(profileId, page);
+      this.activeInstances.set(profileId, Date.now());
+
+      return this._wrapBrowser(page, profileId);
     } catch (error) {
-      console.error(`❌ Lỗi tổng thể trong getBrowser:`, error.message);
+      console.error(`❌ Lỗi trong getBrowser:`, error.message);
       throw error;
     }
   }
 
-  releaseInstance(profileId) {
-    this.activeInstances.delete(profileId);
+  _wrapBrowser(page, profileId) {
+    // Tạo một wrapper giả lập browser để tương thích với code cũ
+    const wrapper = {
+      newPage: async () => page,
+      pages: async () => [page],
+      close: async () => this.closeBrowser(profileId),
+      _profileId: profileId,
+
+      // Thêm các thuộc tính và phương thức cần thiết
+      userAgent: () => page.browser().userAgent(),
+      version: () => page.browser().version(),
+      wsEndpoint: () => page.browser().wsEndpoint(),
+      isConnected: () => page.browser().isConnected(),
+    };
+
+    return wrapper;
   }
 
-  async killAllChrome() {
+  releaseInstance(profileId) {
     try {
-      if (process.platform === "win32") {
-        await execAsync("taskkill /F /IM chrome.exe /T");
-        console.log("✅ Đã kill tất cả Chrome process");
+      if (this.pages.has(profileId)) {
+        const page = this.pages.get(profileId);
+        page.close().catch(() => {});
+        this.pages.delete(profileId);
       }
-      await new Promise(r => setTimeout(r, 2000));
+      this.activeInstances.delete(profileId);
     } catch (error) {
-      if (!error.message.includes('không tìm thấy process')) {
-        console.error("❌ Lỗi khi kill Chrome:", error.message);
-      }
+      console.error(`❌ Lỗi trong releaseInstance:`, error.message);
     }
   }
 
   async closeBrowser(profileId = null) {
     try {
       if (profileId) {
-        const browser = this.browsers.get(profileId);
-        if (browser) {
-          await browser.close().catch(() => {});
-          this.browsers.delete(profileId);
-        }
+        // Chỉ đóng page của profile cụ thể
+        this.releaseInstance(profileId);
       } else {
-        for (const browser of this.browsers.values()) {
-          await browser.close().catch(() => {});
+        // Đóng toàn bộ browser
+        if (this.browser) {
+          for (const [profileId, page] of this.pages.entries()) {
+            try {
+              await page.close().catch(() => {});
+            } catch (error) {
+              console.error(
+                `⚠️ Không thể đóng page của profile ${profileId}:`,
+                error.message
+              );
+            }
+          }
+          await this.browser.close().catch(() => {});
+          this.browser = null;
+          this.pages.clear();
+          this.activeInstances.clear();
+          console.log("✅ Đã đóng trình duyệt");
         }
-        this.browsers.clear();
       }
     } catch (error) {
       console.error(`❌ Lỗi trong closeBrowser:`, error.message);
@@ -242,43 +296,53 @@ class ChromeManager {
 
   async closeInactiveBrowsers() {
     try {
-      for (const [profileId, browser] of this.browsers.entries()) {
-        try {
-          const pages = await browser.pages();
-          if (pages.length <= 1) {
-            await this.closeBrowser(profileId);
-          }
-        } catch (error) {
-          console.error(`❌ Lỗi kiểm tra browser ${profileId}:`, error.message);
-          this.browsers.delete(profileId);
+      const now = Date.now();
+      const inactiveProfiles = [];
+
+      // Tìm các profile không hoạt động trong 30 phút
+      for (const [
+        profileId,
+        lastActiveTime,
+      ] of this.activeInstances.entries()) {
+        if (now - lastActiveTime > 30 * 60 * 1000) {
+          inactiveProfiles.push(profileId);
         }
+      }
+
+      // Đóng các page không hoạt động
+      for (const profileId of inactiveProfiles) {
+        this.releaseInstance(profileId);
+      }
+
+      if (inactiveProfiles.length > 0) {
+        console.log(
+          `🧹 Đã đóng ${inactiveProfiles.length} tab không hoạt động`
+        );
       }
     } catch (error) {
       console.error(`❌ Lỗi trong closeInactiveBrowsers:`, error.message);
     }
   }
 
-  async killAllChromeProcesses() {
+  async killAllChrome() {
     try {
-      const platform = process.platform;
-      let command = '';
-      
-      if (platform === 'win32') {
-        command = 'taskkill /F /IM chrome.exe /T';
-      } else if (platform === 'darwin') {
-        command = 'pkill -9 "Google Chrome"';
-      } else {
-        command = 'pkill -9 chrome';
+      if (process.platform === "win32") {
+        await execAsync("taskkill /F /IM chrome.exe /T");
+        console.log("✅ Đã kill tất cả Chrome process");
       }
-
-      await execAsync(command);
-      console.log('🧹 Đã đóng tất cả các process Chrome');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await new Promise((r) => setTimeout(r, 2000));
+      this.browser = null;
+      this.pages.clear();
+      this.activeInstances.clear();
     } catch (error) {
-      if (!error.message.includes('no process found')) {
-        console.error('⚠️ Lỗi khi đóng Chrome:', error.message);
+      if (!error.message.includes("không tìm thấy process")) {
+        console.error("❌ Lỗi khi kill Chrome:", error.message);
       }
     }
+  }
+
+  async killAllChromeProcesses() {
+    return this.killAllChrome();
   }
 
   resetCurrentProfile() {
@@ -286,25 +350,30 @@ class ChromeManager {
   }
 
   getProfilePath(profileIndex) {
-    const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
-    return path.join(baseDir, `profile_${profileIndex}`);
+    // Luôn dùng video/profile_0
+    return path.join(this.videoProfilesDir, `profile_${profileIndex}`);
   }
 
   async ensureProfileExists(profileId) {
     try {
-        const profileIndex = parseInt(profileId.split('_').pop());
-        const baseDir = this.type === 'pdf' ? this.pdfProfilesDir : this.videoProfilesDir;
-        const profilePath = path.join(baseDir, `profile_${profileIndex}`);
-        
-        if (!fs.existsSync(profilePath)) {
-            console.log(` Tạo mới profile ${profileId} tại: ${profilePath}`);
-            ensureDirectoryExists(profilePath);
-        }
-        
-        return profilePath;
+      const profileIndex = parseInt(profileId.split("_").pop());
+      const profilePath = path.join(
+        this.videoProfilesDir,
+        `profile_${profileIndex}`
+      );
+
+      if (!fs.existsSync(profilePath)) {
+        console.log(` Tạo mới profile ${profileId} tại: ${profilePath}`);
+        ensureDirectoryExists(profilePath);
+      }
+
+      return profilePath;
     } catch (error) {
-        console.error(`❌ Lỗi khi kiểm tra/tạo profile ${profileId}:`, error.message);
-        throw error;
+      console.error(
+        `❌ Lỗi khi kiểm tra/tạo profile ${profileId}:`,
+        error.message
+      );
+      throw error;
     }
   }
 }
