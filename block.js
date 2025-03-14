@@ -867,6 +867,103 @@ class VideoQualityChecker {
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
+
+  // Thêm phương thức để làm sạch tên file
+  async cleanFileNames(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để làm sạch tên file...`);
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      let renamedCount = 0;
+      let processedCount = 0;
+
+      // Xử lý các files
+      for (const file of files) {
+        processedCount++;
+        const originalName = file.name;
+        let newName = originalName;
+
+        // 1. Xóa "Bản sao của" và các biến thể của nó
+        newName = newName.replace(/^Bản sao của\s+/i, "");
+        newName = newName.replace(/^Copy of\s+/i, "");
+        
+        // 3. Xử lý các đuôi file bị lặp lại
+        const extensions = [".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv", ".webm", ".m4v", ".mp3", ".jpg", ".jpeg", ".png", ".pdf", ".doc", ".docx"];
+        
+        for (const ext of extensions) {
+          // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
+          const extRegex = new RegExp(`(${ext.replace('.', '\\.')}){2,}$`, 'i');
+          if (extRegex.test(newName)) {
+            // Tìm đuôi file thực tế
+            const match = newName.match(new RegExp(`${ext.replace('.', '\\.')}`, 'i'));
+            if (match) {
+              // Lấy vị trí đầu tiên của đuôi file
+              const firstExtPos = newName.toLowerCase().indexOf(ext.toLowerCase());
+              // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
+              if (firstExtPos !== -1) {
+                newName = newName.substring(0, firstExtPos) + ext;
+              }
+            }
+          }
+        }
+        
+        // 4. Xử lý khoảng trắng thừa
+        newName = newName.replace(/\s+/g, " ").trim();
+
+        // Nếu tên đã thay đổi, tiến hành đổi tên file
+        if (newName !== originalName) {
+          try {
+            await this.withRetry(async () => {
+              await this.drive.files.update({
+                fileId: file.id,
+                requestBody: {
+                  name: newName,
+                },
+                supportsAllDrives: true,
+              });
+            });
+            renamedCount++;
+            console.log(`${indent}✅ Đổi tên: "${originalName}" -> "${newName}"`);
+          } catch (error) {
+            console.log(`${indent}❌ Không thể đổi tên file: ${error.message}`);
+          }
+        }
+
+        // Thêm delay nhỏ giữa các file để tránh quá tải API
+        if (processedCount % 10 === 0) {
+          await this.delay(this.REQUEST_DELAY);
+        }
+      }
+
+      console.log(`${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files`);
+
+      // Đệ quy vào các thư mục con
+      for (const folder of folders) {
+        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+        await this.cleanFileNames(folder.id, depth + 1);
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
 }
 
 module.exports = VideoQualityChecker;
@@ -931,6 +1028,7 @@ if (require.main === module) {
       console.log("2. Khóa quyền truy cập folder");
       console.log("3. Xóa files trùng lặp trong folder");
       console.log("4. Kiểm tra chất lượng video");
+      console.log("5. Làm sạch tên file");
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -938,7 +1036,7 @@ if (require.main === module) {
       });
 
       const mode = await new Promise((resolve) => {
-        rl.question("\nChọn chế độ (1-4): ", (answer) => {
+        rl.question("\nChọn chế độ (1-5): ", (answer) => {
           rl.close();
           resolve(answer.trim());
         });
@@ -1011,8 +1109,12 @@ if (require.main === module) {
         console.log("🎥 Bắt đầu kiểm tra chất lượng video...");
         await checker.checkVideoQuality(sourceFolderId);
         console.log("✅ Hoàn thành kiểm tra!");
+      } else if (mode === "5") {
+        console.log("🧹 Bắt đầu làm sạch tên file...");
+        await checker.cleanFileNames(sourceFolderId);
+        console.log("✅ Hoàn thành làm sạch tên file!");
       } else {
-        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-4.");
+        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-5.");
       }
     } catch (error) {
       console.error("❌ Lỗi:", error.message);
