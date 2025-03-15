@@ -1237,6 +1237,147 @@ class VideoQualityChecker {
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
+
+  // Thêm phương thức để loại bỏ file trùng tên
+  async removeDuplicateNames(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để loại bỏ file trùng tên...`);
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, createdTime, size)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      // Tạo Map để nhóm files theo tên chính xác
+      const filesByName = new Map();
+      files.forEach((file) => {
+        if (!filesByName.has(file.name)) {
+          filesByName.set(file.name, []);
+        }
+        filesByName.get(file.name).push(file);
+      });
+
+      // Số lượng file trùng tên
+      let totalDuplicates = 0;
+      let deletedCount = 0;
+      let errorCount = 0;
+
+      // Các nhóm cần xử lý
+      const duplicateGroups = [];
+      for (const [name, fileGroup] of filesByName.entries()) {
+        if (fileGroup.length > 1) {
+          totalDuplicates += fileGroup.length - 1;
+          duplicateGroups.push(fileGroup);
+        }
+      }
+
+      console.log(
+        `${indent}📊 Tìm thấy ${totalDuplicates} file trùng tên trong ${duplicateGroups.length} nhóm`
+      );
+
+      // Xử lý song song các nhóm, mỗi lần 5 nhóm
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < duplicateGroups.length; i += BATCH_SIZE) {
+        const currentBatch = duplicateGroups.slice(i, i + BATCH_SIZE);
+        console.log(
+          `${indent}🔄 Xử lý batch ${
+            Math.floor(i / BATCH_SIZE) + 1
+          }/${Math.ceil(duplicateGroups.length / BATCH_SIZE)} (${
+            currentBatch.length
+          } nhóm)`
+        );
+
+        try {
+          // Xử lý đồng thời các nhóm trong batch
+          await Promise.all(
+            currentBatch.map(async (fileGroup) => {
+              try {
+                // Sắp xếp theo thời gian tạo (giữ lại file cũ nhất)
+                fileGroup.sort(
+                  (a, b) => new Date(a.createdTime) - new Date(b.createdTime)
+                );
+
+                // Hiển thị thông tin nhóm
+                const keepFile = fileGroup[0];
+                console.log(
+                  `${indent}📄 Nhóm "${keepFile.name}" có ${fileGroup.length} files trùng tên`
+                );
+                console.log(
+                  `${indent}   🔒 Giữ lại: ${
+                    keepFile.name
+                  } (${this.formatFileSize(parseInt(keepFile.size || 0))})`
+                );
+
+                // Xóa các file trùng tên
+                for (let i = 1; i < fileGroup.length; i++) {
+                  try {
+                    await this.withRetry(async () => {
+                      await this.drive.files.delete({
+                        fileId: fileGroup[i].id,
+                        supportsAllDrives: true,
+                      });
+                    });
+                    deletedCount++;
+                    console.log(
+                      `${indent}   ✅ Đã xóa: ${
+                        fileGroup[i].name
+                      } (${this.formatFileSize(
+                        parseInt(fileGroup[i].size || 0)
+                      )})`
+                    );
+                  } catch (error) {
+                    errorCount++;
+                    console.log(
+                      `${indent}   ❌ Không thể xóa: ${fileGroup[i].name} - ${error.message}`
+                    );
+                  }
+                }
+              } catch (error) {
+                errorCount += fileGroup.length - 1;
+                console.log(
+                  `${indent}❌ Lỗi xử lý nhóm "${fileGroup[0].name}": ${error.message}`
+                );
+              }
+            })
+          );
+
+          // Delay nhỏ giữa các batch
+          if (i + BATCH_SIZE < duplicateGroups.length) {
+            await this.delay(this.REQUEST_DELAY);
+          }
+        } catch (error) {
+          console.error(`${indent}❌ Lỗi xử lý batch: ${error.message}`);
+          await this.delay(this.REQUEST_DELAY);
+        }
+      }
+
+      console.log(
+        `${indent}📊 Tổng kết: Đã xóa ${deletedCount}/${totalDuplicates} files trùng tên, lỗi ${errorCount} files`
+      );
+
+      // Đệ quy vào các thư mục con
+      for (const folder of folders) {
+        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+        await this.removeDuplicateNames(folder.id, depth + 1);
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
 }
 
 module.exports = VideoQualityChecker;
@@ -1303,6 +1444,7 @@ if (require.main === module) {
       console.log("4. Kiểm tra chất lượng video");
       console.log("5. Làm sạch tên file");
       console.log("6. Tổ chức lại tài liệu khóa học");
+      console.log("7. Loại bỏ file trùng tên");
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -1310,7 +1452,7 @@ if (require.main === module) {
       });
 
       const mode = await new Promise((resolve) => {
-        rl.question("\nChọn chế độ (1-6): ", (answer) => {
+        rl.question("\nChọn chế độ (1-7): ", (answer) => {
           rl.close();
           resolve(answer.trim());
         });
@@ -1391,8 +1533,12 @@ if (require.main === module) {
         console.log("🗂️ Bắt đầu tổ chức lại tài liệu khóa học...");
         await checker.organizeCourseMaterials(sourceFolderId);
         console.log("✅ Hoàn thành tổ chức lại tài liệu!");
+      } else if (mode === "7") {
+        console.log("🔍 Bắt đầu loại bỏ file trùng tên...");
+        await checker.removeDuplicateNames(sourceFolderId);
+        console.log("✅ Hoàn thành loại bỏ file trùng tên!");
       } else {
-        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-6.");
+        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-7.");
       }
     } catch (error) {
       console.error("❌ Lỗi:", error.message);
