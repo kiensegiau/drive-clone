@@ -34,11 +34,11 @@ class VideoQualityChecker {
     );
 
     // Các cấu hình delay để tránh quá tải API
-    this.REQUEST_DELAY = 2;
-    this.QUOTA_DELAY = 1000;
-    this.MAX_RETRIES = 1;
+    this.REQUEST_DELAY = 1;
+    this.QUOTA_DELAY = 5000;
+    this.MAX_RETRIES = 3;
     this.COPY_BATCH_SIZE = 10;
-    this.INITIAL_DELAY = 1000;
+    this.INITIAL_DELAY = 5000;
     this.MAX_DELAY = 64000;
     this.QUOTA_RESET_TIME = 60000;
     this.TIMEOUT = 30000;
@@ -120,17 +120,30 @@ class VideoQualityChecker {
     let quotaWaitTime = this.QUOTA_RESET_TIME;
     let isQuotaError = false;
     let quotaRetryCount = 0;
+    const MAX_QUOTA_RETRIES = 6; // Tăng số lần thử lại tối đa khi gặp lỗi quota lên 6
 
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
         if (isQuotaError) {
+          // Tăng thời gian chờ theo cấp số nhân khi gặp lỗi quota
           const waitTime = quotaWaitTime * Math.pow(2, quotaRetryCount);
+          const timeInSeconds = (waitTime / 1000).toFixed(1);
+
           console.log(
-            `⏳ Đang đợi ${waitTime / 1000}s để reset quota (lần ${
+            `⚠️ API Quota bị giới hạn! Đang đợi ${timeInSeconds}s để reset quota (lần ${
               quotaRetryCount + 1
-            })...`
+            }/${MAX_QUOTA_RETRIES})...`
           );
+
           await this.delay(waitTime);
+
+          if (quotaRetryCount >= MAX_QUOTA_RETRIES) {
+            console.log(
+              "❌ Đã vượt quá số lần thử lại cho lỗi quota, bỏ qua operation"
+            );
+            throw new Error("Quota limit exceeded after multiple retries");
+          }
+
           isQuotaError = false;
           quotaRetryCount++;
         }
@@ -152,8 +165,14 @@ class VideoQualityChecker {
           error.message.includes("Operation timeout");
         const isNetworkError =
           error.code === "ECONNRESET" || error.code === "ECONNREFUSED";
+        const isQuota =
+          error.code === 429 ||
+          error.message.includes("quota") ||
+          error.message.includes("Rate Limit") ||
+          error.message.includes("userRateLimitExceeded");
 
-        if (error.code === 429 || error.message.includes("quota")) {
+        if (isQuota) {
+          console.log(`🛑 Đã gặp lỗi giới hạn API: ${error.message}`);
           isQuotaError = true;
           continue;
         }
@@ -172,8 +191,12 @@ class VideoQualityChecker {
           );
         }
 
+        // Tăng thời gian chờ theo cấp số nhân cho tất cả các loại lỗi
         await this.delay(delay);
         delay = Math.min(delay * 2, this.MAX_DELAY);
+        console.log(
+          `⏱️ Thời gian chờ tiếp theo: ${(delay / 1000).toFixed(1)}s`
+        );
 
         if (attempt === this.MAX_RETRIES - 1) {
           throw error;
@@ -185,6 +208,14 @@ class VideoQualityChecker {
   // Copy folder và nội dung bên trong
   async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
+
+    // Biến đếm số lượng tệp tin và thư mục đã xử lý
+    let processedFiles = 0;
+    let skippedFiles = 0;
+    let errorFiles = 0;
+    let processedFolders = 0;
+    let errorFolders = 0;
+
     try {
       // Lấy thông tin folder nguồn
       let sourceFolder = await this.withRetry(async () => {
@@ -259,25 +290,300 @@ class VideoQualityChecker {
         destItems.map((item) => [item.name, item])
       );
 
-      // Xử lý từng item trong folder nguồn
-      for (const sourceItem of sourceItems) {
-        const existingItem = existingItemsMap.get(sourceItem.name);
+      // Tách thành folder và file riêng để xử lý
+      const folders = sourceItems.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+      const files = sourceItems.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
 
-        if (sourceItem.mimeType === "application/vnd.google-apps.folder") {
-          // Nếu là folder, đệ quy vào trong
-          await this.copyFolder(sourceItem.id, targetFolderId, depth + 1);
+      // Thêm bước kiểm tra tồn tại file trước khi copy
+      console.log(
+        `${indent}🔍 Đang kiểm tra ${files.length} files đã tồn tại...`
+      );
+      // Phân loại file: đã tồn tại và cần copy
+      const filesToSkip = [];
+      const filesToCopy = [];
+
+      for (const file of files) {
+        const existingItem = existingItemsMap.get(file.name);
+        if (existingItem) {
+          filesToSkip.push(file);
         } else {
-          // Nếu là file và chưa tồn tại, copy
-          if (!existingItem) {
-            await this.copyFile(sourceItem.id, targetFolderId, depth + 1);
-          } else {
+          filesToCopy.push(file);
+        }
+      }
+
+      console.log(
+        `${indent}📊 Kết quả kiểm tra: ${filesToCopy.length} files cần copy, ${filesToSkip.length} files đã tồn tại`
+      );
+
+      // Ghi log các file đã tồn tại
+      if (filesToSkip.length > 0) {
+        console.log(`${indent}⏩ Các file đã tồn tại, bỏ qua:`);
+        // Giới hạn số lượng log để tránh quá nhiều
+        const MAX_LOG_FILES = 10;
+        const filesToLog =
+          filesToSkip.length <= MAX_LOG_FILES
+            ? filesToSkip
+            : filesToSkip.slice(0, MAX_LOG_FILES);
+
+        filesToLog.forEach((file) => {
+          console.log(`${indent}   - "${file.name}"`);
+        });
+
+        if (filesToSkip.length > MAX_LOG_FILES) {
+          console.log(
+            `${indent}   - ... và ${
+              filesToSkip.length - MAX_LOG_FILES
+            } file khác`
+          );
+        }
+
+        // Cập nhật số lượng file bỏ qua
+        skippedFiles += filesToSkip.length;
+      }
+
+      // Xử lý các file song song theo batch
+      const BATCH_SIZE = 10; // Tăng số file xử lý cùng lúc
+
+      console.log(
+        `${indent}📁 Đang xử lý ${filesToCopy.length} files còn lại...`
+      );
+
+      for (let i = 0; i < filesToCopy.length; i += BATCH_SIZE) {
+        const batch = filesToCopy.slice(i, i + BATCH_SIZE);
+        console.log(
+          `${indent}🔄 Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(
+            filesToCopy.length / BATCH_SIZE
+          )} (${batch.length} files)`
+        );
+
+        try {
+          // Xử lý song song các file trong batch
+          await Promise.all(
+            batch.map(async (file) => {
+              try {
+                await this.copyFile(file.id, targetFolderId, depth + 1);
+                processedFiles++;
+              } catch (error) {
+                errorFiles++;
+                console.log(
+                  `${indent}❌ Lỗi copy file "${file.name}": ${error.message}`
+                );
+              }
+            })
+          );
+
+          // Delay nhỏ giữa các batch để tránh quá tải API
+          if (i + BATCH_SIZE < filesToCopy.length) {
+            await this.delay(this.REQUEST_DELAY);
+          }
+        } catch (batchError) {
+          // Kiểm tra xem lỗi có phải do quota bị giới hạn không
+          const isQuotaError =
+            batchError.code === 429 ||
+            batchError.message.includes("quota") ||
+            batchError.message.includes("Rate Limit") ||
+            batchError.message.includes("userRateLimitExceeded");
+
+          if (isQuotaError) {
             console.log(
-              `${indent}⏩ File "${sourceItem.name}" đã tồn tại, bỏ qua`
+              `${indent}⚠️ Lỗi giới hạn API trong batch. Nghỉ ngơi trước khi tiếp tục...`
+            );
+
+            // Xác định thời gian chờ, bắt đầu từ 5s và nhân đôi khi cần
+            let quotaBackoffTime = 5000; // 5 giây cho lần đầu
+
+            // Lưu biến tạm để theo dõi số lần gặp lỗi quota cho batch này
+            if (!this._batchQuotaRetries) this._batchQuotaRetries = 0;
+            this._batchQuotaRetries++;
+
+            // Nhân đôi thời gian chờ với mỗi lần thử lại
+            if (this._batchQuotaRetries > 1) {
+              quotaBackoffTime =
+                quotaBackoffTime * Math.pow(2, this._batchQuotaRetries - 1);
+            }
+
+            // Giới hạn thời gian chờ không quá 5 phút
+            quotaBackoffTime = Math.min(quotaBackoffTime, 300000);
+
+            console.log(
+              `${indent}⏰ Đợi ${
+                quotaBackoffTime / 1000
+              }s trước khi thử lại (lần ${this._batchQuotaRetries})...`
+            );
+            await this.delay(quotaBackoffTime);
+
+            // Reset bộ đếm nếu đã thử quá nhiều lần
+            if (this._batchQuotaRetries >= 6) {
+              console.log(
+                `${indent}⚠️ Đã thử lại ${this._batchQuotaRetries} lần, tiếp tục với batch tiếp theo`
+              );
+              this._batchQuotaRetries = 0;
+            } else {
+              // Lùi i để thử lại batch hiện tại
+              i -= BATCH_SIZE;
+            }
+          } else {
+            // Bỏ qua lỗi batch và tiếp tục batch tiếp theo
+            console.log(
+              `${indent}⏩ Bỏ qua batch do lỗi: ${batchError.message}`
+            );
+            errorFiles += batch.length;
+            await this.delay(this.REQUEST_DELAY);
+          }
+        }
+      }
+
+      console.log(
+        `${indent}✅ Hoàn thành xử lý files: ${processedFiles} thành công, ${skippedFiles} bỏ qua, ${errorFiles} lỗi`
+      );
+
+      // Xử lý các folder song song nhưng theo batch để tránh quá tải
+      console.log(`${indent}📁 Đang xử lý ${folders.length} folders...`);
+
+      // Kiểm tra các folder đã tồn tại
+      console.log(
+        `${indent}🔍 Đang kiểm tra ${folders.length} folders đã tồn tại...`
+      );
+      const foldersToSkip = [];
+      const foldersToCopy = [];
+
+      for (const folder of folders) {
+        const existingItem = existingItemsMap.get(folder.name);
+        if (existingItem) {
+          foldersToSkip.push({
+            folder: folder,
+            existingId: existingItem.id,
+          });
+        } else {
+          foldersToCopy.push(folder);
+        }
+      }
+
+      console.log(
+        `${indent}📊 Kết quả kiểm tra: ${foldersToCopy.length} folders cần tạo mới, ${foldersToSkip.length} folders đã tồn tại`
+      );
+
+      // Ghi log và xử lý các folder đã tồn tại
+      if (foldersToSkip.length > 0) {
+        console.log(`${indent}🔄 Các folder đã tồn tại, kiểm tra nội dung:`);
+        // Đối với folder đã tồn tại, vẫn cần kiểm tra nội dung bên trong để đồng bộ
+        for (const item of foldersToSkip) {
+          console.log(
+            `${indent}   📂 "${item.folder.name}" - Kiểm tra nội dung...`
+          );
+          try {
+            // Đệ quy vào folder đã tồn tại để cập nhật nội dung
+            await this.copyFolder(item.folder.id, item.existingId, depth + 1);
+          } catch (error) {
+            console.log(
+              `${indent}   ❌ Lỗi khi kiểm tra nội dung: ${error.message}`
             );
           }
         }
-        await this.delay(100);
       }
+
+      // Xử lý các folder song song nhưng theo batch để tránh quá tải
+      console.log(
+        `${indent}📁 Đang xử lý ${foldersToCopy.length} folders mới...`
+      );
+
+      // Kích thước batch nhỏ hơn cho folders vì mỗi folder lại tạo nhiều request đệ quy
+      const FOLDER_BATCH_SIZE = 3;
+
+      for (let i = 0; i < foldersToCopy.length; i += FOLDER_BATCH_SIZE) {
+        const folderBatch = foldersToCopy.slice(i, i + FOLDER_BATCH_SIZE);
+        console.log(
+          `${indent}🔄 Batch Folder ${
+            Math.floor(i / FOLDER_BATCH_SIZE) + 1
+          }/${Math.ceil(foldersToCopy.length / FOLDER_BATCH_SIZE)} (${
+            folderBatch.length
+          } folders)`
+        );
+
+        try {
+          // Xử lý song song các folder trong batch
+          await Promise.all(
+            folderBatch.map(async (folder) => {
+              try {
+                await this.copyFolder(folder.id, targetFolderId, depth + 1);
+                processedFolders++;
+              } catch (error) {
+                errorFolders++;
+                console.log(
+                  `${indent}⏩ Bỏ qua folder "${folder.name}" do lỗi: ${error.message}`
+                );
+              }
+            })
+          );
+
+          // Delay giữa các batch folder để tránh quá tải API
+          if (i + FOLDER_BATCH_SIZE < foldersToCopy.length) {
+            await this.delay(this.REQUEST_DELAY * 3); // Delay dài hơn vì folders tạo nhiều request hơn
+          }
+        } catch (batchError) {
+          // Kiểm tra xem lỗi có phải do quota bị giới hạn không
+          const isQuotaError =
+            batchError.code === 429 ||
+            batchError.message.includes("quota") ||
+            batchError.message.includes("Rate Limit") ||
+            batchError.message.includes("userRateLimitExceeded");
+
+          if (isQuotaError) {
+            console.log(
+              `${indent}⚠️ Lỗi giới hạn API trong batch. Nghỉ ngơi trước khi tiếp tục...`
+            );
+
+            // Xác định thời gian chờ, bắt đầu từ 5s và nhân đôi khi cần
+            let quotaBackoffTime = 5000; // 5 giây cho lần đầu
+
+            // Lưu biến tạm để theo dõi số lần gặp lỗi quota cho batch này
+            if (!this._batchQuotaRetries) this._batchQuotaRetries = 0;
+            this._batchQuotaRetries++;
+
+            // Nhân đôi thời gian chờ với mỗi lần thử lại
+            if (this._batchQuotaRetries > 1) {
+              quotaBackoffTime =
+                quotaBackoffTime * Math.pow(2, this._batchQuotaRetries - 1);
+            }
+
+            // Giới hạn thời gian chờ không quá 5 phút
+            quotaBackoffTime = Math.min(quotaBackoffTime, 300000);
+
+            console.log(
+              `${indent}⏰ Đợi ${
+                quotaBackoffTime / 1000
+              }s trước khi thử lại (lần ${this._batchQuotaRetries})...`
+            );
+            await this.delay(quotaBackoffTime);
+
+            // Reset bộ đếm nếu đã thử quá nhiều lần
+            if (this._batchQuotaRetries >= 6) {
+              console.log(
+                `${indent}⚠️ Đã thử lại ${this._batchQuotaRetries} lần, tiếp tục với batch tiếp theo`
+              );
+              this._batchQuotaRetries = 0;
+            } else {
+              // Lùi i để thử lại batch hiện tại
+              i -= FOLDER_BATCH_SIZE;
+            }
+          } else {
+            // Bỏ qua lỗi batch và tiếp tục batch tiếp theo
+            console.log(
+              `${indent}⏩ Bỏ qua batch do lỗi: ${batchError.message}`
+            );
+            errorFolders += folderBatch.length;
+            await this.delay(this.REQUEST_DELAY);
+          }
+        }
+      }
+
+      console.log(
+        `${indent}✅ Hoàn thành xử lý folders: ${processedFolders} thành công, ${errorFolders} lỗi`
+      );
 
       return { id: targetFolderId };
     } catch (error) {
@@ -327,10 +633,6 @@ class VideoQualityChecker {
       });
 
       console.log(`${indent}✅ Đã sao chép "${fileName}"`);
-
-      // Thêm bước khóa file sau khi copy
-      console.log(`${indent}🔒 Đang khóa quyền truy cập cho "${fileName}"`);
-      await this.lockFileAccess(copiedFile.data.id);
 
       return copiedFile.data;
     } catch (error) {
@@ -871,6 +1173,13 @@ class VideoQualityChecker {
   // Thêm phương thức để làm sạch tên file
   async cleanFileNames(folderId, depth = 0) {
     const indent = "  ".repeat(depth);
+
+    // Biến đếm số lượng tệp tin đã xử lý
+    let renamedCount = 0;
+    let processedCount = 0;
+    let errorCount = 0;
+    let retryCount = 0;
+
     try {
       console.log(`${indent}🔍 Đang quét folder để làm sạch tên file...`);
 
@@ -892,163 +1201,234 @@ class VideoQualityChecker {
         (item) => item.mimeType === "application/vnd.google-apps.folder"
       );
 
-      let renamedCount = 0;
-      let processedCount = 0;
-      let errorCount = 0;
-      let retryCount = 0;
-      const MAX_RETRIES = 3;
-      const RETRY_DELAY = 5000; // 5 giây
-      const BATCH_SIZE = 5; // Số file xử lý cùng lúc
+      // Kiểm tra số lượng files cần xử lý
+      console.log(
+        `${indent}📝 Tìm thấy ${files.length} files để kiểm tra tên...`
+      );
 
-      // Xử lý các files theo batch
-      for (let i = 0; i < files.length; i += BATCH_SIZE) {
-        const batch = files.slice(i, i + BATCH_SIZE);
+      if (files.length === 0) {
         console.log(
-          `${indent}🔄 Xử lý batch ${
-            Math.floor(i / BATCH_SIZE) + 1
-          }/${Math.ceil(files.length / BATCH_SIZE)} (${batch.length} files)`
+          `${indent}ℹ️ Không có file nào cần xử lý trong thư mục này`
         );
+      } else {
+        // Các thông số xử lý batch
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 5000; // 5 giây
+        const BATCH_SIZE = 5; // Số file xử lý cùng lúc
 
-        try {
-          // Chuẩn bị danh sách các files cần đổi tên
-          const renameOperations = [];
+        // Xử lý các files theo batch
+        for (let i = 0; i < files.length; i += BATCH_SIZE) {
+          const batch = files.slice(i, i + BATCH_SIZE);
+          console.log(
+            `${indent}🔄 Xử lý batch ${
+              Math.floor(i / BATCH_SIZE) + 1
+            }/${Math.ceil(files.length / BATCH_SIZE)} (${batch.length} files)`
+          );
 
-          for (const file of batch) {
-            processedCount++;
-            const originalName = file.name;
-            let newName = originalName;
+          try {
+            // Chuẩn bị danh sách các files cần đổi tên
+            const renameOperations = [];
 
-            // 1. Xóa "Bản sao của" và các biến thể của nó
-            newName = newName.replace(/^Bản sao của\s+/i, "");
-            newName = newName.replace(/^Copy of\s+/i, "");
+            for (const file of batch) {
+              processedCount++;
+              const originalName = file.name;
+              let newName = originalName;
 
-            // 2. Thay thế gạch chân (_) và gạch ngang (-) bằng khoảng trắng
-            newName = newName.replace(/[_-]+/g, " ");
+              // 1. Xóa "Bản sao của" và các biến thể của nó
+              newName = newName.replace(/^Bản sao của\s+/i, "");
+              newName = newName.replace(/^Copy of\s+/i, "");
 
-            // 3. Xử lý các đuôi file bị lặp lại
-            const extensions = [
-              ".mp4",
-              ".mkv",
-              ".avi",
-              ".mov",
-              ".flv",
-              ".wmv",
-              ".webm",
-              ".m4v",
-              ".mp3",
-              ".jpg",
-              ".jpeg",
-              ".png",
-              ".pdf",
-              ".doc",
-              ".docx",
-            ];
+              // 2. Thay thế gạch chân (_) và gạch ngang (-) bằng khoảng trắng
+              newName = newName.replace(/[_-]+/g, " ");
 
-            for (const ext of extensions) {
-              // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
-              const extRegex = new RegExp(
-                `(${ext.replace(".", "\\.")}){2,}$`,
-                "i"
-              );
-              if (extRegex.test(newName)) {
-                // Tìm đuôi file thực tế
-                const match = newName.match(
-                  new RegExp(`${ext.replace(".", "\\.")}`, "i")
+              // 3. Xử lý các đuôi file bị lặp lại
+              const extensions = [
+                ".mp4",
+                ".mkv",
+                ".avi",
+                ".mov",
+                ".flv",
+                ".wmv",
+                ".webm",
+                ".m4v",
+                ".mp3",
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".pdf",
+                ".doc",
+                ".docx",
+              ];
+
+              for (const ext of extensions) {
+                // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
+                const extRegex = new RegExp(
+                  `(${ext.replace(".", "\\.")}){2,}$`,
+                  "i"
                 );
-                if (match) {
-                  // Lấy vị trí đầu tiên của đuôi file
-                  const firstExtPos = newName
-                    .toLowerCase()
-                    .indexOf(ext.toLowerCase());
-                  // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
-                  if (firstExtPos !== -1) {
-                    newName = newName.substring(0, firstExtPos) + ext;
+                if (extRegex.test(newName)) {
+                  // Tìm đuôi file thực tế
+                  const match = newName.match(
+                    new RegExp(`${ext.replace(".", "\\.")}`, "i")
+                  );
+                  if (match) {
+                    // Lấy vị trí đầu tiên của đuôi file
+                    const firstExtPos = newName
+                      .toLowerCase()
+                      .indexOf(ext.toLowerCase());
+                    // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
+                    if (firstExtPos !== -1) {
+                      newName = newName.substring(0, firstExtPos) + ext;
+                    }
                   }
                 }
               }
+
+              // 4. Xử lý khoảng trắng thừa
+              newName = newName.replace(/\s+/g, " ").trim();
+
+              // Nếu tên đã thay đổi, thêm vào danh sách đổi tên
+              if (newName !== originalName) {
+                renameOperations.push({
+                  fileId: file.id,
+                  originalName,
+                  newName,
+                });
+              } else {
+                console.log(`${indent}⏩ Bỏ qua "${originalName}" (đã chuẩn)`);
+              }
             }
 
-            // 4. Xử lý khoảng trắng thừa
-            newName = newName.replace(/\s+/g, " ").trim();
-
-            // Nếu tên đã thay đổi, thêm vào danh sách đổi tên
-            if (newName !== originalName) {
-              renameOperations.push({
-                fileId: file.id,
-                originalName,
-                newName,
-              });
-            } else {
-              console.log(`${indent}⏩ Bỏ qua "${originalName}" (đã chuẩn)`);
-            }
-          }
-
-          // Thực hiện đổi tên song song
-          if (renameOperations.length > 0) {
-            await Promise.all(
-              renameOperations.map(async (op) => {
-                try {
-                  await this.withRetry(async () => {
-                    await this.drive.files.update({
-                      fileId: op.fileId,
-                      requestBody: {
-                        name: op.newName,
-                      },
-                      supportsAllDrives: true,
+            // Thực hiện đổi tên song song
+            if (renameOperations.length > 0) {
+              console.log(
+                `${indent}📝 Cần đổi tên ${renameOperations.length} files...`
+              );
+              await Promise.all(
+                renameOperations.map(async (op) => {
+                  try {
+                    await this.withRetry(async () => {
+                      await this.drive.files.update({
+                        fileId: op.fileId,
+                        requestBody: {
+                          name: op.newName,
+                        },
+                        supportsAllDrives: true,
+                      });
                     });
-                  });
-                  renamedCount++;
-                  console.log(
-                    `${indent}✅ Đổi tên: "${op.originalName}" -> "${op.newName}"`
-                  );
-                } catch (error) {
-                  errorCount++;
-                  console.log(
-                    `${indent}❌ Không thể đổi tên file "${op.originalName}": ${error.message}`
-                  );
-                }
-              })
-            );
+                    renamedCount++;
+                    console.log(
+                      `${indent}✅ Đổi tên: "${op.originalName}" -> "${op.newName}"`
+                    );
+                  } catch (error) {
+                    errorCount++;
+                    console.log(
+                      `${indent}❌ Không thể đổi tên file "${op.originalName}": ${error.message}`
+                    );
+                  }
+                })
+              );
+            } else {
+              console.log(
+                `${indent}ℹ️ Không có file nào cần đổi tên trong batch này`
+              );
+            }
+
+            retryCount = 0; // Reset retryCount nếu thành công
+          } catch (batchError) {
+            // Kiểm tra xem lỗi có phải do quota bị giới hạn không
+            const isQuotaError =
+              batchError.code === 429 ||
+              batchError.message.includes("quota") ||
+              batchError.message.includes("Rate Limit") ||
+              batchError.message.includes("userRateLimitExceeded");
+
+            if (isQuotaError) {
+              console.log(
+                `${indent}⚠️ Lỗi giới hạn API trong batch. Nghỉ ngơi trước khi tiếp tục...`
+              );
+
+              // Xác định thời gian chờ, bắt đầu từ 5s và nhân đôi khi cần
+              let quotaBackoffTime = 5000; // 5 giây cho lần đầu
+
+              // Lưu biến tạm để theo dõi số lần gặp lỗi quota cho batch này
+              if (!this._batchQuotaRetries) this._batchQuotaRetries = 0;
+              this._batchQuotaRetries++;
+
+              // Nhân đôi thời gian chờ với mỗi lần thử lại
+              if (this._batchQuotaRetries > 1) {
+                quotaBackoffTime =
+                  quotaBackoffTime * Math.pow(2, this._batchQuotaRetries - 1);
+              }
+
+              // Giới hạn thời gian chờ không quá 5 phút
+              quotaBackoffTime = Math.min(quotaBackoffTime, 300000);
+
+              console.log(
+                `${indent}⏰ Đợi ${
+                  quotaBackoffTime / 1000
+                }s trước khi thử lại (lần ${this._batchQuotaRetries})...`
+              );
+              await this.delay(quotaBackoffTime);
+
+              // Reset bộ đếm nếu đã thử quá nhiều lần
+              if (this._batchQuotaRetries >= 6) {
+                console.log(
+                  `${indent}⚠️ Đã thử lại ${this._batchQuotaRetries} lần, tiếp tục với batch tiếp theo`
+                );
+                this._batchQuotaRetries = 0;
+                errorCount += batch.length;
+              } else {
+                // Lùi i để thử lại batch hiện tại
+                i -= BATCH_SIZE;
+              }
+            } else {
+              // Xử lý lỗi batch thông thường
+              console.error(
+                `${indent}⚠️ Lỗi xử lý batch: ${batchError.message}`
+              );
+
+              if (retryCount < MAX_RETRIES) {
+                retryCount++;
+                console.log(
+                  `${indent}⏳ Nghỉ ${
+                    RETRY_DELAY / 1000
+                  }s trước khi thử lại (lần ${retryCount}/${MAX_RETRIES})...`
+                );
+                await this.delay(RETRY_DELAY);
+                i -= BATCH_SIZE; // Lùi lại để xử lý lại batch hiện tại
+                continue;
+              } else {
+                console.log(
+                  `${indent}⚠️ Đã thử lại ${MAX_RETRIES} lần, bỏ qua batch này.`
+                );
+                errorCount += Math.min(BATCH_SIZE, files.length - i);
+                retryCount = 0;
+              }
+            }
           }
 
-          retryCount = 0; // Reset retryCount nếu thành công
-        } catch (batchError) {
-          // Xử lý lỗi batch
-          console.error(`${indent}⚠️ Lỗi xử lý batch: ${batchError.message}`);
-
-          if (retryCount < MAX_RETRIES) {
-            retryCount++;
-            console.log(
-              `${indent}⏳ Nghỉ ${
-                RETRY_DELAY / 1000
-              }s trước khi thử lại (lần ${retryCount}/${MAX_RETRIES})...`
-            );
-            await this.delay(RETRY_DELAY);
-            i -= BATCH_SIZE; // Lùi lại để xử lý lại batch hiện tại
-            continue;
-          } else {
-            console.log(
-              `${indent}⚠️ Đã thử lại ${MAX_RETRIES} lần, bỏ qua batch này.`
-            );
-            errorCount += Math.min(BATCH_SIZE, files.length - i);
-            retryCount = 0;
+          // Delay giữa các batch để tránh quá tải API
+          if (i + BATCH_SIZE < files.length) {
+            await this.delay(this.REQUEST_DELAY);
           }
-        }
-
-        // Delay giữa các batch để tránh quá tải API
-        if (i + BATCH_SIZE < files.length) {
-          await this.delay(this.REQUEST_DELAY);
         }
       }
 
+      // Hiển thị tổng kết sau khi xử lý xong tất cả các files
       console.log(
         `${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files, lỗi ${errorCount} files`
       );
 
       // Đệ quy vào các thư mục con
-      for (const folder of folders) {
-        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
-        await this.cleanFileNames(folder.id, depth + 1);
+      if (folders.length > 0) {
+        console.log(
+          `${indent}📂 Tìm thấy ${folders.length} thư mục con để xử lý...`
+        );
+        for (const folder of folders) {
+          console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+          await this.cleanFileNames(folder.id, depth + 1);
+        }
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
