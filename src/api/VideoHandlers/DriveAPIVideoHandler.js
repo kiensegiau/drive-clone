@@ -365,25 +365,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
       // Lấy số lần retry hiện tại
       const retryCount = this.videoRetries.get(fileName) || 0;
 
-      // Kiểm tra và thêm vào retry nếu chưa quá giới hạn
-      if (retryCount < 2) {
-        console.log(`${indent}⏳ Thêm lại vào queue để thử lại: ${fileName}`);
-        this.videoRetries.set(fileName, retryCount + 1);
-        this.queue.push(videoInfo);
-      } else {
-        console.log(
-          `${indent}⚠️ Đã thử ${
-            retryCount + 1
-          } lần không thành công, bỏ qua file: ${fileName}`
-        );
-        await this.logFailedVideo({
-          fileName,
-          fileId,
-          targetFolderId,
-          error: error.message,
-          timestamp: new Date().toISOString(),
-        });
-      }
+     
 
       // Đảm bảo giải phóng slot Chrome
       this.activeChrome.delete(fileName);
@@ -574,8 +556,8 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
         }
 
         if (retries > 0) {
-          console.log(`${indent}⏳ Đợi 5s trước khi thử lại...`);
-          await new Promise((r) => setTimeout(r, 5000));
+          console.log(`${indent}⏳ Đợi 1s trước khi thử lại...`);
+          await new Promise((r) => setTimeout(r, 1000));
         }
       }
     }
@@ -604,22 +586,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
               console.error(`❌ Lỗi xử lý ${video.fileName}:`, error.message);
               const retryCount = this.videoRetries.get(video.fileName) || 0;
 
-              if (retryCount < 2) {
-                console.log(
-                  `⏳ Thêm lại vào queue để thử lại: ${video.fileName}`
-                );
-                this.videoRetries.set(video.fileName, retryCount + 1);
-                this.queue.push(video);
-              } else {
-                console.log(
-                  `⚠️ Đã thử ${
-                    retryCount + 1
-                  } lần không thành công, bỏ qua file: ${video.fileName}`
-                );
-                await this.logFailedVideo(video).catch((err) => {
-                  console.error("❌ Lỗi ghi log video lỗi:", err.message);
-                });
-              }
+             
 
               this.activeChrome.delete(video.fileName);
               return false;

@@ -180,9 +180,13 @@ class ChromeManager {
   async getBrowser(preferredProfile = null) {
     try {
       const prefix = this.type === "pdf" ? "pdf_" : "video_";
-      const profileIndex = this.currentProfile;
-      const profileId = preferredProfile || `${prefix}profile_${profileIndex}`;
+      // Nếu preferredProfile đã có đầy đủ prefix, sử dụng trực tiếp
+      const profileId =
+        preferredProfile && preferredProfile.includes("_")
+          ? preferredProfile
+          : `${prefix}profile_${this.currentProfile}`;
 
+      console.log(`🌐 Lấy browser cho profile: ${profileId}`);
       this.currentProfile = (this.currentProfile + 1) % this.maxInstances;
 
       // Kiểm tra xem đã có page cho profile này chưa
@@ -192,6 +196,7 @@ class ChromeManager {
           // Kiểm tra page còn hoạt động không
           await page.evaluate(() => true);
           this.activeInstances.set(profileId, Date.now());
+          console.log(`✅ Sử dụng lại page cho profile ${profileId}`);
           return this._wrapBrowser(page, profileId);
         } catch (error) {
           console.log(
