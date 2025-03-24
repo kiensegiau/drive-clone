@@ -609,7 +609,8 @@ class DriveAPI {
         try {
           const response = await this.sourceDrive.files.list({
             q: `'${folderId}' in parents and trashed=false`,
-            fields: "nextPageToken, files(id, name, mimeType, size)",
+            fields:
+              "nextPageToken, files(id, name, mimeType, size, shortcutDetails)",
             pageToken: pageToken,
             supportsAllDrives: true,
             includeItemsFromAllDrives: true,
@@ -619,12 +620,25 @@ class DriveAPI {
           const pdfFiles = [];
           const videoFiles = [];
           const folders = [];
+          const shortcutFolders = [];
           const otherFiles = [];
           const docsFiles = [];
           const docxFiles = [];
 
           for (const file of response.data.files) {
-            if (file.mimeType === "application/vnd.google-apps.folder") {
+            if (
+              file.mimeType === "application/vnd.google-apps.shortcut" &&
+              file.shortcutDetails &&
+              file.shortcutDetails.targetMimeType ===
+                "application/vnd.google-apps.folder"
+            ) {
+              shortcutFolders.push({
+                id: file.shortcutDetails.targetId,
+                name: file.name,
+                isShortcut: true,
+                originalId: file.id,
+              });
+            } else if (file.mimeType === "application/vnd.google-apps.folder") {
               folders.push(file);
             } else if (file.name.toLowerCase().endsWith(".pdf")) {
               pdfFiles.push({
@@ -708,6 +722,75 @@ class DriveAPI {
                 type: "folder",
                 name: folder.name,
                 error: folderError.message,
+              });
+              hasErrors = true;
+              continue;
+            }
+          }
+
+          // Xử lý shortcut folders
+          for (const shortcutFolder of shortcutFolders) {
+            try {
+              if (!this.downloadOnly) {
+                console.log(
+                  `\n🔗 Xử lý lối tắt folder: "${shortcutFolder.name}"`
+                );
+                console.log(
+                  `   ↪️ Lối tắt tới folder ID: ${shortcutFolder.id}`
+                );
+
+                // Lấy thông tin folder đích của shortcut
+                try {
+                  const shortcutTargetInfo = await this.sourceDrive.files.get({
+                    fileId: shortcutFolder.id,
+                    fields: "name",
+                    supportsAllDrives: true,
+                    includeItemsFromAllDrives: true,
+                  });
+
+                  // Nếu folder đích có tên khác, sử dụng tên shortcut
+                  const folderNameToUse = shortcutFolder.name;
+                  console.log(
+                    `   📁 Tên folder đích: "${shortcutTargetInfo.data.name}"`
+                  );
+                  console.log(`   📝 Sử dụng tên: "${folderNameToUse}"`);
+
+                  // Tạo folder mới với tên của lối tắt
+                  const targetFolder = await this.findOrCreateFolder(
+                    folderNameToUse,
+                    this.currentTargetFolderId
+                  );
+                  console.log(
+                    `   ✅ Đã tạo folder: "${targetFolder.name}" (${targetFolder.id})`
+                  );
+
+                  // Xử lý nội dung của folder đích
+                  const previousFolderId = this.currentTargetFolderId;
+                  this.currentTargetFolderId = targetFolder.id;
+                  await this.processFolder(shortcutFolder.id);
+                  this.currentTargetFolderId = previousFolderId;
+                } catch (shortcutTargetError) {
+                  console.error(
+                    `   ❌ Không thể truy cập folder đích của lối tắt:`,
+                    shortcutTargetError.message
+                  );
+                  errors.push({
+                    type: "shortcut_folder",
+                    name: shortcutFolder.name,
+                    error: shortcutTargetError.message,
+                  });
+                  hasErrors = true;
+                }
+              }
+            } catch (shortcutError) {
+              console.error(
+                `❌ Lỗi xử lý lối tắt folder "${shortcutFolder.name}":`,
+                shortcutError.message
+              );
+              errors.push({
+                type: "shortcut_folder",
+                name: shortcutFolder.name,
+                error: shortcutError.message,
               });
               hasErrors = true;
               continue;

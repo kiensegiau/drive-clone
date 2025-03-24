@@ -556,13 +556,13 @@ class DriveAPI {
 
       const response = await this.drive.files.list({
         q: `'${sourceFolderId}' in parents and trashed=false`,
-        fields: "files(id, name, mimeType)",
+        fields: "files(id, name, mimeType, shortcutDetails)",
         supportsAllDrives: true,
         includeItemsFromAllDrives: true,
       });
 
       const files = response.data.files;
-      const { videoFiles, pdfFiles, otherFiles, folders } =
+      const { videoFiles, pdfFiles, otherFiles, folders, shortcutFolders } =
         this.categorizeFiles(files);
 
       // Log thống kê
@@ -571,6 +571,7 @@ class DriveAPI {
       console.log(`${indent}  - PDFs: ${pdfFiles.length}`);
       console.log(`${indent}  - Others: ${otherFiles.length}`);
       console.log(`${indent}  - Folders: ${folders.length}`);
+      console.log(`${indent}  - Shortcut Folders: ${shortcutFolders.length}`);
 
       // Xử lý các files trong thư mục hiện tại
       if (videoFiles.length > 0) {
@@ -701,6 +702,83 @@ class DriveAPI {
         }
       }
 
+      // Xử lý các lối tắt folder
+      for (const shortcutFolder of shortcutFolders) {
+        try {
+          console.log(
+            `${indent}🔗 Xử lý lối tắt folder: "${shortcutFolder.name}"`
+          );
+          console.log(
+            `${indent}  ↪️ Lối tắt tới folder ID: ${shortcutFolder.targetId}`
+          );
+
+          // Lấy thông tin folder đích của shortcut
+          try {
+            const shortcutTargetInfo = await this.drive.files.get({
+              fileId: shortcutFolder.targetId,
+              fields: "name",
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+            });
+
+            // Sử dụng tên của lối tắt
+            const folderNameToUse = shortcutFolder.name;
+            console.log(
+              `${indent}  📁 Tên folder đích: "${shortcutTargetInfo.data.name}"`
+            );
+            console.log(`${indent}  📝 Sử dụng tên: "${folderNameToUse}"`);
+
+            // Tạo đường dẫn thư mục đích cho shortcut
+            const shortcutFolderPath = path.join(
+              currentFolderPath,
+              sanitizePath(folderNameToUse)
+            );
+
+            // Đảm bảo thư mục đích của shortcut tồn tại
+            if (await this.ensureDirectoryExists(shortcutFolderPath)) {
+              // Xử lý nội dung của folder đích
+              await this.processFolder(
+                shortcutFolder.targetId,
+                shortcutFolderPath,
+                depth + 1
+              );
+            } else {
+              // Nếu không thể tạo thư mục với tên gốc, thử dùng tên đơn giản hơn
+              const simpleName = folderNameToUse.replace(/[^a-zA-Z0-9]/g, "_");
+              const fallbackPath = path.join(currentFolderPath, simpleName);
+              console.log(
+                `${indent}  🔄 Thử tạo thư mục với tên đơn giản: ${simpleName}`
+              );
+
+              if (await this.ensureDirectoryExists(fallbackPath)) {
+                await this.processFolder(
+                  shortcutFolder.targetId,
+                  fallbackPath,
+                  depth + 1
+                );
+              } else {
+                throw new Error(
+                  `Không thể tạo thư mục cho lối tắt: ${folderNameToUse}`
+                );
+              }
+            }
+          } catch (shortcutTargetError) {
+            console.error(
+              `${indent}  ❌ Không thể truy cập folder đích của lối tắt:`,
+              shortcutTargetError.message
+            );
+            this.stats.failedFolders++;
+          }
+        } catch (shortcutError) {
+          console.error(
+            `${indent}❌ Lỗi xử lý lối tắt folder "${shortcutFolder.name}":`,
+            shortcutError.message
+          );
+          this.stats.failedFolders++;
+          continue;
+        }
+      }
+
       // Đã xử lý xong folder này, tăng biến đếm
       this.stats.processedFolders++;
 
@@ -720,9 +798,25 @@ class DriveAPI {
         (f) =>
           !f.mimeType.includes("video") &&
           !f.mimeType.includes("pdf") &&
-          !f.mimeType.includes("folder")
+          !f.mimeType.includes("folder") &&
+          !f.mimeType.includes("shortcut")
       ),
-      folders: files.filter((f) => f.mimeType.includes("folder")),
+      folders: files.filter(
+        (f) => f.mimeType.includes("folder") && !f.mimeType.includes("shortcut")
+      ),
+      shortcutFolders: files
+        .filter(
+          (f) =>
+            f.mimeType === "application/vnd.google-apps.shortcut" &&
+            f.shortcutDetails &&
+            f.shortcutDetails.targetMimeType ===
+              "application/vnd.google-apps.folder"
+        )
+        .map((f) => ({
+          id: f.id,
+          name: f.name,
+          targetId: f.shortcutDetails.targetId,
+        })),
     };
   }
 
