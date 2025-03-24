@@ -198,11 +198,19 @@ class ChromeManager {
               "--no-first-run",
               "--disable-notifications",
               "--disable-extensions", // Thêm để giảm xung đột
+              // Thêm các tham số giảm bộ nhớ cho máy yếu
+              "--js-flags=--max-old-space-size=512",
+              "--memory-pressure-off",
+              "--disable-sync",
+              "--disable-background-timer-throttling",
+              "--disable-renderer-backgrounding",
             ],
             defaultViewport: null,
             ignoreDefaultArgs: ["--enable-automation"],
-            // Thêm timeout dài hơn
-            timeout: 60000,
+            // Tăng timeout lên 120s cho máy yếu
+            timeout: 120000,
+            // Thêm slowMo để làm chậm puppeteer cho máy yếu
+            slowMo: 100,
           };
 
           console.log(
@@ -211,9 +219,9 @@ class ChromeManager {
           );
           const browser = await puppeteer.launch(puppeteerArgs);
 
-          // Đợi browser khởi động hoàn tất
-          console.log(`⏳ Đợi Chrome khởi động hoàn tất (2s)...`);
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          // Đợi browser khởi động hoàn tất - tăng từ 2s lên 5s cho máy yếu
+          console.log(`⏳ Đợi Chrome khởi động hoàn tất (5s)...`);
+          await new Promise((resolve) => setTimeout(resolve, 5000));
 
           // Kiểm tra xem browser có hoạt động không
           let pages;
@@ -351,7 +359,7 @@ class ChromeManager {
   }
 
   async _launchChromeInSafeMode() {
-    console.log("🔒 Thử khởi động Chrome ở chế độ an toàn...");
+    console.log("🔒 Thử khởi động Chrome ở chế độ an toàn cho máy yếu...");
     try {
       // Tạo một thư mục profile tạm thời hoàn toàn mới
       const tempProfilePath = path.join(
@@ -368,7 +376,7 @@ class ChromeManager {
         throw new Error("Không tìm thấy Chrome để khởi động chế độ an toàn");
       }
 
-      // Khởi động Chrome với các tùy chọn tối thiểu nhất
+      // Khởi động Chrome với các tùy chọn tối thiểu nhất và phù hợp cho máy yếu
       const browser = await puppeteer.launch({
         headless: false,
         executablePath: defaultChromePath,
@@ -392,9 +400,20 @@ class ChromeManager {
           "--metrics-recording-only",
           "--no-first-run",
           "--safebrowsing-disable-auto-update",
+          // Thêm tham số tối ưu cho máy yếu
+          "--js-flags=--max-old-space-size=256",
+          "--disable-gpu",
+          "--disable-infobars",
         ],
         ignoreDefaultArgs: ["--enable-automation"],
+        // Tăng timeout và làm chậm các thao tác cho máy yếu
+        timeout: 180000,
+        slowMo: 200,
       });
+
+      // Đợi lâu hơn cho máy yếu
+      console.log("⏳ Đợi Chrome khởi động ở chế độ an toàn (10s)...");
+      await new Promise((resolve) => setTimeout(resolve, 10000));
 
       console.log("✅ Khởi động Chrome ở chế độ an toàn thành công");
       return browser;
@@ -443,13 +462,17 @@ class ChromeManager {
       // Tạo page mới cho profile này
       console.log(`📄 Tạo tab mới cho profile: ${profileId}`);
 
-      // Đợi một chút trước khi tạo page mới
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // Đợi một chút trước khi tạo page mới - tăng từ 500ms lên 2000ms cho máy yếu
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       let page;
       try {
+        console.log(`⏳ Đang tạo tab mới...`);
         page = await browser.newPage();
         // Đợi page load xong
+        console.log(`⏳ Đợi tab mới khởi tạo xong (3s)...`);
+        // Thêm thời gian chờ sau khi tạo tab mới
+        await new Promise((resolve) => setTimeout(resolve, 3000));
         await page.evaluate(() => true).catch(() => {});
       } catch (newPageError) {
         console.error("❌ Lỗi khi tạo tab mới:", newPageError.message);
@@ -575,7 +598,13 @@ class ChromeManager {
       this.pages.clear();
       this.activeInstances.clear();
     } catch (error) {
-      if (!error.message.includes("không tìm thấy process")) {
+      // Tắt thông báo lỗi khi không tìm thấy process Chrome
+      // Kiểm tra cả tiếng Anh và tiếng Việt
+      if (
+        !error.message.includes("không tìm thấy process") &&
+        !error.message.includes("not found") &&
+        !error.message.includes("ERROR: The process")
+      ) {
         console.error("❌ Lỗi khi kill Chrome:", error.message);
       }
     }
