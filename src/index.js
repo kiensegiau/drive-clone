@@ -337,6 +337,154 @@ async function listDriveFolders(driveAPI) {
   }
 }
 
+// Hàm đọc file chứa danh sách các liên kết
+async function readLinksFromFile(filePath) {
+  try {
+    // Nếu filePath là tên file đơn, thêm đường dẫn thư mục hiện tại
+    if (!path.isAbsolute(filePath) && !filePath.includes('/') && !filePath.includes('\\')) {
+      const appRoot = getAppRoot();
+      filePath = path.join(appRoot, filePath);
+      console.log(`🔍 Đường dẫn đầy đủ: ${filePath}`);
+    }
+    
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File không tồn tại: ${filePath}`);
+    }
+    
+    const content = await fs.promises.readFile(filePath, 'utf8');
+    const links = content.split('\n')
+      .map(link => link.trim())
+      .filter(link => link && !link.startsWith('#')); // Bỏ qua dòng trống và comment
+    
+    if (links.length === 0) {
+      throw new Error("File không chứa liên kết hợp lệ nào");
+    }
+    
+    console.log(`📋 Đã đọc ${links.length} liên kết từ file`);
+    return links;
+  } catch (error) {
+    throw new Error(`Lỗi khi đọc file liên kết: ${error.message}`);
+  }
+}
+
+// Xử lý các liên kết tuần tự
+async function processLinksSequentially(links, isDownloadMode, driveAPI, defaultPath, batchSize, pauseDuration) {
+  console.log(`🔄 Bắt đầu xử lý ${links.length} liên kết theo chế độ tuần tự`);
+  
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (let i = 0; i < links.length; i++) {
+    const link = links[i];
+    console.log(`\n📌 Đang xử lý liên kết ${i+1}/${links.length}: ${link}`);
+    
+    try {
+      const folderId = extractFolderId(link);
+      if (!folderId) {
+        console.error(`❌ Liên kết không hợp lệ: ${link}`);
+        failCount++;
+        continue;
+      }
+      
+      // Bắt đầu xử lý folder
+      console.log(`🔑 Folder ID: ${folderId}`);
+      
+      if (isDownloadMode) {
+        const desktopAPI = new DriveDesktopAPI(defaultPath);
+        await desktopAPI.authenticate();
+        await desktopAPI.start(folderId);
+      } else {
+        await driveAPI.start(folderId);
+      }
+      
+      successCount++;
+      
+      // Nếu đã xử lý đủ số lượng trong batch và còn folder khác thì tạm dừng
+      if (successCount % batchSize === 0 && i < links.length - 1 && pauseDuration > 0) {
+        console.log(`\n⏱️ Tạm dừng ${pauseDuration} phút trước khi xử lý tiếp...`);
+        await new Promise(resolve => setTimeout(resolve, pauseDuration * 60 * 1000));
+      }
+    } catch (error) {
+      console.error(`❌ Lỗi khi xử lý liên kết ${link}: ${error.message}`);
+      failCount++;
+    }
+  }
+  
+  console.log(`\n✅ Đã xử lý xong ${successCount}/${links.length} liên kết (${failCount} lỗi)`);
+  return { successCount, failCount };
+}
+
+// Xử lý các liên kết song song
+async function processLinksParallel(links, isDownloadMode, driveAPI, defaultPath, batchSize, pauseDuration, maxConcurrent) {
+  console.log(`🔄 Bắt đầu xử lý ${links.length} liên kết theo chế độ song song (tối đa ${maxConcurrent} liên kết cùng lúc)`);
+  
+  let successCount = 0;
+  let failCount = 0;
+  let processed = 0;
+  
+  // Chia links thành các batch để xử lý
+  for (let i = 0; i < links.length; i += maxConcurrent) {
+    const batch = links.slice(i, i + maxConcurrent);
+    console.log(`\n📌 Đang xử lý batch ${Math.floor(i/maxConcurrent) + 1}/${Math.ceil(links.length/maxConcurrent)}: ${batch.length} liên kết`);
+    
+    const promises = batch.map(async (link, index) => {
+      try {
+        const folderId = extractFolderId(link);
+        if (!folderId) {
+          console.error(`❌ Liên kết không hợp lệ: ${link}`);
+          return { success: false };
+        }
+        
+        console.log(`🔑 Bắt đầu xử lý Folder ID: ${folderId}`);
+        
+        if (isDownloadMode) {
+          const desktopAPI = new DriveDesktopAPI(defaultPath);
+          await desktopAPI.authenticate();
+          await desktopAPI.start(folderId);
+        } else {
+          // Tạo một instance mới của DriveAPI để tránh xung đột
+          const folderDriveAPI = new DriveAPI(
+            false,
+            Math.max(1, Math.floor(driveAPI.maxConcurrent / maxConcurrent)),
+            Math.max(1, Math.floor(driveAPI.maxBackground / maxConcurrent)),
+            pauseDuration,
+            batchSize
+          );
+          await folderDriveAPI.authenticate();
+          await folderDriveAPI.start(folderId);
+        }
+        
+        return { success: true };
+      } catch (error) {
+        console.error(`❌ Lỗi khi xử lý liên kết ${link}: ${error.message}`);
+        return { success: false };
+      }
+    });
+    
+    const results = await Promise.all(promises);
+    
+    // Cập nhật số lượng thành công/thất bại
+    results.forEach(result => {
+      if (result.success) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    });
+    
+    processed += batch.length;
+    
+    // Nếu đã xử lý đủ số lượng trong batch và còn folder khác thì tạm dừng
+    if (processed % batchSize === 0 && i + maxConcurrent < links.length && pauseDuration > 0) {
+      console.log(`\n⏱️ Tạm dừng ${pauseDuration} phút trước khi xử lý tiếp...`);
+      await new Promise(resolve => setTimeout(resolve, pauseDuration * 60 * 1000));
+    }
+  }
+  
+  console.log(`\n✅ Đã xử lý xong ${successCount}/${links.length} liên kết (${failCount} lỗi)`);
+  return { successCount, failCount };
+}
+
 async function main(folderUrl) {
   console.log("🎬 Bắt đầu chương trình drive-clone");
   let driveAPI = null;
@@ -365,27 +513,104 @@ async function main(folderUrl) {
       throw error; // Ném lại lỗi để dừng chương trình
     }
 
-    // Validate input
-    let sourceFolderId = null;
-    if (folderUrl) {
-      sourceFolderId = extractFolderId(folderUrl);
-      if (!sourceFolderId) {
-        throw new Error("URL folder không hợp lệ");
-      }
-    } else {
-      // Khởi tạo DriveAPI sớm hơn để lấy danh sách folder
-      driveAPI = new DriveAPI(false, 3, 5, 0, 5);
-      await driveAPI.authenticate();
+    // Chọn chế độ nhập
+    const inputMode = await askQuestion(
+      "\n📋 Chọn chế độ nhập:\n" +
+      "1. Nhập/Chọn URL thư mục\n" +
+      "2. Đọc danh sách URL từ file\n" +
+      "Lựa chọn của bạn (1/2, mặc định: 1): "
+    );
+    
+    const selectedInputMode = inputMode.trim() || "1";
+    
+    if (!["1", "2"].includes(selectedInputMode)) {
+      throw new Error("Lựa chọn không hợp lệ");
+    }
 
-      sourceFolderId = await listDriveFolders(driveAPI);
-      if (!sourceFolderId) {
-        throw new Error("Không thể lấy folder ID");
+    let sourceFolderIds = [];
+    let selectedProcessMode = "1"; // Khai báo và gán giá trị mặc định là "1" (xử lý tuần tự)
+    
+    if (selectedInputMode === "1") {
+      // Mode 1: Nhập/Chọn URL thư mục (cách cũ)
+      let sourceFolderId = null;
+      if (folderUrl) {
+        sourceFolderId = extractFolderId(folderUrl);
+        if (!sourceFolderId) {
+          throw new Error("URL folder không hợp lệ");
+        }
+      } else {
+        // Khởi tạo DriveAPI sớm hơn để lấy danh sách folder
+        driveAPI = new DriveAPI(false, 3, 5, 0, 5);
+        await driveAPI.authenticate();
+
+        sourceFolderId = await listDriveFolders(driveAPI);
+        if (!sourceFolderId) {
+          throw new Error("Không thể lấy folder ID");
+        }
+      }
+      sourceFolderIds = [sourceFolderId];
+    } else {
+      // Mode 2: Đọc danh sách URL từ file
+      // Đường dẫn mặc định là file links.txt nằm trong thư mục gốc ứng dụng
+      const defaultFilePath = path.join(getAppRoot(), "links.txt");
+      const fileExists = fs.existsSync(defaultFilePath);
+      
+      if (fileExists) {
+        console.log(`✅ Đã tìm thấy file mặc định: ${defaultFilePath}`);
+      } else {
+        console.log(`⚠️ Không tìm thấy file links.txt mặc định. Vui lòng nhập đường dẫn đầy đủ.`);
+      }
+      
+      const filePathPrompt = fileExists 
+        ? `\n📂 Nhập đường dẫn đến file chứa danh sách URL (mặc định: links.txt): `
+        : `\n📂 Nhập đường dẫn đến file chứa danh sách URL: `;
+      
+      let filePath = await askQuestion(filePathPrompt);
+      
+      // Nếu người dùng không nhập gì và file mặc định tồn tại thì sử dụng file mặc định
+      if (filePath.trim() === "" && fileExists) {
+        filePath = defaultFilePath;
+        console.log(`✅ Sử dụng file mặc định: ${defaultFilePath}`);
+      } else if (filePath.trim() === "") {
+        throw new Error("Vui lòng nhập đường dẫn đến file chứa danh sách URL");
+      }
+      
+      // Nếu người dùng nhập tên file không có đường dẫn, giả định file nằm trong thư mục gốc
+      if (!path.isAbsolute(filePath) && !filePath.includes('/') && !filePath.includes('\\')) {
+        filePath = path.join(getAppRoot(), filePath);
+        console.log(`🔍 Đường dẫn đầy đủ: ${filePath}`);
+      }
+      
+      try {
+        const links = await readLinksFromFile(filePath);
+        sourceFolderIds = links;
+        
+        // Hiển thị tổng số liên kết
+        console.log(`\n📊 Đã đọc được ${links.length} liên kết`);
+        
+        // Hỏi chế độ xử lý
+        const processModeInput = await askQuestion(
+          "\n📋 Chọn chế độ xử lý:\n" +
+          "1. Xử lý tuần tự (lần lượt từng liên kết)\n" +
+          "2. Xử lý song song (nhiều liên kết cùng lúc)\n" +
+          "Lựa chọn của bạn (1/2, mặc định: 1): "
+        );
+        
+        selectedProcessMode = processModeInput.trim() || "1";
+        
+        if (!["1", "2"].includes(selectedProcessMode)) {
+          throw new Error("Lựa chọn không hợp lệ");
+        }
+      } catch (error) {
+        console.error(`\n❌ ${error.message}`);
+        // Hỏi lại người dùng
+        throw new Error("Không thể đọc file liên kết. Vui lòng khởi động lại chương trình.");
       }
     }
 
-    // Chọn mode
+    // Chọn mode tải xuống
     const choice = await askQuestion(
-      "\n📋 Chọn chế độ:\n" +
+      "\n📋 Chọn chế độ tải xuống:\n" +
         "1. Tải và upload lên Drive qua API\n" +
         "2. Tải và upload qua Drive Desktop\n" +
         "Lựa chọn của bạn (1/2, mặc định: 1): "
@@ -446,6 +671,7 @@ async function main(folderUrl) {
     // Thêm phần hỏi số lượng file xử lý
     let maxConcurrent = 3;
     let maxBackground = 5;
+    let maxParallel = 2; // Số lượng liên kết xử lý song song tối đa
 
     if (!isDownloadMode) {
       console.log("\n⚙️ Cấu hình tải xuống:");
@@ -463,10 +689,21 @@ async function main(folderUrl) {
       if (background && !isNaN(background)) {
         maxBackground = Math.max(1, Math.min(parseInt(background), 10));
       }
+      
+      // Chỉ hiển thị khi chọn chế độ đọc từ file và xử lý song song
+      if (selectedInputMode === "2" && selectedProcessMode === "2") {
+        const parallel = await askQuestion(
+          "Số liên kết xử lý song song (1-5, mặc định: 2): "
+        );
+        if (parallel && !isNaN(parallel)) {
+          maxParallel = Math.max(1, Math.min(parseInt(parallel), 5));
+        }
+      }
 
       console.log(`\n📊 Cấu hình đã chọn:
         - Số Chrome đồng thời: ${maxConcurrent}
         - Số tải xuống đồng thời: ${maxBackground}
+        ${selectedInputMode === "2" && selectedProcessMode === "2" ? `- Số liên kết xử lý song song: ${maxParallel}` : ""}
       `);
     }
 
@@ -492,27 +729,41 @@ async function main(folderUrl) {
     );
     await driveAPI.authenticate();
 
-    // Xử lý folder
-    console.log(`🔑 Folder ID: ${sourceFolderId}`);
-
     // Tracking thời gian
     console.time("⏱️ Thời gian thực hiện");
 
-    // Bắt đầu xử lý
-    if (isDownloadMode) {
-      // 1. Khởi tạo DriveDesktopAPI với đường dẫn đã chọn
-      const driveAPI = new DriveDesktopAPI(defaultPath);
-      await driveAPI.authenticate();
+    // Bắt đầu xử lý dựa trên chế độ đã chọn
+    if (selectedInputMode === "1") {
+      // Xử lý một thư mục duy nhất (cách cũ)
+      const sourceFolderId = sourceFolderIds[0];
+      console.log(`🔑 Folder ID: ${sourceFolderId}`);
+      
+      if (isDownloadMode) {
+        // 1. Khởi tạo DriveDesktopAPI với đường dẫn đã chọn
+        const driveAPI = new DriveDesktopAPI(defaultPath);
+        await driveAPI.authenticate();
 
-      // 2. Bắt đầu xử lý folder gốc
-      await driveAPI.start(sourceFolderId);
+        // 2. Bắt đầu xử lý folder gốc
+        await driveAPI.start(sourceFolderId);
+      } else {
+        await driveAPI.start(sourceFolderId);
+      }
     } else {
-      await driveAPI.start(sourceFolderId);
+      // Xử lý danh sách thư mục từ file
+      if (selectedProcessMode === "1") {
+        // Xử lý tuần tự
+        await processLinksSequentially(sourceFolderIds, isDownloadMode, driveAPI, defaultPath, batchSize, pauseDuration);
+      } else {
+        // Xử lý song song
+        await processLinksParallel(sourceFolderIds, isDownloadMode, driveAPI, defaultPath, batchSize, pauseDuration, maxParallel);
+      }
     }
 
     // In thống kê
     console.timeEnd("⏱️ Thời gian thực hiện");
-    driveAPI.logFinalStats();
+    if (selectedInputMode === "1") {
+      driveAPI.logFinalStats();
+    }
 
     console.log("\n✅ Hoàn thành chương trình");
   } catch (error) {
