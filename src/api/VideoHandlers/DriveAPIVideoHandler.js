@@ -299,7 +299,7 @@ class DriveAPIVideoHandler extends BaseVideoHandler {
           if (retries > 0) {
             console.log(`${indent}⏳ Đợi 10s trước khi thử lại...`);
             await new Promise((resolve) => setTimeout(resolve, 10000));
-            await this.chromeManager.killAllChromeProcesses();
+            await this.chromeManager.killAllChrome();
           } else {
             throw error;
           }

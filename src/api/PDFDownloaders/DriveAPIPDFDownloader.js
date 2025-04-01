@@ -490,7 +490,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           // Thử kill Chrome nếu có lỗi
           if (retries === 1) {
             console.log(`🔄 Thử kill Chrome và khởi động lại...`);
-            await this.chromeManager.killAllChromeProcesses().catch((e) => {});
+            await this.chromeManager.forceKillAllChrome().catch((e) => {});
             await new Promise((resolve) => setTimeout(resolve, 5000));
           }
         }

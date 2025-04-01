@@ -19,29 +19,40 @@ class VideoQualityChecker {
     };
 
     // Phạm vi quyền cần thiết
-    this.SCOPES = [
+    this.scopes = [
       "https://www.googleapis.com/auth/drive",
       "https://www.googleapis.com/auth/drive.file",
       "https://www.googleapis.com/auth/drive.readonly",
       "https://www.googleapis.com/auth/drive.metadata.readonly",
+      "https://www.googleapis.com/auth/drive.appdata",
+      "https://www.googleapis.com/auth/drive.metadata",
+      "https://www.googleapis.com/auth/drive.photos.readonly",
     ];
 
-    // Khởi tạo OAuth client
-    this.oauth2Client = new OAuth2Client(
+    // Khởi tạo OAuth2Client với thông tin xác thực 
+    this.oAuth2Client = new google.auth.OAuth2(
       this.credentials.client_id,
       this.credentials.client_secret,
       this.credentials.redirect_uris[0]
     );
 
     // Các cấu hình delay để tránh quá tải API
-    this.REQUEST_DELAY = 2;
+    this.REQUEST_DELAY = 50; // Giảm xuống để tăng tốc độ cho các request không liên quan đến quota
     this.QUOTA_DELAY = 1000;
-    this.MAX_RETRIES = 1;
+    this.MAX_RETRIES = 5; // Tăng số lần thử lại
     this.COPY_BATCH_SIZE = 10;
     this.INITIAL_DELAY = 1000;
     this.MAX_DELAY = 64000;
-    this.QUOTA_RESET_TIME = 60000;
-    this.TIMEOUT = 30000;
+    this.QUOTA_RESET_TIME = 60000; // 1 phút
+    this.TIMEOUT = 60000; // Tăng timeout lên 60s
+    
+    // Thêm các hằng số mới để kiểm soát rate limit tốt hơn
+    this.LONG_PAUSE_TIME = 15 * 60 * 1000; // 15 phút khi gặp nhiều lỗi liên tiếp
+    this.MAX_CONSECUTIVE_QUOTA_ERRORS = 5; // Số lần lỗi quota liên tiếp tối đa trước khi dừng
+    
+    // Biến theo dõi tổng số lỗi rate limit trong toàn bộ phiên làm việc
+    this.totalRateLimitErrors = 0;
+    this.rateLimitStartTime = null;
 
     // Thêm biến đếm toàn cục vào constructor
     this.totalProcessedFiles = 0;
@@ -59,13 +70,13 @@ class VideoQualityChecker {
       // Kiểm tra file token đã tồn tại
       if (fs.existsSync(tokenPath)) {
         const token = JSON.parse(fs.readFileSync(tokenPath, "utf8"));
-        this.oauth2Client.setCredentials(token);
+        this.oAuth2Client.setCredentials(token);
         console.log("✅ Đã tải token từ file");
       } else {
         // Tạo URL xác thực nếu chưa có token
-        const authUrl = this.oauth2Client.generateAuthUrl({
+        const authUrl = this.oAuth2Client.generateAuthUrl({
           access_type: "offline",
-          scope: this.SCOPES,
+          scope: this.scopes,
           prompt: "consent",
         });
 
@@ -89,8 +100,8 @@ class VideoQualityChecker {
         });
 
         // Lấy token từ mã xác thực
-        const { tokens } = await this.oauth2Client.getToken(code);
-        this.oauth2Client.setCredentials(tokens);
+        const { tokens } = await this.oAuth2Client.getToken(code);
+        this.oAuth2Client.setCredentials(tokens);
 
         // Lưu token vào file
         fs.writeFileSync(tokenPath, JSON.stringify(tokens));
@@ -100,7 +111,7 @@ class VideoQualityChecker {
       // Khởi tạo drive API
       this.drive = google.drive({
         version: "v3",
-        auth: this.oauth2Client,
+        auth: this.oAuth2Client,
       });
 
       return this.drive;
@@ -124,15 +135,29 @@ class VideoQualityChecker {
     for (let attempt = 0; attempt < this.MAX_RETRIES; attempt++) {
       try {
         if (isQuotaError) {
+          // Tăng thời gian chờ đáng kể khi gặp lỗi rate limit
           const waitTime = quotaWaitTime * Math.pow(2, quotaRetryCount);
           console.log(
-            `⏳ Đang đợi ${waitTime / 1000}s để reset quota (lần ${
+            `⚠️ ĐÃ GẶP GIỚI HẠN API - Đang đợi ${waitTime / 1000}s để reset quota (lần ${
               quotaRetryCount + 1
             })...`
           );
+          
+          // Cập nhật biến toàn cục theo dõi lỗi rate limit
+          this.totalRateLimitErrors++;
+          if (!this.rateLimitStartTime) {
+            this.rateLimitStartTime = new Date();
+          }
+          
+          // Kiểm tra nếu đã gặp quá nhiều lỗi liên tiếp
+          if (quotaRetryCount >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+            const error = new Error(`Đã vượt quá số lần thử lại tối đa (${this.MAX_CONSECUTIVE_QUOTA_ERRORS}) khi gặp lỗi giới hạn API.`);
+            error.isQuotaLimitExceeded = true;
+            throw error;
+          }
+          
           await this.delay(waitTime);
           isQuotaError = false;
-          quotaRetryCount++;
         }
 
         // Thêm timeout cho operation
@@ -152,9 +177,31 @@ class VideoQualityChecker {
           error.message.includes("Operation timeout");
         const isNetworkError =
           error.code === "ECONNRESET" || error.code === "ECONNREFUSED";
-
-        if (error.code === 429 || error.message.includes("quota")) {
+        
+        // Nếu đã vượt quá số lần retry quota, truyền lỗi ra ngoài
+        if (error.isQuotaLimitExceeded) {
+          throw error;
+        }
+        
+        // Cải thiện việc phát hiện lỗi quota/rate limit
+        if (
+          error.code === 429 || 
+          error.message.includes("quota") || 
+          error.message.includes("rate limit") ||
+          error.message.includes("Rate Limit") ||
+          error.message.includes("User rate limit")
+        ) {
+          console.log(`🛑 PHÁT HIỆN LỖI GIỚI HẠN API: ${error.message}`);
           isQuotaError = true;
+          quotaRetryCount++; 
+          
+          // Tăng thời gian chờ cho lần retry tiếp theo lên đáng kể
+          if (quotaRetryCount >= 3) {
+            quotaWaitTime = Math.max(quotaWaitTime * 2, 120000); // Tối thiểu 2 phút nếu đã thử lại nhiều lần
+            console.log(`⚠️ Đã tăng thời gian chờ lên ${quotaWaitTime/1000}s do nhiều lỗi giới hạn liên tiếp`);
+          }
+          
+          // Tiếp tục vòng lặp để thử lại sau khi chờ
           continue;
         }
 
@@ -234,7 +281,7 @@ class VideoQualityChecker {
         return this.drive.files.list({
           q: `'${sourceFolderId}' in parents and trashed = false`,
           fields: "files(id, name, mimeType)",
-          pageSize: 100,
+          pageSize: 1000,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
         });
@@ -245,7 +292,7 @@ class VideoQualityChecker {
         return this.drive.files.list({
           q: `'${targetFolderId}' in parents and trashed = false`,
           fields: "files(id, name, mimeType)",
-          pageSize: 100,
+          pageSize: 1000,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
         });
@@ -500,6 +547,29 @@ class VideoQualityChecker {
       console.log(
         `${indent}✅ Hoàn thành: ${processedFiles} thành công, ${skippedFiles} bỏ qua`
       );
+
+      // Xử lý song song các thư mục con thay vì tuần tự
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`${indent}📁 Folder: ${folder.name}`);
+              return this.lockFolder(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500);
+          }
+        }
+      }
     } catch (error) {
       console.log(`${indent}⏩ Bỏ qua folder do lỗi: ${error.message}`);
     }
@@ -626,26 +696,44 @@ class VideoQualityChecker {
         `${indent}📊 Tổng kết: ${totalDuplicates} files trùng lặp, đã xóa ${deletedCount} files`
       );
 
-      // Đệ quy vào các thư mục con
-      for (const folder of folders) {
-        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
-        await this.removeDuplicates(folder.id, depth + 1);
+      // Xử lý thư mục con song song
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+              return this.removeDuplicates(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500);
+          }
+        }
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
 
-  // Thêm phương thức kiểm tra chất lượng video
+  // Xử lý song song cho checkVideoQuality
   async checkVideoQuality(folderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
       console.log(`${indent}🔍 Đang quét folder...`);
 
+      // Lấy danh sách files trong folder
       const response = await this.withRetry(async () => {
         return this.drive.files.list({
           q: `'${folderId}' in parents and trashed = false`,
-          fields: "files(id, name, mimeType, size, videoMediaMetadata)",
+          fields: "files(id, name, mimeType)",
           pageSize: 1000,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
@@ -653,10 +741,30 @@ class VideoQualityChecker {
       });
 
       const items = response.data.files;
-      const videos = items.filter((item) => item.mimeType.includes("video/"));
+      const videos = items.filter((item) =>
+        item.mimeType.includes("video/")
+      );
       const folders = items.filter(
         (item) => item.mimeType === "application/vnd.google-apps.folder"
       );
+
+      console.log(`${indent}📂 Folder ID: ${folderId}`);
+      console.log(`${indent}📼 Số video: ${videos.length}`);
+      console.log(`${indent}📁 Số folder con: ${folders.length}`);
+
+      // Đếm tổng số file đã xử lý
+      if (!this.totalProcessedFiles) {
+        this.totalProcessedFiles = 0;
+      }
+
+      // Đếm số file đã tạo bản sao trong đợt hiện tại
+      if (!this.reprocessedFiles) {
+        this.reprocessedFiles = 0;
+      }
+
+      // Đặt số batch
+      this.BATCH_SIZE = 10;
+      this.BATCH_DELAY = 15 * 60 * 1000;
 
       let stats = {
         total: videos.length,
@@ -858,17 +966,34 @@ class VideoQualityChecker {
         });
       }
 
-      // Đệ quy vào các thư mục con
-      for (const folder of folders) {
-        console.log(`\n${indent}📁 Đang kiểm tra folder: ${folder.name}`);
-        await this.checkVideoQuality(folder.id, depth + 1);
+      // Đệ quy vào các thư mục con - song song
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`\n${indent}📁 Đang kiểm tra folder: ${folder.name}`);
+              return this.checkVideoQuality(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500);
+          }
+        }
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
 
-  // Thêm phương thức để làm sạch tên file
+  // Thêm phương thức làm sạch tên file
   async cleanFileNames(folderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
@@ -892,163 +1017,115 @@ class VideoQualityChecker {
         (item) => item.mimeType === "application/vnd.google-apps.folder"
       );
 
-      let renamedCount = 0;
+      // Đếm số file đã xử lý, đổi tên và lỗi
       let processedCount = 0;
+      let renamedCount = 0;
       let errorCount = 0;
-      let retryCount = 0;
-      const MAX_RETRIES = 3;
-      const RETRY_DELAY = 5000; // 5 giây
-      const BATCH_SIZE = 5; // Số file xử lý cùng lúc
 
-      // Xử lý các files theo batch
-      for (let i = 0; i < files.length; i += BATCH_SIZE) {
-        const batch = files.slice(i, i + BATCH_SIZE);
-        console.log(
-          `${indent}🔄 Xử lý batch ${
-            Math.floor(i / BATCH_SIZE) + 1
-          }/${Math.ceil(files.length / BATCH_SIZE)} (${batch.length} files)`
-        );
+      // Xử lý từng file
+      for (const file of files) {
+        const oldName = file.name;
+        let newName = oldName;
 
-        try {
-          // Chuẩn bị danh sách các files cần đổi tên
-          const renameOperations = [];
+        // 1. Loại bỏ các ký tự đặc biệt hoặc không cần thiết
+        newName = newName
+          .replace(/\s+/g, " ") // Loại bỏ khoảng trắng thừa
+          .replace(/\+/g, "plus") // Thay thế + thành plus
+          .replace(/[_\-]{2,}/g, "-") // Thay thế nhiều dấu _ hoặc - thành một dấu -
+          .trim(); // Xóa khoảng trắng thừa ở đầu và cuối
 
-          for (const file of batch) {
-            processedCount++;
-            const originalName = file.name;
-            let newName = originalName;
+        // 2. Xử lý định dạng file đặc biệt như ebook/PDF
+        // Ví dụ: Loại bỏ "tài liệu" hoặc "ebook"
+        newName = newName
+          .replace(/\s*\[Tài liệu|ebook|document\]\s*/gi, "")
+          .replace(/\s*\(Tài liệu|ebook|document\)\s*/gi, "");
 
-            // 1. Xóa "Bản sao của" và các biến thể của nó
-            newName = newName.replace(/^Bản sao của\s+/i, "");
-            newName = newName.replace(/^Copy of\s+/i, "");
+        // 3. Loại bỏ tên trang web
+        newName = newName
+          .replace(/\s*\[[^\]]*\.(com|net|org|edu|info|io)[^\]]*\]\s*/gi, "")
+          .replace(/\s*\([^)]*\.(com|net|org|edu|info|io)[^)]*\)\s*/gi, "")
+          .replace(/\s*(-|\||\+)\s*\w+\.(com|net|org|edu|info|io).*$/gi, "");
 
-            // 2. Thay thế gạch chân (_) và gạch ngang (-) bằng khoảng trắng
-            newName = newName.replace(/[_-]+/g, " ");
+        // 4. Loại bỏ cách ghi chú về link và watermark
+        newName = newName
+          .replace(/\s*\[link[^\]]*\]\s*/gi, "")
+          .replace(/\s*\(link[^)]*\)\s*/gi, "")
+          .replace(/\s*\[watermark[^\]]*\]\s*/gi, "")
+          .replace(/\s*\(watermark[^)]*\)\s*/gi, "");
 
-            // 3. Xử lý các đuôi file bị lặp lại
-            const extensions = [
-              ".mp4",
-              ".mkv",
-              ".avi",
-              ".mov",
-              ".flv",
-              ".wmv",
-              ".webm",
-              ".m4v",
-              ".mp3",
-              ".jpg",
-              ".jpeg",
-              ".png",
-              ".pdf",
-              ".doc",
-              ".docx",
-            ];
+        // 5. Xóa số thứ tự không cần thiết
+        // Chỉ xóa nếu số đứng đầu và theo sau bởi dấu chấm hoặc khoảng trắng
+        newName = newName.replace(/^(\d+[\s\.\-\_]+)/g, "");
 
-            for (const ext of extensions) {
-              // Tìm kiếm các đuôi file bị lặp lại, ví dụ: .mp4.mp4 hoặc .mp4.mp4.mp4
-              const extRegex = new RegExp(
-                `(${ext.replace(".", "\\.")}){2,}$`,
-                "i"
-              );
-              if (extRegex.test(newName)) {
-                // Tìm đuôi file thực tế
-                const match = newName.match(
-                  new RegExp(`${ext.replace(".", "\\.")}`, "i")
-                );
-                if (match) {
-                  // Lấy vị trí đầu tiên của đuôi file
-                  const firstExtPos = newName
-                    .toLowerCase()
-                    .indexOf(ext.toLowerCase());
-                  // Nếu tìm thấy, cắt tên file và chỉ giữ lại đuôi file đầu tiên
-                  if (firstExtPos !== -1) {
-                    newName = newName.substring(0, firstExtPos) + ext;
-                  }
-                }
-              }
-            }
-
-            // 4. Xử lý khoảng trắng thừa
-            newName = newName.replace(/\s+/g, " ").trim();
-
-            // Nếu tên đã thay đổi, thêm vào danh sách đổi tên
-            if (newName !== originalName) {
-              renameOperations.push({
-                fileId: file.id,
-                originalName,
-                newName,
-              });
-            } else {
-              console.log(`${indent}⏩ Bỏ qua "${originalName}" (đã chuẩn)`);
-            }
-          }
-
-          // Thực hiện đổi tên song song
-          if (renameOperations.length > 0) {
-            await Promise.all(
-              renameOperations.map(async (op) => {
-                try {
-                  await this.withRetry(async () => {
-                    await this.drive.files.update({
-                      fileId: op.fileId,
-                      requestBody: {
-                        name: op.newName,
-                      },
-                      supportsAllDrives: true,
-                    });
-                  });
-                  renamedCount++;
-                  console.log(
-                    `${indent}✅ Đổi tên: "${op.originalName}" -> "${op.newName}"`
-                  );
-                } catch (error) {
-                  errorCount++;
-                  console.log(
-                    `${indent}❌ Không thể đổi tên file "${op.originalName}": ${error.message}`
-                  );
-                }
-              })
-            );
-          }
-
-          retryCount = 0; // Reset retryCount nếu thành công
-        } catch (batchError) {
-          // Xử lý lỗi batch
-          console.error(`${indent}⚠️ Lỗi xử lý batch: ${batchError.message}`);
-
-          if (retryCount < MAX_RETRIES) {
-            retryCount++;
-            console.log(
-              `${indent}⏳ Nghỉ ${
-                RETRY_DELAY / 1000
-              }s trước khi thử lại (lần ${retryCount}/${MAX_RETRIES})...`
-            );
-            await this.delay(RETRY_DELAY);
-            i -= BATCH_SIZE; // Lùi lại để xử lý lại batch hiện tại
-            continue;
-          } else {
-            console.log(
-              `${indent}⚠️ Đã thử lại ${MAX_RETRIES} lần, bỏ qua batch này.`
-            );
-            errorCount += Math.min(BATCH_SIZE, files.length - i);
-            retryCount = 0;
-          }
+        // 6. Xử lý viết hoa và viết thường
+        // Nếu toàn bộ chữ hoa, chuyển thành viết hoa chữ cái đầu
+        if (newName === newName.toUpperCase()) {
+          newName = newName.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
         }
 
-        // Delay giữa các batch để tránh quá tải API
-        if (i + BATCH_SIZE < files.length) {
+        // 7. Đảm bảo các dấu chấm, phẩy và khoảng trắng được định dạng đúng
+        newName = newName
+          .replace(/\s*\.\s*/g, ". ") // Đảm bảo sau dấu chấm có khoảng trắng
+          .replace(/\s*,\s*/g, ", ") // Đảm bảo sau dấu phẩy có khoảng trắng
+          .replace(/\s+/g, " ") // Đảm bảo không có nhiều khoảng trắng liên tiếp
+          .trim();
+
+        // Đếm số file đã xử lý
+        processedCount++;
+
+        // Nếu tên mới khác tên cũ và có ý nghĩa (không quá ngắn)
+        if (newName !== oldName && newName.length > 3) {
+          try {
+            await this.withRetry(async () => {
+              return this.drive.files.update({
+                fileId: file.id,
+                requestBody: {
+                  name: newName,
+                },
+                supportsAllDrives: true,
+              });
+            });
+
+            renamedCount++;
+            console.log(`${indent}✅ Đã đổi tên: "${oldName}" -> "${newName}"`);
+          } catch (error) {
+            errorCount++;
+            console.log(
+              `${indent}❌ Không thể đổi tên "${oldName}": ${error.message}`
+            );
+          }
+
+          // Delay nhỏ giữa các request
           await this.delay(this.REQUEST_DELAY);
         }
       }
 
+      // Hiển thị thông tin tổng kết
       console.log(
         `${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files, lỗi ${errorCount} files`
       );
 
-      // Đệ quy vào các thư mục con
-      for (const folder of folders) {
-        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
-        await this.cleanFileNames(folder.id, depth + 1);
+      // Xử lý thư mục con song song
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+              return this.cleanFileNames(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500);
+          }
+        }
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
@@ -1218,36 +1295,56 @@ class VideoQualityChecker {
         );
       }
 
-      // Đệ quy vào các thư mục con (ngoại trừ thư mục "Tài liệu" vừa tạo)
-      for (const folder of folders) {
-        // Bỏ qua thư mục "Tài liệu" để tránh xử lý lặp
-        if (
-          folder.name === "Tài liệu" ||
-          folder.name.toLowerCase() === "tai lieu" ||
-          folder.name.toLowerCase() === "materials" ||
-          folder.name.toLowerCase() === "documents"
-        ) {
-          continue;
+      // Đệ quy vào các thư mục con (ngoại trừ thư mục "Tài liệu" vừa tạo) - song song
+      // Lọc các thư mục không phải tài liệu
+      const normalFolders = folders.filter(folder => 
+        !['tài liệu', 'tai lieu', 'materials', 'documents'].includes(folder.name.toLowerCase())
+      );
+      
+      if (normalFolders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${normalFolders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < normalFolders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = normalFolders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`${indent}📁 Đang xử lý thư mục con: ${folder.name}`);
+              return this.organizeCourseMaterials(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < normalFolders.length) {
+            await this.delay(500);
+          }
         }
-
-        console.log(`${indent}📁 Đang xử lý thư mục con: ${folder.name}`);
-        await this.organizeCourseMaterials(folder.id, depth + 1);
       }
     } catch (error) {
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
 
-  // Thêm phương thức để loại bỏ file trùng tên
-  async removeDuplicateNames(folderId, depth = 0) {
+  // Thêm phương thức mới kết hợp chức năng xóa file cụ thể và chia sẻ PDF công khai 
+  async cleanAndSharePdfs(folderId, specificNames, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
-      console.log(`${indent}🔍 Đang quét folder để loại bỏ file trùng tên...`);
+      console.log(`${indent}🧹 Bắt đầu dọn dẹp và chia sẻ file PDF...`);
+      
+      // Bước 1: Xóa các file không mong muốn trước
+      console.log(`${indent}🔍 Đang quét folder để xóa file có tên cụ thể...`);
+      
+      // Convert specificNames to array if it's a string
+      const namesToRemove = Array.isArray(specificNames) 
+        ? specificNames 
+        : [specificNames];
 
       const response = await this.withRetry(async () => {
         return this.drive.files.list({
           q: `'${folderId}' in parents and trashed = false`,
-          fields: "files(id, name, mimeType, createdTime, size)",
+          fields: "files(id, name, mimeType)",
           pageSize: 1000,
           supportsAllDrives: true,
           includeItemsFromAllDrives: true,
@@ -1262,119 +1359,844 @@ class VideoQualityChecker {
         (item) => item.mimeType === "application/vnd.google-apps.folder"
       );
 
-      // Tạo Map để nhóm files theo tên chính xác
-      const filesByName = new Map();
-      files.forEach((file) => {
-        if (!filesByName.has(file.name)) {
-          filesByName.set(file.name, []);
-        }
-        filesByName.get(file.name).push(file);
-      });
-
-      // Số lượng file trùng tên
-      let totalDuplicates = 0;
+      // Bước 1: Xóa file có tên cụ thể - XỬ LÝ SONG SONG
       let deletedCount = 0;
       let errorCount = 0;
 
-      // Các nhóm cần xử lý
-      const duplicateGroups = [];
-      for (const [name, fileGroup] of filesByName.entries()) {
-        if (fileGroup.length > 1) {
-          totalDuplicates += fileGroup.length - 1;
-          duplicateGroups.push(fileGroup);
+      // Lọc ra các file cần xóa
+      const filesToDelete = files.filter(file => 
+        namesToRemove.some(name => file.name === name || file.name.includes(name))
+      );
+
+      if (filesToDelete.length > 0) {
+        console.log(`${indent}🗑️ Tìm thấy ${filesToDelete.length} file cần xóa`);
+        
+        // Xử lý xóa file theo batch song song
+        const DELETE_BATCH_SIZE = 10; // Tăng batch size cho việc xóa
+        
+        for (let i = 0; i < filesToDelete.length; i += DELETE_BATCH_SIZE) {
+          const batch = filesToDelete.slice(i, i + DELETE_BATCH_SIZE);
+          console.log(`${indent}🔄 Xử lý batch xóa ${Math.floor(i / DELETE_BATCH_SIZE) + 1}/${Math.ceil(filesToDelete.length / DELETE_BATCH_SIZE)} (${batch.length} files)`);
+          
+          try {
+            // Xử lý song song các file trong batch
+            const results = await Promise.allSettled(
+              batch.map(async (file) => {
+                try {
+                  await this.withRetry(async () => {
+                    await this.drive.files.delete({
+                      fileId: file.id,
+                      supportsAllDrives: true,
+                    });
+                  });
+                  return { success: true, fileName: file.name };
+                } catch (error) {
+                  return { success: false, fileName: file.name, error: error.message };
+                }
+              })
+            );
+            
+            // Xử lý kết quả
+            results.forEach(result => {
+              if (result.status === 'fulfilled') {
+                if (result.value.success) {
+                  deletedCount++;
+                  console.log(`${indent}✅ Đã xóa: ${result.value.fileName}`);
+                } else {
+                  errorCount++;
+                  console.log(`${indent}❌ Không thể xóa file "${result.value.fileName}": ${result.value.error}`);
+                }
+              } else {
+                errorCount++;
+                console.log(`${indent}❌ Lỗi: ${result.reason}`);
+              }
+            });
+            
+            // Giảm delay giữa các batch xuống còn 500ms
+            if (i + DELETE_BATCH_SIZE < filesToDelete.length) {
+              await this.delay(500);
+            }
+          } catch (error) {
+            console.log(`${indent}❌ Lỗi xử lý batch xóa: ${error.message}`);
+            await this.delay(1000);
+          }
         }
+      } else {
+        console.log(`${indent}✓ Không tìm thấy file nào cần xóa`);
       }
 
       console.log(
-        `${indent}📊 Tìm thấy ${totalDuplicates} file trùng tên trong ${duplicateGroups.length} nhóm`
+        `${indent}📊 Tổng kết xóa file: Đã xóa ${deletedCount} files, lỗi: ${errorCount}`
       );
 
-      // Xử lý song song các nhóm, mỗi lần 5 nhóm
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < duplicateGroups.length; i += BATCH_SIZE) {
-        const currentBatch = duplicateGroups.slice(i, i + BATCH_SIZE);
-        console.log(
-          `${indent}🔄 Xử lý batch ${
-            Math.floor(i / BATCH_SIZE) + 1
-          }/${Math.ceil(duplicateGroups.length / BATCH_SIZE)} (${
-            currentBatch.length
-          } nhóm)`
-        );
+      // Bước 2: Chia sẻ các file PDF
+      console.log(`${indent}🔍 Đang quét folder để chia sẻ công khai file PDF...`);
+
+      // Lấy lại danh sách file sau khi đã xóa một số file
+      const updatedResponse = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, size)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const updatedFiles = updatedResponse.data.files.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+
+      // Lọc các file PDF
+      const pdfFiles = updatedFiles.filter(
+        (file) => file.mimeType === "application/pdf" || file.mimeType.includes("pdf")
+      );
+
+      console.log(`${indent}📄 Tìm thấy ${pdfFiles.length} file PDF để chia sẻ công khai`);
+
+      // Xử lý theo batch để tránh quá tải API - TĂNG KÍCH THƯỚC BATCH
+      const BATCH_SIZE = 10; // Tăng số file xử lý mỗi batch từ 5 lên 10
+      let sharedCount = 0;
+      let shareErrorCount = 0;
+      let quotaErrorCount = 0;
+      let currentDelay = 500; // Giảm delay mặc định xuống 500ms
+
+      // Xử lý từng batch
+      for (let i = 0; i < pdfFiles.length; i += BATCH_SIZE) {
+        // Nếu gặp lỗi quota liên tục, tăng thời gian nghỉ theo cấp số nhân
+        if (quotaErrorCount > 0) {
+          const waitTime = this.QUOTA_RESET_TIME * Math.pow(2, quotaErrorCount - 1);
+          console.log(`${indent}⚠️ ĐÃ GẶP GIỚI HẠN API - Đang đợi ${waitTime / 1000}s để reset quota (lần ${quotaErrorCount})...`);
+          
+          // Nếu đã gặp quá nhiều lỗi liên tiếp, dừng xử lý hoàn toàn và thông báo
+          if (quotaErrorCount >= 5) {
+            console.log(`${indent}🛑 ĐÃ GẶP QUÁ NHIỀU LỖI GIỚI HẠN API LIÊN TIẾP. Dừng xử lý sau ${quotaErrorCount} lần thử lại không thành công.`);
+            console.log(`${indent}💡 Vui lòng đợi ít nhất 1 giờ trước khi thử lại để đảm bảo quota được reset hoàn toàn.`);
+            return; // Dừng xử lý và thoát khỏi phương thức
+          }
+          
+          await this.delay(waitTime);
+        }
+        
+        const batch = pdfFiles.slice(i, i + BATCH_SIZE);
+        console.log(`${indent}🔄 Xử lý batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(pdfFiles.length / BATCH_SIZE)} (${batch.length} files)`);
 
         try {
-          // Xử lý đồng thời các nhóm trong batch
-          await Promise.all(
-            currentBatch.map(async (fileGroup) => {
+          // Xử lý song song các file trong batch
+          const results = await Promise.allSettled(
+            batch.map(async (file) => {
               try {
-                // Sắp xếp theo thời gian tạo (giữ lại file cũ nhất)
-                fileGroup.sort(
-                  (a, b) => new Date(a.createdTime) - new Date(b.createdTime)
-                );
+                // Cập nhật quyền truy cập để cho phép tải xuống và ẩn người sở hữu
+                await this.withRetry(async () => {
+                  await this.drive.files.update({
+                    fileId: file.id,
+                    requestBody: {
+                      writersCanShare: true,
+                      copyRequiresWriterPermission: false,
+                      viewersCanCopyContent: true,
+                      // Ẩn tên tác giả/chủ sở hữu khi có thể
+                      publishedOutsideDomain: true,
+                      publishAuto: true,
+                      hideOwner: true
+                    },
+                    supportsAllDrives: true,
+                  });
+                });
 
-                // Hiển thị thông tin nhóm
-                const keepFile = fileGroup[0];
-                console.log(
-                  `${indent}📄 Nhóm "${keepFile.name}" có ${fileGroup.length} files trùng tên`
-                );
-                console.log(
-                  `${indent}   🔒 Giữ lại: ${
-                    keepFile.name
-                  } (${this.formatFileSize(parseInt(keepFile.size || 0))})`
-                );
+                // Tạo quyền truy cập công khai nhưng ẩn chủ sở hữu
+                await this.withRetry(async () => {
+                  await this.drive.permissions.create({
+                    fileId: file.id,
+                    requestBody: {
+                      role: "reader",
+                      type: "anyone",
+                      allowFileDiscovery: false,
+                      withLink: true
+                    },
+                    supportsAllDrives: true,
+                  });
+                });
 
-                // Xóa các file trùng tên
-                for (let i = 1; i < fileGroup.length; i++) {
-                  try {
-                    await this.withRetry(async () => {
-                      await this.drive.files.delete({
-                        fileId: fileGroup[i].id,
-                        supportsAllDrives: true,
-                      });
-                    });
-                    deletedCount++;
-                    console.log(
-                      `${indent}   ✅ Đã xóa: ${
-                        fileGroup[i].name
-                      } (${this.formatFileSize(
-                        parseInt(fileGroup[i].size || 0)
-                      )})`
-                    );
-                  } catch (error) {
-                    errorCount++;
-                    console.log(
-                      `${indent}   ❌ Không thể xóa: ${fileGroup[i].name} - ${error.message}`
-                    );
-                  }
-                }
+                // Lấy link chia sẻ
+                const shareInfo = await this.withRetry(async () => {
+                  return this.drive.files.get({
+                    fileId: file.id,
+                    fields: "webViewLink,webContentLink",
+                    supportsAllDrives: true,
+                  });
+                });
+
+                return { 
+                  success: true, 
+                  fileName: file.name, 
+                  webViewLink: shareInfo.data.webViewLink,
+                  webContentLink: shareInfo.data.webContentLink
+                };
               } catch (error) {
-                errorCount += fileGroup.length - 1;
-                console.log(
-                  `${indent}❌ Lỗi xử lý nhóm "${fileGroup[0].name}": ${error.message}`
-                );
+                if (error.code === 429 || error.message.includes("quota")) {
+                  // Nếu lỗi quota, đánh dấu để tăng thời gian nghỉ sau
+                  throw { isQuotaError: true, message: error.message, fileName: file.name };
+                }
+                return { success: false, fileName: file.name, error: error.message };
               }
             })
           );
-
-          // Delay nhỏ giữa các batch
-          if (i + BATCH_SIZE < duplicateGroups.length) {
-            await this.delay(this.REQUEST_DELAY);
+          
+          // Xử lý kết quả và hiển thị thông tin
+          results.forEach(result => {
+            if (result.status === 'fulfilled') {
+              const data = result.value;
+              if (data.success) {
+                sharedCount++;
+                console.log(`${indent}✅ Đã chia sẻ công khai và ẩn chủ sở hữu: ${data.fileName}`);
+                console.log(`${indent}   🔗 Link xem: ${data.webViewLink}`);
+                if (data.webContentLink) {
+                  console.log(`${indent}   📥 Link tải: ${data.webContentLink}`);
+                }
+              } else {
+                shareErrorCount++;
+                console.log(`${indent}❌ Không thể chia sẻ file "${data.fileName}": ${data.error}`);
+              }
+            } else if (result.reason && result.reason.isQuotaError) {
+              // Không tăng shareErrorCount nếu lỗi quota vì sẽ thử lại
+              quotaErrorCount++;
+              console.log(`${indent}⚠️ Lỗi quota cho file "${result.reason.fileName}": ${result.reason.message}`);
+            } else {
+              shareErrorCount++;
+              console.log(`${indent}❌ Lỗi không xác định: ${result.reason}`);
+            }
+          });
+          
+          // Kiểm tra kết quả và đếm số lỗi quota
+          const hasQuotaError = results.some(result => 
+            result.status === 'rejected' && result.reason && result.reason.isQuotaError
+          );
+          
+          if (hasQuotaError) {
+            quotaErrorCount++;
+            console.log(`${indent}⚠️ Phát hiện lỗi giới hạn API, sẽ tăng thời gian nghỉ...`);
+            // Giảm i để xử lý lại batch này sau khi đợi
+            i -= BATCH_SIZE;
+            continue;
+          } else {
+            // Reset quotaErrorCount nếu batch thành công
+            quotaErrorCount = 0;
           }
-        } catch (error) {
-          console.error(`${indent}❌ Lỗi xử lý batch: ${error.message}`);
-          await this.delay(this.REQUEST_DELAY);
+
+          // Delay giữa các batch để tránh quá tải API - giảm thời gian delay
+          if (i + BATCH_SIZE < pdfFiles.length) {
+            console.log(`${indent}⏱️ Nghỉ ${currentDelay / 1000}s trước khi xử lý batch tiếp theo...`);
+            await this.delay(currentDelay);
+            // Reset thời gian delay về mức bình thường
+            currentDelay = 500; // Giảm xuống 500ms
+          }
+        } catch (batchError) {
+          // Xử lý lỗi batch
+          shareErrorCount += batch.length;
+          if (batchError.isQuotaError) {
+            quotaErrorCount++;
+            i -= BATCH_SIZE; // Lùi lại để xử lý lại batch này sau khi đợi
+            console.log(`${indent}⚠️ Batch gặp lỗi giới hạn API: ${batchError.message}`);
+          } else {
+            console.log(`${indent}❌ Lỗi xử lý batch: ${batchError.message}`);
+            // Tăng thời gian delay theo cấp số nhân
+            currentDelay = Math.min(currentDelay * 2, this.MAX_DELAY);
+            await this.delay(currentDelay);
+          }
         }
       }
 
       console.log(
-        `${indent}📊 Tổng kết: Đã xóa ${deletedCount}/${totalDuplicates} files trùng tên, lỗi ${errorCount} files`
+        `${indent}📊 Tổng kết chia sẻ PDF: Đã chia sẻ ${sharedCount}/${pdfFiles.length} file PDF, lỗi: ${shareErrorCount}`
       );
 
-      // Đệ quy vào các thư mục con
-      for (const folder of folders) {
-        console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
-        await this.removeDuplicateNames(folder.id, depth + 1);
+      // Tổng kết toàn bộ quá trình
+      console.log(`\n${indent}🏁 Kết quả tổng hợp:`);
+      console.log(`${indent}   - Đã xóa: ${deletedCount} file`); 
+      console.log(`${indent}   - Đã chia sẻ: ${sharedCount} file PDF`);
+      console.log(`${indent}   - Tổng số lỗi: ${errorCount + shareErrorCount}`);
+
+      // Xử lý thư mục con - SONG SONG
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => 
+              this.cleanAndSharePdfs(folder.id, namesToRemove, depth + 1)
+            )
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500); // Giảm delay xuống 500ms
+          }
+        }
       }
     } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
+
+  // Thêm phương thức để xóa file có tên cụ thể
+  async removeSpecificFiles(folderId, specificNames, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để xóa file có tên cụ thể...`);
+
+      // Kiểm tra nếu đã có nhiều lỗi rate limit trong phiên làm việc
+      if (this.totalRateLimitErrors >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+        console.log(`${indent}⚠️ Cảnh báo: Đã phát hiện ${this.totalRateLimitErrors} lỗi giới hạn API trong phiên làm việc.`);
+        
+        // Nếu có thời điểm bắt đầu, tính thời gian trôi qua
+        if (this.rateLimitStartTime) {
+          const elapsed = new Date() - this.rateLimitStartTime;
+          if (elapsed < 30 * 60 * 1000) { // Nếu chưa đến 30 phút
+            const waitTime = Math.min(this.LONG_PAUSE_TIME, 30 * 60 * 1000 - elapsed);
+            console.log(`${indent}⏳ Tạm dừng ${Math.ceil(waitTime/60000)} phút để đảm bảo quota đã được reset...`);
+            await this.delay(waitTime);
+          }
+        } else {
+          // Nếu không có thời điểm bắt đầu, tạm dừng mặc định
+          console.log(`${indent}⏳ Tạm dừng ${this.LONG_PAUSE_TIME/60000} phút để đảm bảo quota đã được reset...`);
+          await this.delay(this.LONG_PAUSE_TIME);
+        }
+        
+        // Reset biến đếm rate limit sau khi đã dừng đủ lâu
+        this.totalRateLimitErrors = 0;
+        this.rateLimitStartTime = null;
+      }
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      // Convert specificNames to array if it's a string
+      const namesToRemove = Array.isArray(specificNames) 
+        ? specificNames 
+        : [specificNames];
+
+      let deletedCount = 0;
+      let errorCount = 0;
+
+      // Lọc ra các file cần xóa
+      const filesToDelete = files.filter(file => 
+        namesToRemove.some(name => file.name === name || file.name.includes(name))
+      );
+
+      if (filesToDelete.length > 0) {
+        console.log(`${indent}🗑️ Tìm thấy ${filesToDelete.length} file cần xóa`);
+        
+        // Xử lý xóa file theo batch song song
+        const DELETE_BATCH_SIZE = 10; // Tăng batch size cho việc xóa
+        
+        // Biến theo dõi lỗi rate limit
+        let rateErrorCount = 0;
+        let consecutiveRateErrors = 0;
+        
+        for (let i = 0; i < filesToDelete.length; i += DELETE_BATCH_SIZE) {
+          // Kiểm tra lỗi rate limit
+          if (rateErrorCount > 0) {
+            const waitTime = Math.min(
+              this.QUOTA_RESET_TIME * Math.pow(2, rateErrorCount - 1),
+              this.LONG_PAUSE_TIME
+            );
+            console.log(`${indent}⚠️ ĐÃ GẶP GIỚI HẠN API - Đang đợi ${waitTime / 1000}s để reset quota (lần ${rateErrorCount})...`);
+            
+            // Nếu đã gặp quá nhiều lỗi liên tiếp, dừng xử lý hoàn toàn
+            if (rateErrorCount >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+              console.log(`${indent}🛑 ĐÃ GẶP QUÁ NHIỀU LỖI GIỚI HẠN API LIÊN TIẾP. Dừng xử lý sau ${rateErrorCount} lần thử lại không thành công.`);
+              console.log(`${indent}💡 Vui lòng đợi ít nhất 1 giờ trước khi thử lại để đảm bảo quota được reset hoàn toàn.`);
+              return; // Dừng xử lý và thoát khỏi phương thức
+            }
+            
+            await this.delay(waitTime);
+          }
+          
+          const batch = filesToDelete.slice(i, i + DELETE_BATCH_SIZE);
+          console.log(`${indent}🔄 Xử lý batch xóa ${Math.floor(i / DELETE_BATCH_SIZE) + 1}/${Math.ceil(filesToDelete.length / DELETE_BATCH_SIZE)} (${batch.length} files)`);
+          
+          try {
+            // Xử lý song song các file trong batch
+            const results = await Promise.allSettled(
+              batch.map(async (file) => {
+                try {
+                  try {
+                    await this.withRetry(async () => {
+                      await this.drive.files.delete({
+                        fileId: file.id,
+                        supportsAllDrives: true,
+                      });
+                    });
+                    return { success: true, fileName: file.name };
+                  } catch (retryError) {
+                    // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+                    if (retryError.isQuotaLimitExceeded) {
+                      throw { isRateLimit: true, message: retryError.message, fileName: file.name };
+                    }
+                    throw retryError;
+                  }
+                } catch (error) {
+                  // Kiểm tra lỗi rate limit
+                  if (error.isRateLimit || 
+                      error.code === 429 || 
+                      (error.message && (
+                        error.message.includes("quota") || 
+                        error.message.includes("rate limit") ||
+                        error.message.includes("Rate Limit") ||
+                        error.message.includes("User rate limit")
+                      ))
+                     ) {
+                    throw { isRateLimit: true, message: error.message || "Rate limit exceeded", fileName: file.name };
+                  }
+                  return { success: false, fileName: file.name, error: error.message };
+                }
+              })
+            );
+            
+            // Kiểm tra nếu có lỗi rate limit trong batch
+            const hasRateLimitError = results.some(result => 
+              result.status === 'rejected' && result.reason && result.reason.isRateLimit
+            );
+            
+            if (hasRateLimitError) {
+              rateErrorCount++;
+              consecutiveRateErrors++;
+              this.totalRateLimitErrors++; // Tăng biến đếm toàn cục
+              
+              // Nếu đây là lỗi rate limit đầu tiên, ghi nhận thời điểm
+              if (this.totalRateLimitErrors === 1) {
+                this.rateLimitStartTime = new Date();
+              }
+              
+              console.log(`${indent}⚠️ Phát hiện lỗi giới hạn API khi xóa file, sẽ tạm dừng...`);
+              i -= DELETE_BATCH_SIZE; // Lùi lại để thử lại batch này
+              continue;
+            }
+            
+            // Xử lý kết quả
+            results.forEach(result => {
+              if (result.status === 'fulfilled') {
+                if (result.value.success) {
+                  deletedCount++;
+                  console.log(`${indent}✅ Đã xóa: ${result.value.fileName}`);
+                } else {
+                  errorCount++;
+                  console.log(`${indent}❌ Không thể xóa file "${result.value.fileName}": ${result.value.error}`);
+                }
+              } else if (!result.reason.isRateLimit) {
+                errorCount++;
+                console.log(`${indent}❌ Lỗi: ${result.reason}`);
+              }
+            });
+            
+            // Reset biến đếm lỗi rate limit nếu thành công
+            consecutiveRateErrors = 0;
+            rateErrorCount = 0;
+            
+            // Giảm delay giữa các batch xuống còn 500ms
+            if (i + DELETE_BATCH_SIZE < filesToDelete.length) {
+              await this.delay(500);
+            }
+          } catch (error) {
+            // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+            if (error.isQuotaLimitExceeded) {
+              console.log(`${indent}🚫 Đã vượt quá số lần thử lại tối đa khi gặp lỗi giới hạn API.`);
+              console.log(`${indent}💡 Khuyến nghị đợi ít nhất 1 giờ trước khi thử lại.`);
+              return; // Kết thúc phương thức
+            }
+            
+            console.log(`${indent}❌ Lỗi xử lý batch xóa: ${error.message}`);
+            
+            // Kiểm tra nếu lỗi là do rate limit
+            if (error.isRateLimit || 
+                error.code === 429 || 
+                (error.message && (
+                  error.message.includes("quota") || 
+                  error.message.includes("rate limit") ||
+                  error.message.includes("Rate Limit") ||
+                  error.message.includes("User rate limit")
+                ))) {
+              rateErrorCount++;
+              consecutiveRateErrors++;
+              this.totalRateLimitErrors++;
+              console.log(`${indent}⚠️ Lỗi giới hạn API khi xử lý batch. Thử lại sau.`);
+              i -= DELETE_BATCH_SIZE; // Lùi lại để thử lại
+            }
+            
+            await this.delay(1000);
+          }
+        }
+      } else {
+        console.log(`${indent}✓ Không tìm thấy file nào cần xóa`);
+      }
+
+      console.log(
+        `${indent}📊 Tổng kết: Đã xóa ${deletedCount} files, lỗi: ${errorCount}`
+      );
+
+      // Hiển thị cảnh báo nếu đã gặp nhiều lỗi rate limit
+      if (this.totalRateLimitErrors > 0) {
+        console.log(`${indent}⚠️ Thống kê: Đã gặp ${this.totalRateLimitErrors} lỗi giới hạn API trong phiên làm việc này.`);
+      }
+
+      // Xử lý thư mục con song song
+      if (folders.length > 0) {
+        // Nếu đã gặp quá nhiều lỗi rate limit, tạm dừng trước khi xử lý thư mục con
+        if (this.totalRateLimitErrors >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+          console.log(`${indent}⚠️ Đã phát hiện quá nhiều lỗi giới hạn API. Tạm dừng trước khi xử lý thư mục con...`);
+          await this.delay(this.LONG_PAUSE_TIME); // Tạm dừng 15 phút
+          this.totalRateLimitErrors = 0; // Reset biến đếm
+          this.rateLimitStartTime = null;
+        }
+        
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => 
+              this.removeSpecificFiles(folder.id, namesToRemove, depth + 1)
+            )
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500); // Giảm delay xuống 500ms
+          }
+        }
+      }
+    } catch (error) {
+      // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+      if (error.isQuotaLimitExceeded) {
+        console.log(`${indent}🚫 Đã vượt quá số lần thử lại tối đa khi gặp lỗi giới hạn API.`);
+        console.log(`${indent}💡 Khuyến nghị đợi ít nhất 1 giờ trước khi thử lại.`);
+        return;
+      }
+      
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
+
+  // Thêm lại phương thức sharePdfFiles để tùy chọn 9 hoạt động đúng
+  async sharePdfFiles(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để chia sẻ công khai file PDF...`);
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType, size)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      // Lọc các file PDF
+      const pdfFiles = files.filter(
+        (file) => file.mimeType === "application/pdf" || file.mimeType.includes("pdf")
+      );
+
+      console.log(`${indent}📄 Tìm thấy ${pdfFiles.length} file PDF để chia sẻ công khai`);
+
+      // Xử lý theo batch để tránh quá tải API - TĂNG KÍCH THƯỚC BATCH
+      const BATCH_SIZE = 10; // Tăng số file xử lý mỗi batch từ 5 lên 10
+      let sharedCount = 0;
+      let errorCount = 0;
+      let quotaErrorCount = 0;
+      let currentDelay = 500; // Giảm delay mặc định xuống 500ms
+
+      // Thêm biến để theo dõi số lỗi quota/rate limit liên tiếp
+      let consecutiveQuotaErrors = 0;
+      
+      // Kiểm tra nếu đã có nhiều lỗi rate limit trong phiên làm việc
+      if (this.totalRateLimitErrors >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+        console.log(`${indent}⚠️ Cảnh báo: Đã phát hiện ${this.totalRateLimitErrors} lỗi giới hạn API trong phiên làm việc.`);
+        
+        // Nếu có thời điểm bắt đầu, tính thời gian trôi qua
+        if (this.rateLimitStartTime) {
+          const elapsed = new Date() - this.rateLimitStartTime;
+          if (elapsed < 30 * 60 * 1000) { // Nếu chưa đến 30 phút
+            const waitTime = Math.min(this.LONG_PAUSE_TIME, 30 * 60 * 1000 - elapsed);
+            console.log(`${indent}⏳ Tạm dừng ${Math.ceil(waitTime/60000)} phút để đảm bảo quota đã được reset...`);
+            await this.delay(waitTime);
+          }
+        } else {
+          // Nếu không có thời điểm bắt đầu, tạm dừng mặc định
+          console.log(`${indent}⏳ Tạm dừng ${this.LONG_PAUSE_TIME/60000} phút để đảm bảo quota đã được reset...`);
+          await this.delay(this.LONG_PAUSE_TIME);
+        }
+        
+        // Reset biến đếm rate limit sau khi đã dừng đủ lâu
+        this.totalRateLimitErrors = 0;
+        this.rateLimitStartTime = null;
+      }
+
+      // Xử lý từng batch
+      for (let i = 0; i < pdfFiles.length; i += BATCH_SIZE) {
+        // Nếu gặp lỗi quota liên tục, tăng thời gian nghỉ theo cấp số nhân
+        if (quotaErrorCount > 0) {
+          const waitTime = this.QUOTA_RESET_TIME * Math.pow(2, quotaErrorCount - 1);
+          console.log(`${indent}⚠️ ĐÃ GẶP GIỚI HẠN API - Đang đợi ${waitTime / 1000}s để reset quota (lần ${quotaErrorCount})...`);
+          
+          // Nếu đã gặp quá nhiều lỗi liên tiếp, dừng xử lý hoàn toàn
+          if (quotaErrorCount >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+            console.log(`${indent}🛑 ĐÃ GẶP QUÁ NHIỀU LỖI GIỚI HẠN API LIÊN TIẾP. Dừng xử lý sau ${quotaErrorCount} lần thử lại không thành công.`);
+            console.log(`${indent}💡 Vui lòng đợi ít nhất 1 giờ trước khi thử lại để đảm bảo quota được reset hoàn toàn.`);
+            return; // Dừng xử lý và thoát khỏi phương thức
+          }
+          
+          await this.delay(waitTime);
+        }
+
+        const batch = pdfFiles.slice(i, i + BATCH_SIZE);
+        console.log(`${indent}🔄 Xử lý batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(pdfFiles.length / BATCH_SIZE)} (${batch.length} files)`);
+
+        try {
+          // Xử lý song song các file trong batch
+          const results = await Promise.allSettled(
+            batch.map(async (file) => {
+              try {
+                try {
+                  // Cập nhật quyền truy cập để cho phép tải xuống và ẩn người sở hữu
+                  await this.withRetry(async () => {
+                    await this.drive.files.update({
+                      fileId: file.id,
+                      requestBody: {
+                        writersCanShare: true,
+                        copyRequiresWriterPermission: false,
+                        viewersCanCopyContent: true,
+                        // Ẩn tên tác giả/chủ sở hữu khi có thể
+                        publishedOutsideDomain: true,
+                        publishAuto: true,
+                        hideOwner: true
+                      },
+                      supportsAllDrives: true,
+                    });
+                  });
+
+                  // Tạo quyền truy cập công khai nhưng ẩn chủ sở hữu
+                  await this.withRetry(async () => {
+                    await this.drive.permissions.create({
+                      fileId: file.id,
+                      requestBody: {
+                        role: "reader",
+                        type: "anyone",
+                        allowFileDiscovery: false,
+                        withLink: true
+                      },
+                      supportsAllDrives: true,
+                    });
+                  });
+
+                  // Lấy link chia sẻ
+                  const shareInfo = await this.withRetry(async () => {
+                    return this.drive.files.get({
+                      fileId: file.id,
+                      fields: "webViewLink,webContentLink",
+                      supportsAllDrives: true,
+                    });
+                  });
+
+                  return { 
+                    success: true, 
+                    fileName: file.name, 
+                    webViewLink: shareInfo.data.webViewLink,
+                    webContentLink: shareInfo.data.webContentLink
+                  };
+                } catch (retryError) {
+                  // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+                  if (retryError.isQuotaLimitExceeded) {
+                    throw { isQuotaError: true, message: retryError.message, fileName: file.name };
+                  }
+                  throw retryError;
+                }
+              } catch (error) {
+                if (error.isQuotaError || 
+                    error.code === 429 || 
+                    (error.message && (
+                      error.message.includes("quota") || 
+                      error.message.includes("rate limit") ||
+                      error.message.includes("Rate Limit") ||
+                      error.message.includes("User rate limit")
+                    ))
+                   ) {
+                  // Nếu lỗi quota, đánh dấu để tăng thời gian nghỉ sau
+                  throw { isQuotaError: true, message: error.message || "Rate limit exceeded", fileName: file.name };
+                }
+                return { success: false, fileName: file.name, error: error.message };
+              }
+            })
+          );
+          
+          // Xử lý kết quả và hiển thị thông tin
+          results.forEach(result => {
+            if (result.status === 'fulfilled') {
+              const data = result.value;
+              if (data.success) {
+                sharedCount++;
+                console.log(`${indent}✅ Đã chia sẻ công khai và ẩn chủ sở hữu: ${data.fileName}`);
+                console.log(`${indent}   🔗 Link xem: ${data.webViewLink}`);
+                if (data.webContentLink) {
+                  console.log(`${indent}   📥 Link tải: ${data.webContentLink}`);
+                }
+              } else {
+                errorCount++;
+                console.log(`${indent}❌ Không thể chia sẻ file "${data.fileName}": ${data.error}`);
+              }
+            } else if (result.reason && result.reason.isQuotaError) {
+              // Không tăng errorCount nếu lỗi quota vì sẽ thử lại
+              quotaErrorCount++;
+              consecutiveQuotaErrors++;
+              console.log(`${indent}⚠️ Lỗi quota cho file "${result.reason.fileName}": ${result.reason.message}`);
+            } else {
+              errorCount++;
+              console.log(`${indent}❌ Lỗi không xác định: ${result.reason}`);
+            }
+          });
+          
+          // Kiểm tra kết quả và đếm số lỗi quota
+          const hasQuotaError = results.some(result => 
+            result.status === 'rejected' && result.reason && result.reason.isQuotaError
+          );
+          
+          if (hasQuotaError) {
+            quotaErrorCount++;
+            consecutiveQuotaErrors++;
+            console.log(`${indent}⚠️ Phát hiện lỗi giới hạn API, sẽ tăng thời gian nghỉ...`);
+            
+            // Nếu đã gặp nhiều lỗi liên tiếp, tạm dừng xử lý lâu hơn
+            if (consecutiveQuotaErrors >= 3) {
+              const longPause = this.QUOTA_RESET_TIME * 4; // 4 lần thời gian nghỉ thông thường
+              console.log(`${indent}⚠️ Đã phát hiện ${consecutiveQuotaErrors} lỗi giới hạn liên tiếp. Tạm dừng ${longPause/1000}s...`);
+              await this.delay(longPause);
+            }
+            
+            // Giảm i để xử lý lại batch này sau khi đợi
+            i -= BATCH_SIZE;
+            continue;
+          } else {
+            // Reset consecutive counter nếu batch thành công
+            consecutiveQuotaErrors = 0;
+            // Reset quotaErrorCount nếu batch thành công
+            quotaErrorCount = 0;
+          }
+
+          // Delay giữa các batch để tránh quá tải API - giảm thời gian delay
+          if (i + BATCH_SIZE < pdfFiles.length) {
+            console.log(`${indent}⏱️ Nghỉ ${currentDelay / 1000}s trước khi xử lý batch tiếp theo...`);
+            await this.delay(currentDelay);
+            // Reset thời gian delay về mức bình thường
+            currentDelay = 500; // Giảm xuống 500ms
+          }
+        } catch (batchError) {
+          // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+          if (batchError.isQuotaLimitExceeded) {
+            console.log(`${indent}🚫 Đã vượt quá số lần thử lại tối đa khi gặp lỗi giới hạn API.`);
+            console.log(`${indent}💡 Khuyến nghị đợi ít nhất 1 giờ trước khi thử lại.`);
+            return; // Kết thúc phương thức
+          }
+          
+          // Xử lý lỗi batch
+          if (batchError.isQuotaError || 
+              batchError.code === 429 || 
+              (batchError.message && (
+                batchError.message.includes("quota") || 
+                batchError.message.includes("rate limit") ||
+                batchError.message.includes("Rate Limit") ||
+                batchError.message.includes("User rate limit")
+              ))) {
+            quotaErrorCount++;
+            consecutiveQuotaErrors++;
+            i -= BATCH_SIZE; // Lùi lại để xử lý lại batch này sau khi đợi
+            console.log(`${indent}⚠️ Batch gặp lỗi giới hạn API: ${batchError.message || 'Rate limit exceeded'}`);
+          } else {
+            errorCount += batch.length;
+            console.log(`${indent}❌ Lỗi xử lý batch: ${batchError.message}`);
+            // Tăng thời gian delay theo cấp số nhân
+            currentDelay = Math.min(currentDelay * 2, this.MAX_DELAY);
+          }
+          await this.delay(currentDelay);
+        }
+      }
+
+      console.log(
+        `${indent}📊 Tổng kết: Đã chia sẻ ${sharedCount}/${pdfFiles.length} file PDF, lỗi: ${errorCount}`
+      );
+
+      // Hiển thị cảnh báo nếu đã gặp nhiều lỗi rate limit
+      if (this.totalRateLimitErrors > 0) {
+        console.log(`${indent}⚠️ Thống kê: Đã gặp ${this.totalRateLimitErrors} lỗi giới hạn API trong phiên làm việc này.`);
+      }
+
+      // Xử lý thư mục con song song
+      if (folders.length > 0) {
+        // Nếu đã gặp quá nhiều lỗi rate limit, tạm dừng trước khi xử lý thư mục con
+        if (this.totalRateLimitErrors >= this.MAX_CONSECUTIVE_QUOTA_ERRORS) {
+          console.log(`${indent}⚠️ Đã phát hiện quá nhiều lỗi giới hạn API. Tạm dừng trước khi xử lý thư mục con...`);
+          await this.delay(this.LONG_PAUSE_TIME); // Tạm dừng 15 phút
+          this.totalRateLimitErrors = 0; // Reset biến đếm
+          this.rateLimitStartTime = null;
+        }
+        
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => 
+              this.sharePdfFiles(folder.id, depth + 1)
+            )
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500); // Giảm delay xuống 500ms
+          }
+        }
+      }
+    } catch (error) {
+      // Kiểm tra nếu lỗi do vượt quá số lần retry quota
+      if (error.isQuotaLimitExceeded) {
+        console.log(`${indent}🚫 Đã vượt quá số lần thử lại tối đa khi gặp lỗi giới hạn API.`);
+        console.log(`${indent}💡 Khuyến nghị đợi ít nhất 1 giờ trước khi thử lại.`);
+        return;
+      }
+      
       console.error(`${indent}❌ Lỗi:`, error.message);
     }
   }
@@ -1445,6 +2267,9 @@ if (require.main === module) {
       console.log("5. Làm sạch tên file");
       console.log("6. Tổ chức lại tài liệu khóa học");
       console.log("7. Loại bỏ file trùng tên");
+      console.log("8. Xóa file có tên cụ thể");
+      console.log("9. Chia sẻ công khai file PDF");
+      console.log("10. Dọn dẹp + Chia sẻ PDF (8+9)");
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -1452,7 +2277,7 @@ if (require.main === module) {
       });
 
       const mode = await new Promise((resolve) => {
-        rl.question("\nChọn chế độ (1-7): ", (answer) => {
+        rl.question("\nChọn chế độ (1-10): ", (answer) => {
           rl.close();
           resolve(answer.trim());
         });
@@ -1537,14 +2362,41 @@ if (require.main === module) {
         console.log("🔍 Bắt đầu loại bỏ file trùng tên...");
         await checker.removeDuplicateNames(sourceFolderId);
         console.log("✅ Hoàn thành loại bỏ file trùng tên!");
+      } else if (mode === "8") {
+        // Xử lý chức năng xóa file có tên cụ thể
+        const specificNames = [
+          "💬 Zalo hỗ trợ 033800642 _ Tài Liệu Ôn Thi Official.PNG",
+          "GIỚI THIỆU VỀ NHÓM _TÀI LIỆU ÔN THI_.png",
+          "LỢI ÍCH THAM GIA NHÓM _TÀI LIỆU ÔN THI_.png",
+          "Thông tin liên hệ Hỗ Trợ- TaiLieuOnThiOfficial.Com.docx"
+        ];
+        console.log("🗑️ Bắt đầu xóa file có tên cụ thể...");
+        console.log(`🔍 Sẽ xóa các file có tên: ${specificNames.join(', ')}`);
+        await checker.removeSpecificFiles(sourceFolderId, specificNames);
+        console.log("✅ Hoàn thành xóa file!");
+      } else if (mode === "9") {
+        console.log("🌐 Bắt đầu chia sẻ công khai file PDF...");
+        await checker.sharePdfFiles(sourceFolderId);
+        console.log("✅ Hoàn thành chia sẻ file PDF!");
+      } else if (mode === "10") {
+        // Xử lý chức năng kết hợp: xóa file cụ thể và chia sẻ PDF
+        const specificNames = [
+          "💬 Zalo hỗ trợ 033800642 _ Tài Liệu Ôn Thi Official.PNG",
+          "GIỚI THIỆU VỀ NHÓM _TÀI LIỆU ÔN THI_.png",
+          "LỢI ÍCH THAM GIA NHÓM _TÀI LIỆU ÔN THI_.png",
+          "Thông tin liên hệ Hỗ Trợ- TaiLieuOnThiOfficial.Com.docx"
+        ];
+        console.log("🧹 Bắt đầu dọn dẹp và chia sẻ file PDF...");
+        console.log(`🔍 Danh sách file cần xóa: ${specificNames.join(', ')}`);
+        await checker.cleanAndSharePdfs(sourceFolderId, specificNames);
+        console.log("✅ Hoàn thành dọn dẹp và chia sẻ file PDF!");
       } else {
-        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-7.");
+        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-10.");
       }
     } catch (error) {
       console.error("❌ Lỗi:", error.message);
     }
   }
 
-  // Chạy chương trình
   main();
 }

@@ -650,7 +650,8 @@ class DriveAPI {
                 targetFolderId: this.currentTargetFolderId,
               });
             } else if (
-              file.name.toLowerCase().match(/\.(mp4|mkv|avi|mov|m2ts|ts)$/)
+              // Chỉ kiểm tra MIME type để xác định video chính xác hơn
+              file.mimeType.includes("video/")
             ) {
               videoFiles.push({
                 id: file.id,
@@ -662,39 +663,40 @@ class DriveAPI {
                 targetFolderId: this.currentTargetFolderId,
                 depth: 0,
               });
-            } else if (
-              file.mimeType === "application/vnd.google-apps.document"
-            ) {
-              docsFiles.push({
-                id: file.id,
-                fileId: file.id,
-                name: file.name,
-                size: file.size,
-                mimeType: file.mimeType,
-                targetFolderId: this.currentTargetFolderId,
-              });
-            } else if (
-              file.mimeType ===
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ) {
-              docxFiles.push({
-                id: file.id,
-                fileId: file.id,
-                name: file.name,
-                size: file.size,
-                mimeType: file.mimeType,
-                targetFolderId: this.currentTargetFolderId,
-              });
-            } else {
-              otherFiles.push({
-                id: file.id,
-                fileId: file.id,
-                name: file.name,
-                size: file.size,
-                mimeType: file.mimeType,
-                targetFolderId: this.currentTargetFolderId,
-              });
             }
+            // } else if (
+            //   file.mimeType === "application/vnd.google-apps.document"
+            // ) {
+            //   docsFiles.push({
+            //     id: file.id,
+            //     fileId: file.id,
+            //     name: file.name,
+            //     size: file.size,
+            //     mimeType: file.mimeType,
+            //     targetFolderId: this.currentTargetFolderId,
+            //   });
+            // } else if (
+            //   file.mimeType ===
+            //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            // ) {
+            //   docxFiles.push({
+            //     id: file.id,
+            //     fileId: file.id,
+            //     name: file.name,
+            //     size: file.size,
+            //     mimeType: file.mimeType,
+            //     targetFolderId: this.currentTargetFolderId,
+            //   });
+            // } else {
+            //   otherFiles.push({
+            //     id: file.id,
+            //     fileId: file.id,
+            //     name: file.name,
+            //     size: file.size,
+            //     mimeType: file.mimeType,
+            //     targetFolderId: this.currentTargetFolderId,
+            //   });
+            // }
           }
 
           // Xử lý folders trước
@@ -1344,16 +1346,15 @@ class DriveAPI {
             }`
           );
 
-          // Kiểm tra chắc chắn đây là file video
-          const isVideo = file.name
-            .toLowerCase()
-            .match(/\.(mp4|mkv|avi|mov|m2ts|ts)$/);
+          // Chỉ kiểm tra dựa vào MIME type, không kiểm tra phần mở rộng
+          const isVideo = file.mimeType.includes("video/");
+                          
           if (!isVideo) {
-            console.log(`⚠️ Không phải file video: ${file.name}`);
+            console.log(`⚠️ Không phải file video: ${file.name} (${file.mimeType})`);
             return { success: false, file, error: "Không phải file video" };
           }
 
-          console.log(`\n📽️ Đang xử lý video: ${file.name}`);
+          console.log(`\n📽️ Đang xử lý video: ${file.name} (${file.mimeType})`);
 
           // Kiểm tra file đã tồn tại chưa
           const existingFile = await this.targetDrive.files.list({

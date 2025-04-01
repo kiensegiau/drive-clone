@@ -96,18 +96,25 @@ class ChromeManager {
           const profilePath = this.getProfilePath(0);
           console.log(`🌐 Khởi động Chrome với profile chính: ${profilePath}`);
 
-          // Thử kill tất cả các process Chrome đang chạy trước khi khởi động
+          // THAY ĐỔI: Không tự động kill tất cả các process Chrome đang chạy, chỉ xử lý profile hiện tại
           if (retries === 3) {
             try {
               console.log(
-                "🔄 Kill tất cả Chrome processes trước khi khởi động..."
+                "🔄 Chuẩn bị khởi động Chrome với profile hiện tại..."
               );
-              await this.killAllChromeProcesses();
-              // Đợi một khoảng thời gian để Chrome đóng hoàn toàn
-              await new Promise((resolve) => setTimeout(resolve, 3000));
-            } catch (killError) {
+              
+              // Chỉ xử lý file lock trong profile thay vì kill hết Chrome
+              const lockFile = path.join(profilePath, "SingletonLock");
+              if (fs.existsSync(lockFile)) {
+                console.log(`🔓 Xóa file lock trong profile: ${lockFile}`);
+                fs.unlinkSync(lockFile);
+              }
+              
+              // Đợi một khoảng thời gian ngắn
+              await new Promise((resolve) => setTimeout(resolve, 1000));
+            } catch (lockError) {
               console.log(
-                `⚠️ Không thể kill Chrome processes: ${killError.message}`
+                `⚠️ Không thể xóa file lock: ${lockError.message}`
               );
             }
           }
@@ -151,28 +158,33 @@ class ChromeManager {
             // Đảm bảo thư mục profile tồn tại
             ensureDirectoryExists(profilePath);
 
-            // Xóa file lock trong profile
-            const lockFile = path.join(profilePath, "SingletonLock");
-            if (fs.existsSync(lockFile)) {
-              console.log(`🔓 Xóa file lock trong profile: ${lockFile}`);
-              fs.unlinkSync(lockFile);
-            }
-
-            // Kiểm tra và làm sạch file Preferences
+            // Kiểm tra và cập nhật file Preferences mà không ghi đè hoàn toàn
             const preferenceFile = path.join(profilePath, "Preferences");
             if (fs.existsSync(preferenceFile)) {
-              console.log(`🔄 Tạo bản sao lưu của file Preferences...`);
               try {
-                fs.copyFileSync(preferenceFile, `${preferenceFile}.bak`);
-                console.log(`🔄 Đặt lại file Preferences...`);
-                const defaultPrefs = {
-                  profile: { exit_type: "Normal" },
-                  exit_type: "Normal",
-                };
-                fs.writeFileSync(preferenceFile, JSON.stringify(defaultPrefs));
+                // Chỉ cập nhật trường exit_type thay vì ghi đè toàn bộ file
+                console.log(`🔄 Đọc file Preferences hiện tại...`);
+                const prefContent = fs.readFileSync(preferenceFile, 'utf8');
+                let preferences = {};
+                try {
+                  preferences = JSON.parse(prefContent);
+                } catch (parseError) {
+                  console.log(`⚠️ File Preferences không hợp lệ, tạo file mới`);
+                  preferences = {};
+                }
+                
+                // Chỉ cập nhật trường exit_type
+                console.log(`🔄 Cập nhật trường exit_type...`);
+                if (!preferences.profile) preferences.profile = {};
+                preferences.profile.exit_type = "Normal";
+                preferences.exit_type = "Normal";
+                
+                // Lưu lại file với dữ liệu đã được cập nhật
+                fs.writeFileSync(preferenceFile, JSON.stringify(preferences));
+                console.log(`✅ Đã cập nhật file Preferences`);
               } catch (prefError) {
                 console.log(
-                  `⚠️ Không thể reset Preferences: ${prefError.message}`
+                  `⚠️ Không thể cập nhật Preferences: ${prefError.message}`
                 );
               }
             }
@@ -206,7 +218,6 @@ class ChromeManager {
               "--disable-infobars",
               "--disable-translate",
               "--allow-running-insecure-content",
-              "--disable-sync",
               "--password-store=basic",
             ],
             defaultViewport: null,
@@ -275,7 +286,7 @@ class ChromeManager {
             if (retries === 1) {
               try {
                 // Thử kill tất cả các process Chrome đang chạy
-                await this.killAllChromeProcesses();
+                await this.forceKillAllChrome(true);
                 console.log("🔄 Đã kill Chrome, đợi 3s trước khi thử lại...");
                 await new Promise((resolve) => setTimeout(resolve, 3000));
 
@@ -284,42 +295,42 @@ class ChromeManager {
                 const preferenceFile = path.join(profilePath, "Preferences");
 
                 if (fs.existsSync(preferenceFile)) {
-                  console.log(`🔄 Tạo bản sao lưu của file Preferences...`);
-                  fs.copyFileSync(preferenceFile, `${preferenceFile}.bak`);
-
-                  console.log(`🔄 Đặt lại file Preferences...`);
-                  const defaultPrefs = {
-                    profile: { exit_type: "Normal" },
-                    exit_type: "Normal",
-                  };
-                  fs.writeFileSync(
-                    preferenceFile,
-                    JSON.stringify(defaultPrefs)
-                  );
-                }
-
-                // Thử tạo profile mới hoàn toàn (lần thử cuối cùng)
-                if (retries === 1) {
+                  console.log(`🔄 Kiểm tra file Preferences...`);
                   try {
-                    const profilePath = this.getProfilePath(0);
-                    const backupPath = `${profilePath}_backup_${Date.now()}`;
-
-                    // Tạo bản sao lưu của profile cũ (nếu cần khôi phục)
-                    console.log(`🔄 Tạo bản sao lưu profile cũ: ${backupPath}`);
-                    if (fs.existsSync(profilePath)) {
-                      // Chỉ di chuyển thư mục, không xóa
-                      fs.renameSync(profilePath, backupPath);
+                    // Đọc file Preferences hiện tại
+                    const prefContent = fs.readFileSync(preferenceFile, 'utf8');
+                    let preferences = {};
+                    try {
+                      preferences = JSON.parse(prefContent);
+                    } catch (parseError) {
+                      console.log(`⚠️ File Preferences không hợp lệ, tạo file mới`);
+                      preferences = {};
                     }
-
-                    // Tạo profile mới hoàn toàn
-                    console.log(`🔄 Tạo profile mới: ${profilePath}`);
-                    ensureDirectoryExists(profilePath);
-                  } catch (profileError) {
+                    
+                    // Chỉ cập nhật trường exit_type, giữ nguyên các dữ liệu khác
+                    if (!preferences.profile) preferences.profile = {};
+                    preferences.profile.exit_type = "Normal";
+                    preferences.exit_type = "Normal";
+                    
+                    // Lưu lại file với dữ liệu đã được cập nhật
+                    fs.writeFileSync(preferenceFile, JSON.stringify(preferences));
+                    console.log(`✅ Đã cập nhật file Preferences`);
+                  } catch (prefError) {
                     console.log(
-                      `⚠️ Không thể tạo profile mới: ${profileError.message}`
+                      `⚠️ Không thể cập nhật Preferences: ${prefError.message}`
                     );
                   }
                 }
+
+                // Chỉ xóa file lock thay vì tạo profile mới
+                const lockFile = path.join(profilePath, "SingletonLock");
+                if (fs.existsSync(lockFile)) {
+                  console.log(`🔓 Xóa file lock trong profile: ${lockFile}`);
+                  fs.unlinkSync(lockFile);
+                }
+
+                // THAY ĐỔI: Không tạo profile mới nữa, chỉ làm sạch
+                console.log(`🔄 Chỉ làm sạch profile hiện tại thay vì tạo mới`);
               } catch (cleanupError) {
                 console.log(
                   `⚠️ Không thể làm sạch profile: ${cleanupError.message}`
@@ -386,7 +397,7 @@ class ChromeManager {
         executablePath: defaultChromePath,
         args: [
           "--start-maximized",
-          `--user-data-dir=${profilePath}`,
+          `--user-data-dir=${tempProfilePath}`,
           "--enable-extensions",
           "--remote-debugging-port=9222",
           "--no-sandbox",
@@ -403,7 +414,6 @@ class ChromeManager {
           "--disable-infobars",
           "--disable-translate",
           "--allow-running-insecure-content",
-          "--disable-sync",
           "--password-store=basic",
         ],
         ignoreDefaultArgs: ["--enable-automation"],
@@ -590,6 +600,19 @@ class ChromeManager {
 
   async killAllChrome() {
     try {
+      // Kiểm tra xem có instances đang hoạt động không
+      if (this.activeInstances.size > 0) {
+        console.log(
+          `⚠️ Có ${this.activeInstances.size} tab đang hoạt động, không kill Chrome`
+        );
+        console.log(
+          `ℹ️ Các profile đang hoạt động: ${Array.from(
+            this.activeInstances.keys()
+          ).join(", ")}`
+        );
+        return false; // Không kill Chrome nếu còn tab đang sử dụng
+      }
+
       if (process.platform === "win32") {
         await execAsync("taskkill /F /IM chrome.exe /T");
         console.log("✅ Đã kill tất cả Chrome process");
@@ -598,6 +621,7 @@ class ChromeManager {
       this.browser = null;
       this.pages.clear();
       this.activeInstances.clear();
+      return true; // Kill Chrome thành công
     } catch (error) {
       // Tắt thông báo lỗi khi không tìm thấy process Chrome
       // Kiểm tra cả tiếng Anh và tiếng Việt
@@ -608,11 +632,53 @@ class ChromeManager {
       ) {
         console.error("❌ Lỗi khi kill Chrome:", error.message);
       }
+      return false;
     }
   }
 
   async killAllChromeProcesses() {
     return this.killAllChrome();
+  }
+
+  // Sửa lại phương thức forceKillAllChrome để có tùy chọn không kill khi đang có người dùng
+  async forceKillAllChrome(forceKillEvenIfUserIsUsing = false) {
+    try {
+      // Kiểm tra xem có instances đang hoạt động không từ ứng dụng này
+      const hasActiveInstances = this.activeInstances.size > 0;
+      
+      // Nếu không bắt buộc và đang có người dùng Chrome, thì không kill
+      if (!forceKillEvenIfUserIsUsing) {
+        console.log("ℹ️ Bỏ qua việc kill Chrome để tránh ảnh hưởng đến người dùng");
+        // Chỉ xóa thông tin browser hiện tại nếu không còn kết nối
+        if (this.browser && !this.browser.isConnected()) {
+          this.browser = null;
+          this.pages.clear();
+          this.activeInstances.clear();
+        }
+        return false;
+      }
+      
+      if (process.platform === "win32") {
+        await execAsync("taskkill /F /IM chrome.exe /T");
+        console.log(
+          "🔥 Đã buộc kill tất cả Chrome process bất kể đang có tab sử dụng"
+        );
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+      this.browser = null;
+      this.pages.clear();
+      this.activeInstances.clear();
+      return true;
+    } catch (error) {
+      if (
+        !error.message.includes("không tìm thấy process") &&
+        !error.message.includes("not found") &&
+        !error.message.includes("ERROR: The process")
+      ) {
+        console.error("❌ Lỗi khi buộc kill Chrome:", error.message);
+      }
+      return false;
+    }
   }
 
   resetCurrentProfile() {

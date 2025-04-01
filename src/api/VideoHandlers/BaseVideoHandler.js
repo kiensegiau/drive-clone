@@ -74,7 +74,7 @@ class BaseVideoHandler {
 
   async killChrome() {
     try {
-      await this.chromeManager.killAll();
+      await this.chromeManager.killAllChrome();
     } catch (error) {
       console.error("❌ Lỗi đóng Chrome:", error.message);
     }
