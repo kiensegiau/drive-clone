@@ -488,38 +488,18 @@ class DriveAPI {
 
         await this.processFolder(sourceFolderId);
         
-        // Thêm phần xử lý xóa mục thừa sau khi đã xử lý xong folder
-        console.log(`\n🔍 Bạn có muốn kiểm tra và xóa các mục thừa trong thư mục đích không?`);
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout,
-        });
+        // Tự động đồng bộ xóa mà không cần hỏi
+        console.log(`\n🔄 Bắt đầu tự động kiểm tra và xóa các mục không còn trong nguồn...`);
+        const syncResult = await this.syncDeletedItems(sourceFolderId, this.currentTargetFolderId);
         
-        const syncConfirmation = await new Promise((resolve) => {
-          rl.question("\n⚠️ Kiểm tra và xóa các mục không còn tồn tại trong nguồn? (y/n): ", (answer) => {
-            resolve(answer.toLowerCase());
-          });
-        });
-        
-        rl.close();
-        
-        if (syncConfirmation === 'y' || syncConfirmation === 'yes') {
-          console.log(`\n🔄 Bắt đầu quá trình đồng bộ xóa...`);
-          const syncResult = await this.syncDeletedItems(sourceFolderId, this.currentTargetFolderId);
-          
-          if (syncResult.success) {
-            if (syncResult.totalDeleted > 0) {
-              console.log(`\n✅ Đã hoàn thành việc đồng bộ xóa: ${syncResult.totalDeleted} mục đã bị xóa`);
-            } else {
-              console.log(`\n✅ Không có mục nào cần xóa, cấu trúc thư mục đã đồng bộ`);
-            }
-          } else if (syncResult.cancelled) {
-            console.log(`\n❌ Người dùng đã hủy quá trình đồng bộ xóa`);
+        if (syncResult.success) {
+          if (syncResult.totalDeleted > 0) {
+            console.log(`\n✅ Đã hoàn thành việc đồng bộ xóa: ${syncResult.totalDeleted} mục đã bị xóa`);
           } else {
-            console.log(`\n❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
+            console.log(`\n✅ Không có mục nào cần xóa, cấu trúc thư mục đã đồng bộ`);
           }
         } else {
-          console.log(`\n⏩ Đã bỏ qua quá trình đồng bộ xóa`);
+          console.log(`\n❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
         }
       } catch (error) {
         if (error.message.includes("File not found")) {
@@ -1722,29 +1702,8 @@ class DriveAPI {
         console.log(`${index + 1}. ${icon} ${item.name}`);
       });
       
-      // Hỏi người dùng có muốn xóa không
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
-      
-      const confirmation = await new Promise(resolve => {
-        rl.question('\n⚠️ Bạn có muốn xóa các mục này không? (y/n): ', answer => {
-          resolve(answer.toLowerCase());
-        });
-      });
-      
-      if (confirmation !== 'y' && confirmation !== 'yes') {
-        console.log('\n❌ Đã hủy thao tác xóa.');
-        rl.close();
-        return {
-          success: false,
-          cancelled: true
-        };
-      }
-      
-      // Xác nhận đã nhận được, bắt đầu xóa
-      console.log('\n🗑️ Bắt đầu quá trình xóa...');
+      // Xóa trực tiếp không cần xác nhận
+      console.log('\n🗑️ Bắt đầu quá trình xóa tự động...');
       
       // Xử lý xóa files trước (đơn giản hơn)
       let filesDeleted = 0;
@@ -1824,8 +1783,6 @@ class DriveAPI {
           }
         }
       }
-      
-      rl.close();
       
       // Tổng kết kết quả
       console.log('\n📊 Kết quả đồng bộ hóa:');
