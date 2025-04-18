@@ -487,6 +487,40 @@ class DriveAPI {
         });
 
         await this.processFolder(sourceFolderId);
+        
+        // Thêm phần xử lý xóa mục thừa sau khi đã xử lý xong folder
+        console.log(`\n🔍 Bạn có muốn kiểm tra và xóa các mục thừa trong thư mục đích không?`);
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        
+        const syncConfirmation = await new Promise((resolve) => {
+          rl.question("\n⚠️ Kiểm tra và xóa các mục không còn tồn tại trong nguồn? (y/n): ", (answer) => {
+            resolve(answer.toLowerCase());
+          });
+        });
+        
+        rl.close();
+        
+        if (syncConfirmation === 'y' || syncConfirmation === 'yes') {
+          console.log(`\n🔄 Bắt đầu quá trình đồng bộ xóa...`);
+          const syncResult = await this.syncDeletedItems(sourceFolderId, this.currentTargetFolderId);
+          
+          if (syncResult.success) {
+            if (syncResult.totalDeleted > 0) {
+              console.log(`\n✅ Đã hoàn thành việc đồng bộ xóa: ${syncResult.totalDeleted} mục đã bị xóa`);
+            } else {
+              console.log(`\n✅ Không có mục nào cần xóa, cấu trúc thư mục đã đồng bộ`);
+            }
+          } else if (syncResult.cancelled) {
+            console.log(`\n❌ Người dùng đã hủy quá trình đồng bộ xóa`);
+          } else {
+            console.log(`\n❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
+          }
+        } else {
+          console.log(`\n⏩ Đã bỏ qua quá trình đồng bộ xóa`);
+        }
       } catch (error) {
         if (error.message.includes("File not found")) {
           console.error(`\n❌ Không thể truy cập folder. Vui lòng kiểm tra:`);
@@ -1616,6 +1650,271 @@ class DriveAPI {
     } catch (error) {
       console.error(`❌ Lỗi kiểm tra file ${fileName}:`, error.message);
       return null;
+    }
+  }
+
+  async syncDeletedItems(sourceFolderId, targetFolderId) {
+    try {
+      console.log('\n🔍 Bắt đầu quá trình đồng bộ hóa và xóa các mục không còn trong nguồn...');
+      
+      // Kiểm tra cả hai thư mục có tồn tại không
+      console.log(`\n📂 Kiểm tra thư mục nguồn: ${sourceFolderId}`);
+      const sourceFolder = await this.sourceDrive.files.get({
+        fileId: sourceFolderId,
+        fields: 'name',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      });
+      console.log(`✅ Đã tìm thấy thư mục nguồn: "${sourceFolder.data.name}"`);
+      
+      console.log(`\n📂 Kiểm tra thư mục đích: ${targetFolderId}`);
+      const targetFolder = await this.targetDrive.files.get({
+        fileId: targetFolderId,
+        fields: 'name',
+        supportsAllDrives: true,
+      });
+      console.log(`✅ Đã tìm thấy thư mục đích: "${targetFolder.data.name}"`);
+      
+      // Lấy cấu trúc thư mục từ nguồn và đích
+      console.log(`\n🔍 Đang lấy cấu trúc thư mục nguồn...`);
+      const sourceStructure = await this.getDirectoryStructure(sourceFolderId, this.sourceDrive);
+      console.log(`✅ Đã lấy được ${Object.keys(sourceStructure).length} mục từ thư mục nguồn`);
+      
+      console.log(`\n🔍 Đang lấy cấu trúc thư mục đích...`);
+      const targetStructure = await this.getDirectoryStructure(targetFolderId, this.targetDrive);
+      console.log(`✅ Đã lấy được ${Object.keys(targetStructure).length} mục từ thư mục đích`);
+      
+      // Tìm các mục ở đích mà không còn tồn tại ở nguồn
+      console.log(`\n📋 Đang phân tích các mục cần xóa...`);
+      const itemsToDelete = [];
+      
+      for (const [name, item] of Object.entries(targetStructure)) {
+        if (!sourceStructure[name]) {
+          itemsToDelete.push({
+            id: item.id,
+            name: name,
+            isFolder: item.mimeType === 'application/vnd.google-apps.folder',
+            mimeType: item.mimeType
+          });
+        }
+      }
+      
+      if (itemsToDelete.length === 0) {
+        console.log(`\n✅ Không có mục nào cần xóa. Cấu trúc thư mục đã đồng bộ.`);
+        return {
+          success: true,
+          itemsDeleted: 0
+        };
+      }
+      
+      // Chia danh sách xóa thành thư mục và file riêng biệt
+      const foldersToDelete = itemsToDelete.filter(item => item.isFolder);
+      const filesToDelete = itemsToDelete.filter(item => !item.isFolder);
+      
+      console.log(`\n⚠️ Đã tìm thấy ${itemsToDelete.length} mục cần xóa:`);
+      console.log(`  - ${foldersToDelete.length} thư mục`);
+      console.log(`  - ${filesToDelete.length} tệp tin`);
+      
+      // Hiển thị danh sách các mục cần xóa
+      console.log('\n📋 Danh sách mục cần xóa:');
+      itemsToDelete.forEach((item, index) => {
+        const icon = item.isFolder ? '📁' : '📄';
+        console.log(`${index + 1}. ${icon} ${item.name}`);
+      });
+      
+      // Hỏi người dùng có muốn xóa không
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+      });
+      
+      const confirmation = await new Promise(resolve => {
+        rl.question('\n⚠️ Bạn có muốn xóa các mục này không? (y/n): ', answer => {
+          resolve(answer.toLowerCase());
+        });
+      });
+      
+      if (confirmation !== 'y' && confirmation !== 'yes') {
+        console.log('\n❌ Đã hủy thao tác xóa.');
+        rl.close();
+        return {
+          success: false,
+          cancelled: true
+        };
+      }
+      
+      // Xác nhận đã nhận được, bắt đầu xóa
+      console.log('\n🗑️ Bắt đầu quá trình xóa...');
+      
+      // Xử lý xóa files trước (đơn giản hơn)
+      let filesDeleted = 0;
+      if (filesToDelete.length > 0) {
+        console.log(`\n🗑️ Đang xóa ${filesToDelete.length} tệp tin...`);
+        
+        for (const file of filesToDelete) {
+          try {
+            console.log(`🗑️ Đang xóa tệp: ${file.name}`);
+            
+            // Thử xóa hoàn toàn trước
+            try {
+              await this.targetDrive.files.delete({
+                fileId: file.id,
+                supportsAllDrives: true
+              });
+              console.log(`✅ Đã xóa tệp: ${file.name}`);
+            } catch (deleteError) {
+              // Nếu xóa hoàn toàn thất bại, thử đưa vào thùng rác
+              console.log(`⚠️ Không thể xóa hoàn toàn, thử đưa vào thùng rác: ${file.name}`);
+              await this.targetDrive.files.update({
+                fileId: file.id,
+                requestBody: { trashed: true },
+                supportsAllDrives: true
+              });
+              console.log(`✅ Đã đưa tệp vào thùng rác: ${file.name}`);
+            }
+            
+            filesDeleted++;
+          } catch (error) {
+            console.error(`❌ Lỗi khi xóa tệp "${file.name}":`, error.message);
+          }
+        }
+      }
+      
+      // Xử lý xóa folders (cần xóa từ trong ra ngoài)
+      let foldersDeleted = 0;
+      if (foldersToDelete.length > 0) {
+        console.log(`\n🗑️ Đang xóa ${foldersToDelete.length} thư mục...`);
+        
+        // Lấy độ sâu của thư mục để xóa từ trong ra ngoài
+        const foldersWithDepth = await Promise.all(
+          foldersToDelete.map(async folder => {
+            const depth = await this.getFolderDepth(folder.id, targetFolderId);
+            return { ...folder, depth };
+          })
+        );
+        
+        // Sắp xếp theo độ sâu giảm dần (để xóa từ trong ra ngoài)
+        const sortedFolders = foldersWithDepth.sort((a, b) => b.depth - a.depth);
+        
+        for (const folder of sortedFolders) {
+          try {
+            console.log(`🗑️ Đang xóa thư mục: ${folder.name} (độ sâu: ${folder.depth})`);
+            
+            // Thử xóa hoàn toàn trước
+            try {
+              await this.targetDrive.files.delete({
+                fileId: folder.id,
+                supportsAllDrives: true
+              });
+              console.log(`✅ Đã xóa thư mục: ${folder.name}`);
+            } catch (deleteError) {
+              // Nếu xóa hoàn toàn thất bại, thử đưa vào thùng rác
+              console.log(`⚠️ Không thể xóa hoàn toàn, thử đưa vào thùng rác: ${folder.name}`);
+              await this.targetDrive.files.update({
+                fileId: folder.id,
+                requestBody: { trashed: true },
+                supportsAllDrives: true
+              });
+              console.log(`✅ Đã đưa thư mục vào thùng rác: ${folder.name}`);
+            }
+            
+            foldersDeleted++;
+          } catch (error) {
+            console.error(`❌ Lỗi khi xóa thư mục "${folder.name}":`, error.message);
+          }
+        }
+      }
+      
+      rl.close();
+      
+      // Tổng kết kết quả
+      console.log('\n📊 Kết quả đồng bộ hóa:');
+      console.log(`✅ Đã xóa ${filesDeleted}/${filesToDelete.length} tệp tin`);
+      console.log(`✅ Đã xóa ${foldersDeleted}/${foldersToDelete.length} thư mục`);
+      
+      return {
+        success: true,
+        filesDeleted,
+        foldersDeleted,
+        totalDeleted: filesDeleted + foldersDeleted
+      };
+      
+    } catch (error) {
+      console.error(`❌ Lỗi trong quá trình đồng bộ xóa:`, error.message);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+  
+  async getDirectoryStructure(folderId, driveInstance) {
+    try {
+      const structure = {};
+      let pageToken;
+      
+      do {
+        const response = await driveInstance.files.list({
+          q: `'${folderId}' in parents and trashed=false`,
+          fields: 'nextPageToken, files(id, name, mimeType)',
+          pageToken: pageToken,
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+        
+        response.data.files.forEach(file => {
+          structure[file.name] = {
+            id: file.id,
+            mimeType: file.mimeType
+          };
+        });
+        
+        pageToken = response.data.nextPageToken;
+      } while (pageToken);
+      
+      return structure;
+    } catch (error) {
+      console.error(`❌ Lỗi khi lấy cấu trúc thư mục:`, error.message);
+      throw error;
+    }
+  }
+  
+  async getFolderDepth(folderId, rootFolderId) {
+    try {
+      let currentId = folderId;
+      let depth = 0;
+      let isRoot = false;
+      
+      while (!isRoot) {
+        const response = await this.targetDrive.files.get({
+          fileId: currentId,
+          fields: 'parents',
+          supportsAllDrives: true,
+        });
+        
+        if (!response.data.parents || response.data.parents.length === 0) {
+          break;
+        }
+        
+        currentId = response.data.parents[0];
+        depth++;
+        
+        if (currentId === rootFolderId) {
+          isRoot = true;
+        }
+        
+        // Giới hạn độ sâu để tránh vòng lặp vô hạn
+        if (depth > 20) {
+          console.warn(`⚠️ Đã đạt đến giới hạn độ sâu thư mục (20)`);
+          break;
+        }
+      }
+      
+      return depth;
+    } catch (error) {
+      console.error(`❌ Lỗi khi tính độ sâu thư mục:`, error.message);
+      return 0; // Trả về 0 nếu có lỗi
     }
   }
 }
