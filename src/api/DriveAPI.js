@@ -618,6 +618,7 @@ class DriveAPI {
       let pageToken;
       let hasErrors = false;
       const errors = [];
+      let currentTargetFolder = this.currentTargetFolderId;
 
       do {
         try {
@@ -1065,6 +1066,22 @@ class DriveAPI {
           pageToken = null;
         }
       } while (pageToken);
+
+      // Đồng bộ xóa các mục không còn tồn tại sau khi xử lý xong folder hiện tại
+      if (!this.downloadOnly) {
+        console.log(`\n🔄 Đồng bộ xóa các mục dư thừa trong folder hiện tại...`);
+        const syncResult = await this.syncDeletedItems(folderId, this.currentTargetFolderId);
+        
+        if (syncResult.success) {
+          if (syncResult.totalDeleted > 0) {
+            console.log(`✅ Đã xóa ${syncResult.totalDeleted} mục dư thừa trong folder hiện tại`);
+          } else {
+            console.log(`✅ Không có mục dư thừa cần xóa trong folder hiện tại`);
+          }
+        } else {
+          console.log(`❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
+        }
+      }
 
       // Log tổng hợp lỗi nếu có
       if (hasErrors) {
@@ -1702,7 +1719,7 @@ class DriveAPI {
         console.log(`${index + 1}. ${icon} ${item.name}`);
       });
       
-      // Xóa trực tiếp không cần xác nhận
+      // Xóa ngay lập tức không cần xác nhận
       console.log('\n🗑️ Bắt đầu quá trình xóa tự động...');
       
       // Xử lý xóa files trước (đơn giản hơn)
