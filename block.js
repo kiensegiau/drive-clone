@@ -233,6 +233,17 @@ class VideoQualityChecker {
   async copyFolder(sourceFolderId, destinationFolderId, depth = 0) {
     const indent = "  ".repeat(depth);
     try {
+      // Kiểm tra ID folder hợp lệ
+      if (!sourceFolderId || sourceFolderId === "." || sourceFolderId === "") {
+        console.error(`${indent}⚠️ ID folder nguồn không hợp lệ: "${sourceFolderId}"`);
+        return null;
+      }
+      
+      if (!destinationFolderId || destinationFolderId === "." || destinationFolderId === "") {
+        console.error(`${indent}⚠️ ID folder đích không hợp lệ: "${destinationFolderId}"`);
+        return null;
+      }
+      
       // Lấy thông tin folder nguồn
       let sourceFolder = await this.withRetry(async () => {
         return this.drive.files.get({
@@ -306,23 +317,69 @@ class VideoQualityChecker {
         destItems.map((item) => [item.name, item])
       );
 
-      // Xử lý từng item trong folder nguồn
-      for (const sourceItem of sourceItems) {
-        const existingItem = existingItemsMap.get(sourceItem.name);
-
-        if (sourceItem.mimeType === "application/vnd.google-apps.folder") {
-          // Nếu là folder, đệ quy vào trong
-          await this.copyFolder(sourceItem.id, targetFolderId, depth + 1);
-        } else {
-          // Nếu là file và chưa tồn tại, copy
-          if (!existingItem) {
-            await this.copyFile(sourceItem.id, targetFolderId, depth + 1);
-          } else {
-            console.log(
-              `${indent}⏩ File "${sourceItem.name}" đã tồn tại, bỏ qua`
-            );
+      // Tách files và folders
+      const folders = sourceItems.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+      
+      const files = sourceItems.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      
+      // Xử lý song song các files theo batch
+      const batchSize = 7; // Số lượng file xử lý đồng thời
+      let processedFiles = 0;
+      let skippedFiles = 0;
+      
+      console.log(`${indent}📄 Đang xử lý ${files.length} files...`);
+      
+      for (let i = 0; i < files.length; i += batchSize) {
+        const batch = files.slice(i, i + batchSize);
+        try {
+          console.log(
+            `${indent}🔄 Batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(
+              files.length / batchSize
+            )} (${batch.length} files)`
+          );
+          
+          // Xử lý song song các file trong batch
+          await Promise.all(
+            batch.map(async (file) => {
+              try {
+                const existingItem = existingItemsMap.get(file.name);
+                if (!existingItem) {
+                  await this.copyFile(file.id, targetFolderId, depth + 1);
+                  processedFiles++;
+                } else {
+                  console.log(
+                    `${indent}⏩ File "${file.name}" đã tồn tại, bỏ qua`
+                  );
+                  skippedFiles++;
+                }
+              } catch (error) {
+                console.error(`${indent}⚠️ Lỗi xử lý file ${file.name}:`, error.message);
+                skippedFiles++;
+              }
+            })
+          );
+          
+          // Delay nhỏ giữa các batch để tránh quá tải API
+          if (i + batchSize < files.length) {
+            await this.delay(300);
           }
+        } catch (error) {
+          console.error(`${indent}⚠️ Lỗi xử lý batch:`, error.message);
+          // Tiếp tục với batch tiếp theo
         }
+      }
+      
+      console.log(
+        `${indent}✅ Đã xử lý ${processedFiles} files, ${skippedFiles} files bỏ qua`
+      );
+      
+      // Xử lý đệ quy các folder
+      for (const folder of folders) {
+        await this.copyFolder(folder.id, targetFolderId, depth + 1);
         await this.delay(100);
       }
 
@@ -339,6 +396,17 @@ class VideoQualityChecker {
     let fileName = "";
 
     try {
+      // Kiểm tra ID file và folder đích có hợp lệ trước khi gọi API
+      if (!fileId || fileId === "." || fileId === "") {
+        console.error(`${indent}⚠️ ID file nguồn không hợp lệ: "${fileId}"`);
+        return null;
+      }
+      
+      if (!destinationFolderId || destinationFolderId === "." || destinationFolderId === "") {
+        console.error(`${indent}⚠️ ID folder đích không hợp lệ: "${destinationFolderId}"`);
+        return null;
+      }
+      
       const sourceFile = await this.withRetry(async () => {
         return this.drive.files.get({
           fileId: fileId,
@@ -374,10 +442,6 @@ class VideoQualityChecker {
       });
 
       console.log(`${indent}✅ Đã sao chép "${fileName}"`);
-
-      // Thêm bước khóa file sau khi copy
-      console.log(`${indent}🔒 Đang khóa quyền truy cập cho "${fileName}"`);
-      await this.lockFileAccess(copiedFile.data.id);
 
       return copiedFile.data;
     } catch (error) {
@@ -494,7 +558,7 @@ class VideoQualityChecker {
       );
 
       // Xử lý song song các files
-      const batchSize = 3;
+      const batchSize = 7;
       let processedFiles = 0;
       let skippedFiles = 0;
 
