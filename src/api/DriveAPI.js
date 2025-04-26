@@ -26,7 +26,8 @@ class DriveAPI {
     downloadOnly = false,
     maxConcurrent = 3,
     maxBackground = 10,
-    pauseDuration = 5
+    pauseDuration = 5,
+    enableSync = "ask"
   ) {
     const configPath = getConfigPath();
     const auth = require("../config/auth");
@@ -37,6 +38,7 @@ class DriveAPI {
     this.pauseDuration = pauseDuration;
     this.credentials = auth.credentials;
     this.SCOPES = auth.SCOPES;
+    this.enableSync = enableSync;
 
     // Khởi tạo OAuth clients
     this.sourceClient = new OAuth2Client(
@@ -353,9 +355,39 @@ class DriveAPI {
     }
   }
 
+  async askUserForSyncPermission() {
+    if (this.enableSync === true) {
+      return true;
+    } else if (this.enableSync === false) {
+      return false;
+    }
+    
+    // Nếu enableSync là "ask", hỏi người dùng
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    return new Promise((resolve) => {
+      rl.question('\n❓ Bạn có muốn bật tính năng đồng bộ xóa các mục không còn trong nguồn? (y/n): ', (answer) => {
+        rl.close();
+        const enableSync = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+        console.log(enableSync ? 
+          '✅ Đã bật tính năng đồng bộ xóa.' : 
+          '✅ Đã tắt tính năng đồng bộ xóa.');
+        resolve(enableSync);
+      });
+    });
+  }
+
   async start(sourceFolderId) {
     try {
       console.log(`\n🔍 Đang kiểm tra quyền truy cập folder...`);
+
+      // Hỏi người dùng có muốn bật tính năng đồng bộ xóa không ngay từ đầu
+      const shouldSync = await this.askUserForSyncPermission();
+      // Lưu lại kết quả để sử dụng sau này
+      this.enableSync = shouldSync;
 
       // Lấy thông tin folder nguồn
       const folderInfo = await this.sourceDrive.files.get({
@@ -488,18 +520,22 @@ class DriveAPI {
 
         await this.processFolder(sourceFolderId);
         
-        // Tự động đồng bộ xóa mà không cần hỏi
-        console.log(`\n🔄 Bắt đầu tự động kiểm tra và xóa các mục không còn trong nguồn...`);
-        const syncResult = await this.syncDeletedItems(sourceFolderId, this.currentTargetFolderId);
-        
-        if (syncResult.success) {
-          if (syncResult.totalDeleted > 0) {
-            console.log(`\n✅ Đã hoàn thành việc đồng bộ xóa: ${syncResult.totalDeleted} mục đã bị xóa`);
+        // Sử dụng giá trị đã hỏi từ đầu chương trình
+        if (this.enableSync) {
+          console.log(`\n🔄 Bắt đầu tự động kiểm tra và xóa các mục không còn trong nguồn...`);
+          const syncResult = await this.syncDeletedItems(sourceFolderId, this.currentTargetFolderId);
+          
+          if (syncResult.success) {
+            if (syncResult.totalDeleted > 0) {
+              console.log(`\n✅ Đã hoàn thành việc đồng bộ xóa: ${syncResult.totalDeleted} mục đã bị xóa`);
+            } else {
+              console.log(`\n✅ Không có mục nào cần xóa, cấu trúc thư mục đã đồng bộ`);
+            }
           } else {
-            console.log(`\n✅ Không có mục nào cần xóa, cấu trúc thư mục đã đồng bộ`);
+            console.log(`\n❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
           }
         } else {
-          console.log(`\n❌ Đồng bộ xóa thất bại: ${syncResult.error}`);
+          console.log(`\n🔄 Chức năng đồng bộ xóa đã bị tắt.`);
         }
       } catch (error) {
         if (error.message.includes("File not found")) {
@@ -1068,7 +1104,7 @@ class DriveAPI {
       } while (pageToken);
 
       // Đồng bộ xóa các mục không còn tồn tại sau khi xử lý xong folder hiện tại
-      if (!this.downloadOnly) {
+      if (!this.downloadOnly && this.enableSync === true) {
         console.log(`\n🔄 Đồng bộ xóa các mục dư thừa trong folder hiện tại...`);
         const syncResult = await this.syncDeletedItems(folderId, this.currentTargetFolderId);
         
