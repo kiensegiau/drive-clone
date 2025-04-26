@@ -1772,11 +1772,15 @@ class DriveAPI {
       console.log(`\n📋 Đang phân tích các mục cần xóa...`);
       const itemsToDelete = [];
       const suspiciousItems = []; // Các mục không chắc chắn, có thể giống nhau
+      const similarItems = []; // Các mục có tên khá tương đồng
       
       // Kiểm tra từng mục trong thư mục đích
       for (const [name, targetItem] of Object.entries(targetStructure)) {
         let existsInSource = false;
         let suspiciousMatch = false;
+        let similarMatch = false;
+        let bestSimilarity = 0;
+        let bestMatchName = '';
         
         // Kiểm tra xem mục này có tồn tại trong nguồn không (theo tên chuẩn hóa)
         if (sourceStructure[name]) {
@@ -1784,17 +1788,55 @@ class DriveAPI {
         } else {
           // Kiểm tra thêm các trường hợp đặc biệt nếu không tìm thấy tên chính xác
           
-          // Đối với folder, chỉ xem xét tên (đã chuẩn hóa)
+          // Đối với folder, kiểm tra tên tương tự hoặc bên trong các folder con
           if (targetItem.mimeType === 'application/vnd.google-apps.folder') {
-            // Đã kiểm tra bằng tên chuẩn hóa ở trên và không tìm thấy
-            existsInSource = false;
+            // Kiểm tra tên tương tự
+            for (const sourceName in sourceStructure) {
+              const sourceItem = sourceStructure[sourceName];
+              if (sourceItem.mimeType === 'application/vnd.google-apps.folder') {
+                // Tính toán độ tương đồng giữa tên folder
+                const similarity = this.calculateStringSimilarity(
+                  targetItem.originalName, 
+                  sourceItem.originalName
+                );
+                
+                // Cập nhật best match nếu tìm thấy độ tương đồng cao hơn
+                if (similarity > bestSimilarity) {
+                  bestSimilarity = similarity;
+                  bestMatchName = sourceItem.originalName;
+                }
+                
+                // Nếu tương đồng > 80%, coi như giống nhau
+                if (similarity > 0.8) {
+                  similarMatch = true;
+                  break;
+                }
+              }
+            }
           } else {
-            // Đối với file, kiểm tra thêm bằng kích thước và checksum
+            // Đối với file, kiểm tra thêm bằng kích thước, checksum và tên tương tự
             for (const sourceName in sourceStructure) {
               const sourceItem = sourceStructure[sourceName];
               
-              // Cùng loại file nhưng khác tên
+              // Cùng loại file
               if (sourceItem.mimeType === targetItem.mimeType) {
+                // Tính toán độ tương đồng giữa tên file
+                const similarity = this.calculateStringSimilarity(
+                  targetItem.originalName, 
+                  sourceItem.originalName
+                );
+                
+                // Cập nhật best match nếu tìm thấy độ tương đồng cao hơn
+                if (similarity > bestSimilarity) {
+                  bestSimilarity = similarity;
+                  bestMatchName = sourceItem.originalName;
+                }
+                
+                // Nếu tương đồng > 80%, coi như tương tự
+                if (similarity > 0.8) {
+                  similarMatch = true;
+                }
+                
                 // Nếu có md5Checksum, so sánh checksum
                 if (sourceItem.md5Checksum && targetItem.md5Checksum && 
                     sourceItem.md5Checksum === targetItem.md5Checksum) {
@@ -1803,18 +1845,21 @@ class DriveAPI {
                 }
                 
                 // Nếu không có checksum, so sánh kích thước (nếu cả hai đều có kích thước)
-                if (sourceItem.size && targetItem.size && 
-                    sourceItem.size === targetItem.size) {
-                  console.log(`🔍 File có kích thước giống nhau: "${targetItem.originalName}" ~ "${sourceItem.originalName}"`);
-                  
-                  if (this.syncOptions.strictComparison) {
-                    // Trong chế độ nghiêm ngặt, chỉ đánh dấu là đáng ngờ
+                if (sourceItem.size && targetItem.size) {
+                  if (sourceItem.size === targetItem.size) {
+                    console.log(`🔍 File có kích thước giống nhau: "${targetItem.originalName}" ~ "${sourceItem.originalName}"`);
                     suspiciousMatch = true;
                   } else {
-                    // Trong chế độ thông thường, coi như tồn tại
-                    existsInSource = true;
+                    // Kiểm tra kích thước tương đối (sai lệch < 1%)
+                    const sizeDiff = Math.abs(sourceItem.size - targetItem.size);
+                    const maxSize = Math.max(sourceItem.size, targetItem.size);
+                    const diffPercent = (sizeDiff / maxSize) * 100;
+                    
+                    if (diffPercent < 1) {
+                      console.log(`🔍 File có kích thước gần giống nhau (${diffPercent.toFixed(2)}%): "${targetItem.originalName}" ~ "${sourceItem.originalName}"`);
+                      suspiciousMatch = true;
+                    }
                   }
-                  break;
                 }
               }
             }
@@ -1822,24 +1867,40 @@ class DriveAPI {
         }
         
         // Xử lý dựa trên kết quả kiểm tra
-        if (suspiciousMatch) {
+        if (existsInSource) {
+          // Đã tồn tại trong nguồn, không cần xóa
+          continue;
+        } else if (similarMatch) {
+          similarItems.push({
+            id: targetItem.id,
+            name: targetItem.originalName,
+            isFolder: targetItem.mimeType === 'application/vnd.google-apps.folder',
+            mimeType: targetItem.mimeType,
+            bestMatchName: bestMatchName,
+            similarity: bestSimilarity.toFixed(2)
+          });
+        } else if (suspiciousMatch) {
           suspiciousItems.push({
             id: targetItem.id,
             name: targetItem.originalName,
             isFolder: targetItem.mimeType === 'application/vnd.google-apps.folder',
-            mimeType: targetItem.mimeType
+            mimeType: targetItem.mimeType,
+            bestMatchName: bestMatchName,
+            similarity: bestSimilarity.toFixed(2)
           });
-        } else if (!existsInSource) {
+        } else {
           itemsToDelete.push({
             id: targetItem.id,
             name: targetItem.originalName,
             isFolder: targetItem.mimeType === 'application/vnd.google-apps.folder',
-            mimeType: targetItem.mimeType
+            mimeType: targetItem.mimeType,
+            bestMatchName: bestMatchName,
+            similarity: bestSimilarity.toFixed(2)
           });
         }
       }
       
-      if (itemsToDelete.length === 0 && suspiciousItems.length === 0) {
+      if (itemsToDelete.length === 0 && suspiciousItems.length === 0 && similarItems.length === 0) {
         console.log(`\n✅ Không có mục nào cần xóa. Cấu trúc thư mục đã đồng bộ.`);
         return {
           success: true,
@@ -2052,7 +2113,7 @@ class DriveAPI {
       do {
         const response = await driveInstance.files.list({
           q: `'${folderId}' in parents and trashed=false`,
-          fields: 'nextPageToken, files(id, name, mimeType, size, md5Checksum)',
+          fields: 'nextPageToken, files(id, name, mimeType, size, md5Checksum, createdTime, modifiedTime)',
           pageToken: pageToken,
           pageSize: 1000,
           supportsAllDrives: true,
@@ -2069,7 +2130,10 @@ class DriveAPI {
             originalName: file.name,
             mimeType: file.mimeType,
             size: file.size,
-            md5Checksum: file.md5Checksum
+            md5Checksum: file.md5Checksum,
+            createdTime: file.createdTime,
+            modifiedTime: file.modifiedTime,
+            normalizedName
           };
         });
         
@@ -2100,7 +2164,59 @@ class DriveAPI {
       .replace(/[^\w\s]/g, '') // Loại bỏ ký tự đặc biệt
       .replace(/\s+/g, ''); // Loại bỏ khoảng trắng
     
+    // Loại bỏ các tiền tố và hậu tố phổ biến
+    normalized = normalized
+      .replace(/^(copy|ban_sao|sao_chep)_?(of)?_?/, '') // Loại bỏ "Copy of", "Bản sao của", etc.
+      .replace(/^(new|moi)_?/, '') // Loại bỏ "New", "Mới", etc.
+      .replace(/_?\(\d+\)$/, '') // Loại bỏ "(1)", "(2)", etc. ở cuối
+      .replace(/_?copy$/, '') // Loại bỏ "copy" ở cuối
+      .replace(/_?\d+$/, ''); // Loại bỏ "_1", "_2" ở cuối
+    
     return normalized;
+  }
+  
+  // Kiểm tra độ tương đồng của tên file
+  calculateStringSimilarity(s1, s2) {
+    if (!s1 || !s2) return 0;
+    
+    // Chuẩn hóa cả hai chuỗi trước khi tính toán
+    s1 = this.normalizeFileName(s1);
+    s2 = this.normalizeFileName(s2);
+    
+    if (s1 === s2) return 1; // Hoàn toàn giống nhau
+    
+    // Thuật toán Levenshtein distance để tính độ tương đồng
+    const len1 = s1.length;
+    const len2 = s2.length;
+    
+    // Nếu một trong hai chuỗi rỗng
+    if (len1 === 0) return 0;
+    if (len2 === 0) return 0;
+    
+    // Khởi tạo ma trận
+    let matrix = Array(len1 + 1).fill().map(() => Array(len2 + 1).fill(0));
+    
+    // Điền giá trị cho dòng và cột đầu tiên
+    for (let i = 0; i <= len1; i++) matrix[i][0] = i;
+    for (let j = 0; j <= len2; j++) matrix[0][j] = j;
+    
+    // Điền phần còn lại của ma trận
+    for (let i = 1; i <= len1; i++) {
+      for (let j = 1; j <= len2; j++) {
+        const cost = s1[i-1] === s2[j-1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i-1][j] + 1,       // Xóa
+          matrix[i][j-1] + 1,       // Thêm
+          matrix[i-1][j-1] + cost   // Thay thế
+        );
+      }
+    }
+    
+    // Tính toán độ tương đồng dựa trên khoảng cách Levenshtein
+    const maxLen = Math.max(len1, len2);
+    const similarity = 1 - (matrix[len1][len2] / maxLen);
+    
+    return similarity;
   }
   
   // Kiểm tra file thông qua nội dung thay vì chỉ qua tên
@@ -2108,30 +2224,73 @@ class DriveAPI {
     try {
       const sourceFile = await this.sourceDrive.files.get({
         fileId: sourceFileId,
-        fields: 'md5Checksum, size',
+        fields: 'md5Checksum, size, mimeType',
         supportsAllDrives: true,
       });
       
       const targetFile = await this.targetDrive.files.get({
         fileId: targetFileId,
-        fields: 'md5Checksum, size',
+        fields: 'md5Checksum, size, mimeType',
         supportsAllDrives: true,
       });
       
+      // Kiểm tra MIME type
+      if (sourceFile.data.mimeType !== targetFile.data.mimeType) {
+        return {
+          isSame: false,
+          reason: 'different_mimetype',
+          similarity: 0
+        };
+      }
+      
       // So sánh bằng checksum nếu có
       if (sourceFile.data.md5Checksum && targetFile.data.md5Checksum) {
-        return sourceFile.data.md5Checksum === targetFile.data.md5Checksum;
+        const isSame = sourceFile.data.md5Checksum === targetFile.data.md5Checksum;
+        return {
+          isSame,
+          reason: 'checksum',
+          similarity: isSame ? 1 : 0
+        };
       }
       
       // Nếu không có checksum, so sánh kích thước
       if (sourceFile.data.size && targetFile.data.size) {
-        return sourceFile.data.size === targetFile.data.size;
+        // Nếu kích thước chính xác giống nhau
+        if (sourceFile.data.size === targetFile.data.size) {
+          return {
+            isSame: true,
+            reason: 'exact_size_match',
+            similarity: 0.9 // Độ tương đồng cao nhưng không chắc chắn 100%
+          };
+        }
+        
+        // Nếu kích thước gần giống nhau (sai lệch < 1%)
+        const sizeDiff = Math.abs(sourceFile.data.size - targetFile.data.size);
+        const maxSize = Math.max(sourceFile.data.size, targetFile.data.size);
+        const diffPercent = (sizeDiff / maxSize) * 100;
+        
+        if (diffPercent < 1) {
+          return {
+            isSame: false,
+            reason: 'similar_size',
+            similarity: 0.8 // Khá giống nhau
+          };
+        }
       }
       
-      return false;
+      // Không đủ thông tin để so sánh
+      return {
+        isSame: false,
+        reason: 'insufficient_info',
+        similarity: 0
+      };
     } catch (error) {
       console.error('❌ Lỗi khi so sánh nội dung file:', error.message);
-      return false;
+      return {
+        isSame: false,
+        reason: 'error',
+        similarity: 0
+      };
     }
   }
   
