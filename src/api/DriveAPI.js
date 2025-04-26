@@ -27,7 +27,14 @@ class DriveAPI {
     maxConcurrent = 3,
     maxBackground = 10,
     pauseDuration = 5,
-    enableSync = "ask"
+    enableSync = "ask",
+    syncOptions = {
+      autoDelete: false,       // Tự động xóa không cần xác nhận
+      moveToTrash: true,       // Di chuyển vào thùng rác thay vì xóa vĩnh viễn
+      safetyThreshold: 30,     // Không xóa quá 30% số file trong thư mục
+      logDeletedItems: true,   // Ghi log các mục đã xóa
+      strictComparison: false  // Chỉ xóa khi hoàn toàn chắc chắn (so sánh nghiêm ngặt)
+    }
   ) {
     const configPath = getConfigPath();
     const auth = require("../config/auth");
@@ -39,6 +46,7 @@ class DriveAPI {
     this.credentials = auth.credentials;
     this.SCOPES = auth.SCOPES;
     this.enableSync = enableSync;
+    this.syncOptions = syncOptions;
 
     // Khởi tạo OAuth clients
     this.sourceClient = new OAuth2Client(
@@ -368,9 +376,8 @@ class DriveAPI {
       output: process.stdout,
     });
 
-    return new Promise((resolve) => {
+    const syncEnabled = await new Promise((resolve) => {
       rl.question('\n❓ Bạn có muốn bật tính năng đồng bộ xóa các mục không còn trong nguồn? (y/n): ', (answer) => {
-        rl.close();
         const enableSync = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
         console.log(enableSync ? 
           '✅ Đã bật tính năng đồng bộ xóa.' : 
@@ -378,6 +385,24 @@ class DriveAPI {
         resolve(enableSync);
       });
     });
+    
+    // Nếu người dùng đồng ý đồng bộ, hỏi thêm về chế độ tự động xóa
+    if (syncEnabled && !this.syncOptions.autoDelete) {
+      const autoDeleteEnabled = await new Promise((resolve) => {
+        rl.question('\n❓ Bạn có muốn tự động xóa mà không cần xác nhận? (y/n): ', (answer) => {
+          const autoDelete = answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes';
+          console.log(autoDelete ? 
+            '✅ Đã bật chế độ tự động xóa. Các mục sẽ tự động được xóa mà không cần xác nhận.' : 
+            '✅ Đã tắt chế độ tự động xóa. Sẽ yêu cầu xác nhận trước khi xóa.');
+          resolve(autoDelete);
+        });
+      });
+      
+      this.syncOptions.autoDelete = autoDeleteEnabled;
+    }
+    
+    rl.close();
+    return syncEnabled;
   }
 
   async start(sourceFolderId) {
@@ -1686,6 +1711,32 @@ class DriveAPI {
     }
   }
 
+  // Lưu lại log các mục đã xóa để tham khảo sau
+  logDeletedItem(item, success) {
+    const logDir = path.join(getConfigPath(), 'logs');
+    if (!fs.existsSync(logDir)) {
+      fs.mkdirSync(logDir, { recursive: true });
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    const logFile = path.join(logDir, `deleted_items_${today}.log`);
+    
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      item: {
+        id: item.id,
+        name: item.name,
+        type: item.isFolder ? 'folder' : 'file',
+        mimeType: item.mimeType
+      },
+      success,
+      sourceDrive: this.sourceEmail,
+      targetDrive: this.targetEmail
+    };
+    
+    fs.appendFileSync(logFile, JSON.stringify(logEntry) + '\n');
+  }
+
   async syncDeletedItems(sourceFolderId, targetFolderId) {
     try {
       console.log('\n🔍 Bắt đầu quá trình đồng bộ hóa và xóa các mục không còn trong nguồn...');
@@ -1720,24 +1771,111 @@ class DriveAPI {
       // Tìm các mục ở đích mà không còn tồn tại ở nguồn
       console.log(`\n📋 Đang phân tích các mục cần xóa...`);
       const itemsToDelete = [];
+      const suspiciousItems = []; // Các mục không chắc chắn, có thể giống nhau
       
-      for (const [name, item] of Object.entries(targetStructure)) {
-        if (!sourceStructure[name]) {
+      // Kiểm tra từng mục trong thư mục đích
+      for (const [name, targetItem] of Object.entries(targetStructure)) {
+        let existsInSource = false;
+        let suspiciousMatch = false;
+        
+        // Kiểm tra xem mục này có tồn tại trong nguồn không (theo tên chuẩn hóa)
+        if (sourceStructure[name]) {
+          existsInSource = true;
+        } else {
+          // Kiểm tra thêm các trường hợp đặc biệt nếu không tìm thấy tên chính xác
+          
+          // Đối với folder, chỉ xem xét tên (đã chuẩn hóa)
+          if (targetItem.mimeType === 'application/vnd.google-apps.folder') {
+            // Đã kiểm tra bằng tên chuẩn hóa ở trên và không tìm thấy
+            existsInSource = false;
+          } else {
+            // Đối với file, kiểm tra thêm bằng kích thước và checksum
+            for (const sourceName in sourceStructure) {
+              const sourceItem = sourceStructure[sourceName];
+              
+              // Cùng loại file nhưng khác tên
+              if (sourceItem.mimeType === targetItem.mimeType) {
+                // Nếu có md5Checksum, so sánh checksum
+                if (sourceItem.md5Checksum && targetItem.md5Checksum && 
+                    sourceItem.md5Checksum === targetItem.md5Checksum) {
+                  existsInSource = true;
+                  break;
+                }
+                
+                // Nếu không có checksum, so sánh kích thước (nếu cả hai đều có kích thước)
+                if (sourceItem.size && targetItem.size && 
+                    sourceItem.size === targetItem.size) {
+                  console.log(`🔍 File có kích thước giống nhau: "${targetItem.originalName}" ~ "${sourceItem.originalName}"`);
+                  
+                  if (this.syncOptions.strictComparison) {
+                    // Trong chế độ nghiêm ngặt, chỉ đánh dấu là đáng ngờ
+                    suspiciousMatch = true;
+                  } else {
+                    // Trong chế độ thông thường, coi như tồn tại
+                    existsInSource = true;
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Xử lý dựa trên kết quả kiểm tra
+        if (suspiciousMatch) {
+          suspiciousItems.push({
+            id: targetItem.id,
+            name: targetItem.originalName,
+            isFolder: targetItem.mimeType === 'application/vnd.google-apps.folder',
+            mimeType: targetItem.mimeType
+          });
+        } else if (!existsInSource) {
           itemsToDelete.push({
-            id: item.id,
-            name: name,
-            isFolder: item.mimeType === 'application/vnd.google-apps.folder',
-            mimeType: item.mimeType
+            id: targetItem.id,
+            name: targetItem.originalName,
+            isFolder: targetItem.mimeType === 'application/vnd.google-apps.folder',
+            mimeType: targetItem.mimeType
           });
         }
       }
       
-      if (itemsToDelete.length === 0) {
+      if (itemsToDelete.length === 0 && suspiciousItems.length === 0) {
         console.log(`\n✅ Không có mục nào cần xóa. Cấu trúc thư mục đã đồng bộ.`);
         return {
           success: true,
           itemsDeleted: 0
         };
+      }
+      
+      // Kiểm tra ngưỡng an toàn
+      const totalTargetItems = Object.keys(targetStructure).length;
+      const deletePercentage = (itemsToDelete.length / totalTargetItems) * 100;
+      
+      if (deletePercentage > this.syncOptions.safetyThreshold) {
+        console.log(`\n⚠️ CẢNH BÁO: Sẽ xóa ${deletePercentage.toFixed(2)}% số mục trong thư mục đích!`);
+        console.log(`Điều này vượt quá ngưỡng an toàn (${this.syncOptions.safetyThreshold}%).`);
+        
+        // Nếu vượt quá ngưỡng, luôn yêu cầu xác nhận, bất kể cài đặt autoDelete
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        
+        const proceedAnyway = await new Promise((resolve) => {
+          rl.question('\n❓ Bạn vẫn muốn tiếp tục không? (y/n): ', (answer) => {
+            rl.close();
+            resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+          });
+        });
+        
+        if (!proceedAnyway) {
+          console.log('\n❌ Đã hủy quá trình xóa do vượt quá ngưỡng an toàn.');
+          return {
+            success: true,
+            canceled: true,
+            totalDeleted: 0
+          };
+        }
       }
       
       // Chia danh sách xóa thành thư mục và file riêng biệt
@@ -1748,6 +1886,18 @@ class DriveAPI {
       console.log(`  - ${foldersToDelete.length} thư mục`);
       console.log(`  - ${filesToDelete.length} tệp tin`);
       
+      if (suspiciousItems.length > 0) {
+        console.log(`\n⚠️ Có ${suspiciousItems.length} mục khả nghi (có kích thước giống nhau):`);
+        const suspiciousFolders = suspiciousItems.filter(item => item.isFolder).length;
+        const suspiciousFiles = suspiciousItems.filter(item => !item.isFolder).length;
+        console.log(`  - ${suspiciousFolders} thư mục`);
+        console.log(`  - ${suspiciousFiles} tệp tin`);
+        
+        if (this.syncOptions.strictComparison) {
+          console.log(`❗ Các mục này sẽ được giữ lại do đang trong chế độ so sánh nghiêm ngặt.`);
+        }
+      }
+      
       // Hiển thị danh sách các mục cần xóa
       console.log('\n📋 Danh sách mục cần xóa:');
       itemsToDelete.forEach((item, index) => {
@@ -1755,8 +1905,35 @@ class DriveAPI {
         console.log(`${index + 1}. ${icon} ${item.name}`);
       });
       
-      // Xóa ngay lập tức không cần xác nhận
-      console.log('\n🗑️ Bắt đầu quá trình xóa tự động...');
+      // Xác nhận xóa nếu không bật chế độ tự động
+      let confirmDelete = this.syncOptions.autoDelete;
+      
+      if (!confirmDelete) {
+        const rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout,
+        });
+        
+        confirmDelete = await new Promise((resolve) => {
+          rl.question('\n❓ Bạn có chắc chắn muốn xóa các mục trên? (y/n): ', (answer) => {
+            rl.close();
+            resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes');
+          });
+        });
+      } else {
+        console.log('\n🔄 Chế độ tự động xóa đang được bật, tiến hành xóa...');
+      }
+      
+      if (!confirmDelete) {
+        console.log('\n❌ Đã hủy quá trình xóa theo yêu cầu của người dùng.');
+        return {
+          success: true,
+          canceled: true,
+          totalDeleted: 0
+        };
+      }
+      
+      console.log(`\n🗑️ Bắt đầu quá trình xóa...${this.syncOptions.moveToTrash ? ' (Di chuyển vào thùng rác)' : ' (Xóa vĩnh viễn)'}`);
       
       // Xử lý xóa files trước (đơn giản hơn)
       let filesDeleted = 0;
@@ -1767,27 +1944,36 @@ class DriveAPI {
           try {
             console.log(`🗑️ Đang xóa tệp: ${file.name}`);
             
-            // Thử xóa hoàn toàn trước
-            try {
-              await this.targetDrive.files.delete({
-                fileId: file.id,
-                supportsAllDrives: true
-              });
-              console.log(`✅ Đã xóa tệp: ${file.name}`);
-            } catch (deleteError) {
-              // Nếu xóa hoàn toàn thất bại, thử đưa vào thùng rác
-              console.log(`⚠️ Không thể xóa hoàn toàn, thử đưa vào thùng rác: ${file.name}`);
+            if (this.syncOptions.moveToTrash) {
+              // Di chuyển vào thùng rác
               await this.targetDrive.files.update({
                 fileId: file.id,
                 requestBody: { trashed: true },
                 supportsAllDrives: true
               });
               console.log(`✅ Đã đưa tệp vào thùng rác: ${file.name}`);
+            } else {
+              // Xóa vĩnh viễn
+              await this.targetDrive.files.delete({
+                fileId: file.id,
+                supportsAllDrives: true
+              });
+              console.log(`✅ Đã xóa vĩnh viễn tệp: ${file.name}`);
+            }
+            
+            // Ghi log nếu được cấu hình
+            if (this.syncOptions.logDeletedItems) {
+              this.logDeletedItem(file, true);
             }
             
             filesDeleted++;
           } catch (error) {
             console.error(`❌ Lỗi khi xóa tệp "${file.name}":`, error.message);
+            
+            // Ghi log lỗi
+            if (this.syncOptions.logDeletedItems) {
+              this.logDeletedItem(file, false);
+            }
           }
         }
       }
@@ -1866,7 +2052,7 @@ class DriveAPI {
       do {
         const response = await driveInstance.files.list({
           q: `'${folderId}' in parents and trashed=false`,
-          fields: 'nextPageToken, files(id, name, mimeType)',
+          fields: 'nextPageToken, files(id, name, mimeType, size, md5Checksum)',
           pageToken: pageToken,
           pageSize: 1000,
           supportsAllDrives: true,
@@ -1874,9 +2060,16 @@ class DriveAPI {
         });
         
         response.data.files.forEach(file => {
-          structure[file.name] = {
+          // Chuyển đổi tên file sang chữ thường và loại bỏ các ký tự đặc biệt để so sánh
+          const normalizedName = this.normalizeFileName(file.name);
+          
+          // Lưu trữ cả tên gốc và tên chuẩn hóa để dễ so sánh
+          structure[normalizedName] = {
             id: file.id,
-            mimeType: file.mimeType
+            originalName: file.name,
+            mimeType: file.mimeType,
+            size: file.size,
+            md5Checksum: file.md5Checksum
           };
         });
         
@@ -1887,6 +2080,58 @@ class DriveAPI {
     } catch (error) {
       console.error(`❌ Lỗi khi lấy cấu trúc thư mục:`, error.message);
       throw error;
+    }
+  }
+  
+  // Hàm chuẩn hóa tên file để so sánh chính xác hơn
+  normalizeFileName(fileName) {
+    if (!fileName) return '';
+    
+    // Chuyển đổi tên file sang chữ thường
+    let normalized = fileName.toLowerCase();
+    
+    // Loại bỏ phần mở rộng file (vì một số hệ thống có thể tự động thêm/thay đổi phần mở rộng)
+    normalized = normalized.replace(/\.[^/.]+$/, "");
+    
+    // Loại bỏ các ký tự đặc biệt, khoảng trắng và dấu
+    normalized = normalized
+      .normalize('NFD') // Chuẩn hóa Unicode
+      .replace(/[\u0300-\u036f]/g, '') // Loại bỏ dấu
+      .replace(/[^\w\s]/g, '') // Loại bỏ ký tự đặc biệt
+      .replace(/\s+/g, ''); // Loại bỏ khoảng trắng
+    
+    return normalized;
+  }
+  
+  // Kiểm tra file thông qua nội dung thay vì chỉ qua tên
+  async compareFileContent(sourceFileId, targetFileId) {
+    try {
+      const sourceFile = await this.sourceDrive.files.get({
+        fileId: sourceFileId,
+        fields: 'md5Checksum, size',
+        supportsAllDrives: true,
+      });
+      
+      const targetFile = await this.targetDrive.files.get({
+        fileId: targetFileId,
+        fields: 'md5Checksum, size',
+        supportsAllDrives: true,
+      });
+      
+      // So sánh bằng checksum nếu có
+      if (sourceFile.data.md5Checksum && targetFile.data.md5Checksum) {
+        return sourceFile.data.md5Checksum === targetFile.data.md5Checksum;
+      }
+      
+      // Nếu không có checksum, so sánh kích thước
+      if (sourceFile.data.size && targetFile.data.size) {
+        return sourceFile.data.size === targetFile.data.size;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('❌ Lỗi khi so sánh nội dung file:', error.message);
+      return false;
     }
   }
   
