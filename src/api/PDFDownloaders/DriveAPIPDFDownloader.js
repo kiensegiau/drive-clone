@@ -78,6 +78,91 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
+  // Lấy tổng số trang từ UI Drive viewer
+  async getTotalPagesFromViewer(page) {
+    try {
+      const total = await page.evaluate(() => {
+        try {
+          // Tìm theo aria-label dạng "Trang X / Y" (tiếng Việt)
+          const viNode = document.querySelector(
+            '.ndfHFb-c4YZDc-q77wGc .ndfHFb-c4YZDc-DARUcf-NnAfwf-i5oIFb'
+          );
+          if (viNode) {
+            const aria = viNode.getAttribute('aria-label') || '';
+            let m = aria.match(/Trang\s+\d+\s*\/\s*(\d+)/i);
+            if (m) return parseInt(m[1]);
+            const totalNode = viNode.querySelector(
+              '.ndfHFb-c4YZDc-DARUcf-NnAfwf-j4LONd'
+            );
+            if (totalNode) {
+              const t = (totalNode.textContent || '').trim();
+              const n = parseInt(t);
+              if (Number.isFinite(n)) return n;
+            }
+            const textAll = (viNode.textContent || '').trim();
+            m = textAll.match(/\b\d+\s*\/\s*(\d+)\b/);
+            if (m) return parseInt(m[1]);
+          }
+
+          // Tiếng Anh: "Page X of Y"
+          const enNode = document.querySelector('[aria-label*="of "]');
+          if (enNode) {
+            const text = enNode.getAttribute('aria-label') || enNode.textContent || '';
+            const m2 = text.match(/of\s+(\d+)/i);
+            if (m2) return parseInt(m2[1]);
+          }
+
+          // Rải rác các node dạng "X / Y"
+          const nodes = Array.from(document.querySelectorAll('*'))
+            .map(n => (n.textContent || '').trim())
+            .filter(Boolean);
+          for (const t of nodes) {
+            const m3 = t.match(/\b(\d+)\s*\/\s*(\d+)\b/);
+            if (m3) return parseInt(m3[2]);
+          }
+
+          // State nội bộ viewer
+          if (window.viewerData && window.viewerData.itemJson && window.viewerData.itemJson.embedItem) {
+            const pages = window.viewerData.itemJson.embedItem.totalPages || window.viewerData.itemJson.embedItem.pages;
+            if (pages) return parseInt(pages);
+          }
+        } catch (_) {}
+        return null;
+      });
+      return total && Number.isFinite(total) ? total : null;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  // Cố gắng nạp thêm các trang còn thiếu
+  async aggressiveLoadRemainingPages(page, pageRequests, expectedTotalPages) {
+    try {
+      // End tới cuối
+      for (let i = 0; i < 10 && pageRequests.size < expectedTotalPages; i++) {
+        try { await page.keyboard.press('End'); } catch {}
+        await new Promise(r => setTimeout(r, 600));
+      }
+      if (pageRequests.size >= expectedTotalPages) return;
+
+      // Home lên đầu, rồi scroll lại
+      for (let i = 0; i < 3 && pageRequests.size < expectedTotalPages; i++) {
+        try { await page.keyboard.press('Home'); } catch {}
+        await new Promise(r => setTimeout(r, 600));
+        await this.fastScroll(page, pageRequests);
+      }
+      if (pageRequests.size >= expectedTotalPages) return;
+
+      // PageDown liên tiếp
+      for (let i = 0; i < 50 && pageRequests.size < expectedTotalPages; i++) {
+        try { await page.keyboard.press('PageDown'); } catch {}
+        await new Promise(r => setTimeout(r, 250));
+      }
+    } catch (e) {
+      console.warn(`⚠️ aggressiveLoadRemainingPages lỗi: ${e.message}`);
+    }
+  }
+
   async initTempDir() {
     try {
       // Đảm bảo thư mục temp tồn tại
@@ -123,6 +208,70 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       // Đảm bảo thư mục tồn tại
       ensureDirectoryExists(outputDir);
+
+      // Thử tạo PDF bằng pdf-lib trước để có chất lượng cao hơn
+      try {
+        const sortedImages = downloadedImages
+          .filter(Boolean)
+          .sort((a, b) => {
+            try {
+              const pageA = parseInt(a.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
+              const pageB = parseInt(b.match(/_(\d+)\.(png|jpg|webp)$/)[1]);
+              return pageA - pageB;
+            } catch (e) {
+              return 0;
+            }
+          });
+
+        if (sortedImages.length === 0) {
+          throw new Error("Không có ảnh hợp lệ để tạo PDF");
+        }
+
+        const { PDFDocument } = await import('pdf-lib');
+        const pdfDoc = await PDFDocument.create();
+
+        for (const imagePath of sortedImages) {
+          try {
+            const lower = imagePath.toLowerCase();
+            let imageBytes;
+            let embedFn;
+
+            if (lower.endsWith('.png')) {
+              imageBytes = await fs.promises.readFile(imagePath);
+              embedFn = pdfDoc.embedPng.bind(pdfDoc);
+            } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+              imageBytes = await fs.promises.readFile(imagePath);
+              embedFn = pdfDoc.embedJpg.bind(pdfDoc);
+            } else {
+              // Chuyển tạm sang PNG chất lượng cao
+              const pngBuffer = await sharp(await fs.promises.readFile(imagePath))
+                .png({ quality: 100, compressionLevel: 0, adaptiveFiltering: true })
+                .toBuffer();
+              imageBytes = pngBuffer;
+              embedFn = pdfDoc.embedPng.bind(pdfDoc);
+            }
+
+            const embedded = await embedFn(imageBytes);
+            const page = pdfDoc.addPage([embedded.width, embedded.height]);
+            page.drawImage(embedded, { x: 0, y: 0, width: embedded.width, height: embedded.height });
+          } catch (pageErr) {
+            console.warn(`⚠️ Bỏ qua một trang do lỗi: ${pageErr.message}`);
+          }
+        }
+
+        const pdfBytes = await pdfDoc.save({ useObjectStreams: false, addDefaultPage: false });
+        await fs.promises.writeFile(safeOutputPath, pdfBytes);
+
+        // Kiểm tra file đã tạo
+        if (!fs.existsSync(safeOutputPath) || fs.statSync(safeOutputPath).size === 0) {
+          throw new Error('PDF được tạo bằng pdf-lib không hợp lệ');
+        }
+
+        console.log(`✅ Đã tạo PDF chất lượng cao bằng pdf-lib: ${path.basename(safeOutputPath)}`);
+        return safeOutputPath;
+      } catch (pdfLibError) {
+        console.warn(`⚠️ Không thể tạo bằng pdf-lib, fallback PDFKit: ${pdfLibError.message}`);
+      }
 
       const doc = new PDFDocument({
         autoFirstPage: false,
@@ -338,9 +487,28 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
+          // Nâng chất lượng ảnh bằng cách điều chỉnh tham số URL
+          let enhancedUrl = url;
+          try {
+            const u = new URL(url);
+            // Tăng độ rộng nếu có tham số w=
+            if (u.searchParams.has("w")) {
+              u.searchParams.set("w", "3200");
+            }
+            // Thử tăng chất lượng cho webp nếu có
+            if (!u.searchParams.has("quality")) {
+              u.searchParams.append("quality", "100");
+            } else {
+              u.searchParams.set("quality", "100");
+            }
+            enhancedUrl = u.toString();
+          } catch (_) {
+            // Nếu URL không hợp lệ, giữ nguyên
+          }
+
           const response = await axios({
             method: "get",
-            url: url,
+            url: enhancedUrl,
             responseType: "arraybuffer",
             timeout: 10000,
             headers: {
@@ -587,6 +755,44 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       await this.fastScroll(page, pageRequests);
       console.log(`✅ Đã scroll xong`);
       console.log(`📊 Số trang đã phát hiện: ${pageRequests.size}`);
+
+      // Đọc tổng số trang từ UI để kiểm soát số lượng trang kỳ vọng
+      try {
+        const expectedTotalPages = await this.getTotalPagesFromViewer(page);
+        if (expectedTotalPages && expectedTotalPages > 0) {
+          console.log(`📘 Tổng số trang dự kiến từ UI: ${expectedTotalPages}`);
+
+          if (pageRequests.size < expectedTotalPages) {
+            console.log(
+              `🔁 Thiếu trang (${pageRequests.size}/${expectedTotalPages}), thử tải bổ sung...`
+            );
+            // Thử bổ sung mạnh tay với vài lần retry
+            const MAX_PAGE_FILL_RETRIES = 2;
+            for (let attempt = 0; attempt < MAX_PAGE_FILL_RETRIES && pageRequests.size < expectedTotalPages; attempt++) {
+              await this.aggressiveLoadRemainingPages(
+                page,
+                pageRequests,
+                expectedTotalPages
+              );
+              console.log(
+                `📊 Sau bổ sung lần ${attempt + 1}: ${pageRequests.size}/${expectedTotalPages} trang`
+              );
+              if (pageRequests.size >= expectedTotalPages) break;
+              // Đợi ngắn giữa các lần để viewer kịp nạp
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          }
+
+          if (pageRequests.size < expectedTotalPages) {
+            // Bắt buộc đủ số trang: ném lỗi để lớp gọi có thể retry/đổi chiến lược
+            throw new Error(
+              `MISSING_PAGES_COLLECT:${pageRequests.size}/${expectedTotalPages}`
+            );
+          }
+        }
+      } catch (uiErr) {
+        console.warn(`⚠️ Không thể đọc tổng số trang từ UI: ${uiErr.message}`);
+      }
 
       // Lấy cookies và userAgent trước khi đóng page
       const cookies = await page.cookies();
