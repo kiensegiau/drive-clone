@@ -190,6 +190,21 @@ class DriveAPI {
   invalidateFolderFilesIndex(folderId) {
     if (folderId && this.folderFilesIndex.has(folderId)) {
       this.folderFilesIndex.delete(folderId);
+      console.log(`🔄 Đã làm mới cache cho folder: ${folderId}`);
+    }
+  }
+
+  // Làm mới cache folder khi có thay đổi
+  invalidateFolderCache(parentId, folderName) {
+    const sanitizedName = folderName
+      .replace(/[\\/:"*?<>|]/g, "_")
+      .replace(/\s+/g, " ")
+      .trim();
+    const cacheKey = `${parentId || 'root'}|${sanitizedName}`;
+    
+    if (this.folderCache.has(cacheKey)) {
+      this.folderCache.delete(cacheKey);
+      console.log(`🔄 Đã làm mới cache folder: "${folderName}"`);
     }
   }
 
@@ -699,16 +714,30 @@ class DriveAPI {
         return cached;
       }
 
-      // Tìm folder hiện có
+      // Tìm folder hiện có với retry để tránh race condition
       const query = `mimeType='application/vnd.google-apps.folder' and name='${escapedName}'${
         parentId ? ` and '${parentId}' in parents` : ""
       } and trashed=false`;
 
-      const response = await this.targetDrive.files.list({
-        q: query,
-        fields: "files(id, name)",
-        supportsAllDrives: true,
-      });
+      let response;
+      let retryCount = 0;
+      const MAX_RETRIES = 3;
+
+      while (retryCount < MAX_RETRIES) {
+        try {
+          response = await this.targetDrive.files.list({
+            q: query,
+            fields: "files(id, name)",
+            supportsAllDrives: true,
+          });
+          break;
+        } catch (error) {
+          retryCount++;
+          if (retryCount >= MAX_RETRIES) throw error;
+          console.log(`⚠️ Lỗi tìm folder, thử lại lần ${retryCount}/${MAX_RETRIES}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
+      }
 
       if (response.data.files.length > 0) {
         const folder = response.data.files[0];
@@ -717,7 +746,7 @@ class DriveAPI {
         return folder;
       }
 
-      // Tạo folder mới nếu chưa có
+      // Tạo folder mới với kiểm tra lại để tránh duplicate
       console.log(`📁 Tạo folder mới: "${sanitizedName}"`);
       const fileMetadata = {
         name: sanitizedName, // Sử dụng tên đã sanitize
@@ -738,6 +767,25 @@ class DriveAPI {
         this.folderCache.set(cacheKey, folder.data);
         return folder.data;
       } catch (createError) {
+        // Nếu lỗi do folder đã tồn tại (race condition), thử tìm lại
+        if (createError.message.includes("duplicate") || createError.message.includes("already exists")) {
+          console.log(`⚠️ Folder có thể đã được tạo bởi process khác, thử tìm lại...`);
+          
+          // Tìm lại folder sau khi tạo
+          const retryResponse = await this.targetDrive.files.list({
+            q: query,
+            fields: "files(id, name)",
+            supportsAllDrives: true,
+          });
+
+          if (retryResponse.data.files.length > 0) {
+            const existingFolder = retryResponse.data.files[0];
+            console.log(`📂 Đã tìm thấy folder sau retry: "${existingFolder.name}" (${existingFolder.id})`);
+            this.folderCache.set(cacheKey, existingFolder);
+            return existingFolder;
+          }
+        }
+
         // Nếu lỗi tạo folder, thử tạo với tên an toàn hơn
         const safeNameForCreate = sanitizedName
           .replace(/[^a-zA-Z0-9\s-_]/g, "") // Chỉ giữ lại chữ, số, khoảng trắng, - và _
@@ -871,6 +919,10 @@ class DriveAPI {
             try {
               if (!this.downloadOnly) {
                 console.log(`\n📁 Tạo/tìm folder: "${folder.name}"`);
+                
+                // Invalidate cache trước khi tạo folder để tránh stale data
+                this.invalidateFolderCache(this.currentTargetFolderId, folder.name);
+                
                 const targetFolder = await this.findOrCreateFolder(
                   folder.name,
                   this.currentTargetFolderId
@@ -879,6 +931,10 @@ class DriveAPI {
 
                 const previousFolderId = this.currentTargetFolderId;
                 this.currentTargetFolderId = targetFolder.id;
+                
+                // Invalidate cache của folder con trước khi xử lý
+                this.invalidateFolderFilesIndex(targetFolder.id);
+                
                 await this.processFolder(folder.id);
                 this.currentTargetFolderId = previousFolderId;
               }
@@ -924,6 +980,9 @@ class DriveAPI {
                   );
                   console.log(`   📝 Sử dụng tên: "${folderNameToUse}"`);
 
+                  // Invalidate cache trước khi tạo folder shortcut
+                  this.invalidateFolderCache(this.currentTargetFolderId, folderNameToUse);
+                  
                   // Tạo folder mới với tên của lối tắt
                   const targetFolder = await this.findOrCreateFolder(
                     folderNameToUse,
@@ -936,6 +995,10 @@ class DriveAPI {
                   // Xử lý nội dung của folder đích
                   const previousFolderId = this.currentTargetFolderId;
                   this.currentTargetFolderId = targetFolder.id;
+                  
+                  // Invalidate cache của folder shortcut trước khi xử lý
+                  this.invalidateFolderFilesIndex(targetFolder.id);
+                  
                   await this.processFolder(shortcutFolder.id);
                   this.currentTargetFolderId = previousFolderId;
                 } catch (shortcutTargetError) {
@@ -1768,6 +1831,44 @@ class DriveAPI {
         const sizeMb = existingFile.size ? (existingFile.size / (1024 * 1024)).toFixed(2) : 'unknown';
         console.log(`📁 Đã tồn tại - Size: ${sizeMb} MB`);
         return { success: true, skipped: true, uploadedFile: existingFile };
+      }
+
+      // Nếu không tìm thấy trong cache, thử tìm trực tiếp với retry
+      console.log(`🔄 Không tìm thấy trong cache, tìm trực tiếp...`);
+      let retryCount = 0;
+      const MAX_RETRIES = 2;
+
+      while (retryCount < MAX_RETRIES) {
+        try {
+          const query = `name='${fileName.replace(/'/g, "\\'")}' and '${folderId}' in parents and trashed=false`;
+          const response = await this.targetDrive.files.list({
+            q: query,
+            fields: "files(id, name, size, mimeType)",
+            pageSize: 1,
+            supportsAllDrives: true,
+            spaces: 'drive'
+          });
+
+          if (response.data.files && response.data.files.length > 0) {
+            const file = response.data.files[0];
+            const sizeMb = file.size ? (file.size / (1024 * 1024)).toFixed(2) : 'unknown';
+            console.log(`📁 Tìm thấy trực tiếp - Size: ${sizeMb} MB`);
+            
+            // Cập nhật cache để lần sau không cần tìm lại
+            this.updateFolderFilesIndexAdd(folderId, file);
+            
+            return { success: true, skipped: true, uploadedFile: file };
+          }
+          break;
+        } catch (error) {
+          retryCount++;
+          if (retryCount >= MAX_RETRIES) {
+            console.warn(`⚠️ Không thể kiểm tra file sau ${MAX_RETRIES} lần thử: ${error.message}`);
+            return null;
+          }
+          console.log(`⚠️ Lỗi kiểm tra file, thử lại lần ${retryCount}/${MAX_RETRIES}...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
       }
 
       console.log(`🆕 File chưa tồn tại, cần tải mới`);
