@@ -29,11 +29,19 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       throw error;
     }
 
-    // Cấu hình tương tự như video
-    this.MAX_CONCURRENT = 2; // Giảm xuống 2 để tránh quá tải Chrome
-    this.MAX_RETRIES = 3;
-    this.RETRY_DELAY = 5000;
-    this.BATCH_SIZE = 10; // Số lượng files để xử lý trong một batch
+    // Cấu hình tối ưu cho PDF
+    this.MAX_CONCURRENT = 3; // Tăng lên 3 để xử lý nhanh hơn
+    this.MAX_RETRIES = 2; // Giảm retry để tránh chậm
+    this.RETRY_DELAY = 3000; // Giảm delay
+    this.BATCH_SIZE = 15; // Tăng batch size
+    
+    // Cấu hình tối ưu cho Chrome
+    this.CHROME_LAUNCH_TIMEOUT = 60000; // 1 phút
+    this.PAGE_NAVIGATION_TIMEOUT = 60000; // 1 phút
+    this.IMAGE_DOWNLOAD_TIMEOUT = 15000; // 15 giây
+    this.SCROLL_INTERVAL = 100; // Giảm interval scroll
+    this.MAX_SCROLL_ATTEMPTS = 50; // Giảm số lần scroll
+    this.CONCURRENT_IMAGE_DOWNLOADS = 8; // Tăng số download song song
 
     this.pageRequests = new Map();
     this.cookies = null;
@@ -44,8 +52,13 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
     // Thêm biến đếm số file đang xử lý để tránh quá tải
     this.processingPDFs = 0;
-    this.MAX_PARALLEL_PDFS = 3;
+    this.MAX_PARALLEL_PDFS = 4; // Tăng số PDF song song
     this.pendingPDFs = [];
+    
+    // Cache để tránh tải lại
+    this.pageCache = new Map();
+    this.cookieCache = new Map();
+    this.userAgentCache = null;
 
     // Sử dụng một ChromeManager instance cho PDF
     this.chromeManager = ChromeManager.getInstance("pdf");
@@ -78,7 +91,27 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
-  // Lấy tổng số trang từ UI Drive viewer
+  // Thêm phương thức cache cookies và userAgent
+  async getCachedAuth(page) {
+    const cacheKey = 'auth_data';
+    
+    if (this.cookieCache.has(cacheKey) && this.userAgentCache) {
+      console.log(`📋 Sử dụng cache auth data`);
+      return {
+        cookies: this.cookieCache.get(cacheKey),
+        userAgent: this.userAgentCache
+      };
+    }
+    
+    const cookies = await page.cookies();
+    const userAgent = await page.evaluate(() => navigator.userAgent);
+    
+    // Cache cho lần sau
+    this.cookieCache.set(cacheKey, cookies);
+    this.userAgentCache = userAgent;
+    
+    return { cookies, userAgent };
+  }
   async getTotalPagesFromViewer(page) {
     try {
       const total = await page.evaluate(() => {
@@ -135,28 +168,26 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
-  // Cố gắng nạp thêm các trang còn thiếu
+  // Tối ưu phương thức aggressiveLoadRemainingPages
   async aggressiveLoadRemainingPages(page, pageRequests, expectedTotalPages) {
     try {
-      // End tới cuối
-      for (let i = 0; i < 10 && pageRequests.size < expectedTotalPages; i++) {
-        try { await page.keyboard.press('End'); } catch {}
-        await new Promise(r => setTimeout(r, 600));
-      }
+      // 1) Cuộn siêu nhanh qua lại dưới - trên
+      await this.superScroll(page, { cycles: 3, endBurst: 20, homeBurst: 8, delayMs: 20 });
       if (pageRequests.size >= expectedTotalPages) return;
 
-      // Home lên đầu, rồi scroll lại
-      for (let i = 0; i < 3 && pageRequests.size < expectedTotalPages; i++) {
-        try { await page.keyboard.press('Home'); } catch {}
-        await new Promise(r => setTimeout(r, 600));
-        await this.fastScroll(page, pageRequests);
-      }
+      // 2) Nhảy theo phần trăm chiều cao container
+      const jumpPercents = [5, 15, 25, 35, 50, 65, 75, 85, 92, 96, 98, 99];
+      await this.jumpScroll(page, jumpPercents);
       if (pageRequests.size >= expectedTotalPages) return;
 
-      // PageDown liên tiếp
-      for (let i = 0; i < 50 && pageRequests.size < expectedTotalPages; i++) {
+      // 3) Auto-scroll dày hơn
+      await this.autoScroll(page, { step: 1800, delayMs: 30, maxSteps: 600 });
+      if (pageRequests.size >= expectedTotalPages) return;
+
+      // 4) Lặp lại burst PageDown ngắn
+      for (let i = 0; i < 60 && pageRequests.size < expectedTotalPages; i++) {
         try { await page.keyboard.press('PageDown'); } catch {}
-        await new Promise(r => setTimeout(r, 250));
+        await new Promise(r => setTimeout(r, 60));
       }
     } catch (e) {
       console.warn(`⚠️ aggressiveLoadRemainingPages lỗi: ${e.message}`);
@@ -230,33 +261,39 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         const { PDFDocument } = await import('pdf-lib');
         const pdfDoc = await PDFDocument.create();
 
-        for (const imagePath of sortedImages) {
-          try {
-            const lower = imagePath.toLowerCase();
-            let imageBytes;
-            let embedFn;
+        // Xử lý song song các ảnh
+        const CONCURRENT_PAGES = 4;
+        for (let i = 0; i < sortedImages.length; i += CONCURRENT_PAGES) {
+          const batch = sortedImages.slice(i, i + CONCURRENT_PAGES);
+          
+          await Promise.all(batch.map(async (imagePath) => {
+            try {
+              const lower = imagePath.toLowerCase();
+              let imageBytes;
+              let embedFn;
 
-            if (lower.endsWith('.png')) {
-              imageBytes = await fs.promises.readFile(imagePath);
-              embedFn = pdfDoc.embedPng.bind(pdfDoc);
-            } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-              imageBytes = await fs.promises.readFile(imagePath);
-              embedFn = pdfDoc.embedJpg.bind(pdfDoc);
-            } else {
-              // Chuyển tạm sang PNG chất lượng cao
-              const pngBuffer = await sharp(await fs.promises.readFile(imagePath))
-                .png({ quality: 100, compressionLevel: 0, adaptiveFiltering: true })
-                .toBuffer();
-              imageBytes = pngBuffer;
-              embedFn = pdfDoc.embedPng.bind(pdfDoc);
+              if (lower.endsWith('.png')) {
+                imageBytes = await fs.promises.readFile(imagePath);
+                embedFn = pdfDoc.embedPng.bind(pdfDoc);
+              } else if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+                imageBytes = await fs.promises.readFile(imagePath);
+                embedFn = pdfDoc.embedJpg.bind(pdfDoc);
+              } else {
+                // Chuyển tạm sang PNG chất lượng cao
+                const pngBuffer = await sharp(await fs.promises.readFile(imagePath))
+                  .png({ quality: 100, compressionLevel: 0, adaptiveFiltering: true })
+                  .toBuffer();
+                imageBytes = pngBuffer;
+                embedFn = pdfDoc.embedPng.bind(pdfDoc);
+              }
+
+              const embedded = await embedFn(imageBytes);
+              const page = pdfDoc.addPage([embedded.width, embedded.height]);
+              page.drawImage(embedded, { x: 0, y: 0, width: embedded.width, height: embedded.height });
+            } catch (pageErr) {
+              console.warn(`⚠️ Bỏ qua một trang do lỗi: ${pageErr.message}`);
             }
-
-            const embedded = await embedFn(imageBytes);
-            const page = pdfDoc.addPage([embedded.width, embedded.height]);
-            page.drawImage(embedded, { x: 0, y: 0, width: embedded.width, height: embedded.height });
-          } catch (pageErr) {
-            console.warn(`⚠️ Bỏ qua một trang do lỗi: ${pageErr.message}`);
-          }
+          }));
         }
 
         const pdfBytes = await pdfDoc.save({ useObjectStreams: false, addDefaultPage: false });
@@ -273,10 +310,12 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         console.warn(`⚠️ Không thể tạo bằng pdf-lib, fallback PDFKit: ${pdfLibError.message}`);
       }
 
+      // Fallback PDFKit với tối ưu
       const doc = new PDFDocument({
         autoFirstPage: false,
         margin: 0,
         bufferPages: true,
+        compress: true, // Thêm compression
       });
 
       // Tạo write stream và promise để theo dõi khi nào hoàn thành
@@ -351,6 +390,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     }
   }
 
+  // Tối ưu cleanup để giảm sử dụng bộ nhớ
   async cleanup() {
     try {
       // Đóng browser và page
@@ -364,15 +404,29 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       }
 
       // Xóa các file tạm an toàn
-      const files = await fs.promises.readdir(this.tempDir);
-      await Promise.all(
-        files.map((file) => safeUnlink(path.join(this.tempDir, file)))
-      );
+      try {
+        const files = await fs.promises.readdir(this.tempDir);
+        await Promise.all(
+          files.map((file) => safeUnlink(path.join(this.tempDir, file)))
+        );
+      } catch (err) {
+        console.warn(`⚠️ Lỗi cleanup temp files: ${err.message}`);
+      }
 
-      // Reset các biến
+      // Reset các biến và cache
       this.pageRequests.clear();
       this.cookies = null;
       this.userAgent = null;
+      
+      // Clear cache để giải phóng bộ nhớ
+      this.pageCache.clear();
+      this.cookieCache.clear();
+      this.userAgentCache = null;
+      
+      // Force garbage collection nếu có
+      if (global.gc) {
+        global.gc();
+      }
     } catch (error) {
       console.warn(`⚠️ Lỗi cleanup:`, error.message);
     }
@@ -510,13 +564,21 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             method: "get",
             url: enhancedUrl,
             responseType: "arraybuffer",
-            timeout: 10000,
+            timeout: this.IMAGE_DOWNLOAD_TIMEOUT,
             headers: {
               Cookie: cookieStr,
               "User-Agent": userAgent,
               Referer: "https://drive.google.com/",
               Accept: "image/webp,image/apng,image/*,*/*;q=0.8",
+              "Accept-Encoding": "gzip, deflate, br",
+              "Cache-Control": "no-cache",
+              "Pragma": "no-cache",
             },
+            // Thêm compression
+            decompress: true,
+            // Tối ưu connection
+            maxRedirects: 5,
+            validateStatus: (status) => status < 400,
           });
 
           // Xác định định dạng ảnh từ Content-Type
@@ -652,14 +714,14 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
 
           if (retries <= 0) break;
 
-          // Chờ trước khi thử lại
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          // Chờ trước khi thử lại - giảm delay
+          await new Promise((resolve) => setTimeout(resolve, 3000));
 
           // Thử kill Chrome nếu có lỗi
           if (retries === 1) {
             console.log(`🔄 Thử kill Chrome và khởi động lại...`);
             await this.chromeManager.forceKillAllChrome().catch((e) => {});
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, 3000));
           }
         }
       }
@@ -670,37 +732,55 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         );
       }
 
-      // Đợi Chrome khởi động hoàn toàn - tăng thời gian đợi
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Đợi Chrome khởi động hoàn toàn - giảm thời gian đợi
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       console.log(`📑 Tạo tab mới cho PDF...`);
       page = await browser.newPage();
 
-      // Cấu hình page với timeout dài hơn
-      await page.setDefaultNavigationTimeout(120000); // 2 phút
-      await page.setViewport({ width: 1280, height: 800 });
-      await page.setCacheEnabled(false);
+      // Cấu hình page tối ưu
+      await page.setDefaultNavigationTimeout(this.PAGE_NAVIGATION_TIMEOUT);
+      await page.setViewport({ width: 1920, height: 1080 }); // Tăng viewport
+      await page.setCacheEnabled(true); // Bật cache để tăng tốc
       await page.setRequestInterception(true);
+      
+      // Tối ưu thêm
+      await page.evaluateOnNewDocument(() => {
+        // Tắt các tính năng không cần thiết
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // Tăng tốc độ render
+        window.chrome = { runtime: {} };
+      });
 
-      // Xử lý request interception
+      // Xử lý request/response interception
       const pageRequests = new Map();
       page.on("request", (request) => {
         const url = request.url();
 
         if (url.includes("accounts.google.com") || url.includes("oauth")) {
-          console.log(`🔑 Auth request - continue`);
           request.continue();
           return;
         }
 
-        // Kiểm tra cả 2 pattern: viewerng/img và viewer2/prod
-        const isViewerNg = url.includes("viewerng/img");
-        const isViewer2 = url.includes("viewer2/prod");
+        // Hỗ trợ nhiều endpoint và tham số hơn
+        const isViewer = /viewer|viewerng|viewer2|thumbnails|get_thumbnail|prod/i.test(url);
+        if (isViewer) {
+          let pageNum = null;
+          try {
+            const u = new URL(url);
+            const candidates = ["page", "p", "pagenumber", "pg", "pn"]; // nhiều tên tham số
+            for (const key of candidates) {
+              const v = u.searchParams.get(key);
+              if (v && /^\d+$/.test(v)) {
+                pageNum = parseInt(v, 10);
+                break;
+              }
+            }
+            // Một số trường hợp page bắt đầu từ 0
+            if (pageNum !== null && pageNum < 1) pageNum = pageNum + 1;
+          } catch (_) {}
 
-        if ((isViewerNg || isViewer2) && url.includes("page=")) {
-          const pageMatch = url.match(/[?&]page=(\d+)/);
-          if (pageMatch) {
-            const pageNum = parseInt(pageMatch[1]);
+          if (pageNum !== null) {
             if (!pageRequests.has(pageNum)) {
               pageRequests.set(pageNum, request);
             }
@@ -709,17 +789,51 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         request.continue();
       });
 
-      // Load PDF viewer - thêm retry cho navigation
+      // Bắt thêm từ response để không bỏ sót
+      page.on("response", async (response) => {
+        try {
+          const url = response.url();
+          const headers = response.headers() || {};
+          const contentType = headers["content-type"] || headers["Content-Type"] || "";
+          if (!/image|webp|jpeg|png/i.test(contentType)) return;
+
+          const isViewer = /viewer|viewerng|viewer2|thumbnails|get_thumbnail|prod/i.test(url);
+          if (!isViewer) return;
+
+          let pageNum = null;
+          try {
+            const u = new URL(url);
+            const candidates = ["page", "p", "pagenumber", "pg", "pn"]; 
+            for (const key of candidates) {
+              const v = u.searchParams.get(key);
+              if (v && /^\d+$/.test(v)) {
+                pageNum = parseInt(v, 10);
+                break;
+              }
+            }
+            if (pageNum !== null && pageNum < 1) pageNum = pageNum + 1;
+          } catch (_) {}
+
+          if (pageNum !== null && !pageRequests.has(pageNum)) {
+            // Tạo 1 object giả có url() để tái sử dụng downloadImage
+            pageRequests.set(pageNum, { url: () => url });
+          }
+        } catch (_) {}
+      });
+
+      // Load PDF viewer với tối ưu
       console.log(`\n🌐 Mở PDF viewer...`);
       let navigationSuccess = false;
-      let navigationRetries = 3;
+      let navigationRetries = 2; // Giảm retry
 
       while (!navigationSuccess && navigationRetries > 0) {
         try {
           await page.goto(`https://drive.google.com/file/d/${fileId}/view`, {
-            waitUntil: "networkidle0",
-            timeout: 90000, // Tăng timeout lên 90s
+            waitUntil: "networkidle2",
+            timeout: this.PAGE_NAVIGATION_TIMEOUT,
           });
+          // Đợi PDF viewer load chắc chắn
+          await page.waitForSelector('.ndfHFb-c4YZDc-q77wGc, [aria-label*="Page"], [aria-label*="Trang"]', { timeout: 45000 }).catch(() => {});
           navigationSuccess = true;
         } catch (navError) {
           navigationRetries--;
@@ -731,7 +845,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             throw navError;
           }
 
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 3000)); // Giảm delay
 
           // Kiểm tra xem page còn hoạt động không
           try {
@@ -742,9 +856,9 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
               await page.close().catch(() => {});
             }
             page = await browser.newPage();
-            await page.setDefaultNavigationTimeout(120000);
-            await page.setViewport({ width: 1280, height: 800 });
-            await page.setCacheEnabled(false);
+            await page.setDefaultNavigationTimeout(this.PAGE_NAVIGATION_TIMEOUT);
+            await page.setViewport({ width: 1920, height: 1080 });
+            await page.setCacheEnabled(true);
             await page.setRequestInterception(true);
           }
         }
@@ -766,37 +880,36 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
             console.log(
               `🔁 Thiếu trang (${pageRequests.size}/${expectedTotalPages}), thử tải bổ sung...`
             );
-            // Thử bổ sung mạnh tay với vài lần retry
-            const MAX_PAGE_FILL_RETRIES = 2;
+            // Bổ sung có giới hạn thời gian để tránh chờ quá lâu
+            const DEADLINE_MS = 90000; // 90s
+            const start = Date.now();
+            const MAX_PAGE_FILL_RETRIES = 3;
             for (let attempt = 0; attempt < MAX_PAGE_FILL_RETRIES && pageRequests.size < expectedTotalPages; attempt++) {
-              await this.aggressiveLoadRemainingPages(
-                page,
-                pageRequests,
-                expectedTotalPages
-              );
-              console.log(
-                `📊 Sau bổ sung lần ${attempt + 1}: ${pageRequests.size}/${expectedTotalPages} trang`
-              );
+              if (Date.now() - start > DEADLINE_MS) {
+                console.log(`⏱️ Hết thời gian bổ sung trang`);
+                break;
+              }
+              await this.aggressiveLoadRemainingPages(page, pageRequests, expectedTotalPages);
+              console.log(`📊 Sau bổ sung lần ${attempt + 1}: ${pageRequests.size}/${expectedTotalPages} trang`);
               if (pageRequests.size >= expectedTotalPages) break;
-              // Đợi ngắn giữa các lần để viewer kịp nạp
-              await new Promise(r => setTimeout(r, 1500));
+              await new Promise(r => setTimeout(r, 800));
             }
           }
 
-          if (pageRequests.size < expectedTotalPages) {
-            // Bắt buộc đủ số trang: ném lỗi để lớp gọi có thể retry/đổi chiến lược
-            throw new Error(
-              `MISSING_PAGES_COLLECT:${pageRequests.size}/${expectedTotalPages}`
-            );
+          // Nếu chỉ thiếu <= 1 trang thì chấp nhận tiếp tục để tăng tốc
+          const missing = expectedTotalPages - pageRequests.size;
+          if (missing > 1) {
+            throw new Error(`MISSING_PAGES_COLLECT:${pageRequests.size}/${expectedTotalPages}`);
+          } else if (missing === 1) {
+            console.log(`✅ Chấp nhận thiếu 1 trang để tiếp tục`);
           }
         }
       } catch (uiErr) {
         console.warn(`⚠️ Không thể đọc tổng số trang từ UI: ${uiErr.message}`);
       }
 
-      // Lấy cookies và userAgent trước khi đóng page
-      const cookies = await page.cookies();
-      const userAgent = await page.evaluate(() => navigator.userAgent);
+      // Lấy cookies và userAgent từ cache nếu có
+      const { cookies, userAgent } = await this.getCachedAuth(page);
 
       // Đóng page sau khi lấy được thông tin cần thiết
       console.log(`🔒 Đóng tab sau khi lấy thông tin...`);
@@ -810,8 +923,8 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         ([a], [b]) => a - b
       );
 
-      // Chia thành các batch để tránh tải quá nhiều cùng lúc
-      const BATCH_SIZE = 5;
+      // Tải song song với batch size lớn hơn
+      const BATCH_SIZE = this.CONCURRENT_IMAGE_DOWNLOADS;
       for (let i = 0; i < requests.length; i += BATCH_SIZE) {
         const batch = requests.slice(i, i + BATCH_SIZE);
         console.log(
@@ -820,21 +933,28 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
           )}...`
         );
 
-        // Tải song song trong batch
+        // Tải song song trong batch với timeout
         const downloadPromises = batch.map(async ([pageNum, request]) => {
           try {
             console.log(`📄 Tải trang ${pageNum}...`);
-            let retries = 3;
+            let retries = 2; // Giảm retry
             let image = null;
 
             while (retries > 0 && !image) {
               try {
-                image = await this.downloadImage(
+                // Thêm timeout cho download
+                const downloadPromise = this.downloadImage(
                   request.url(),
                   pageNum,
                   cookies,
                   userAgent
                 );
+                
+                const timeoutPromise = new Promise((_, reject) => 
+                  setTimeout(() => reject(new Error('Download timeout')), this.IMAGE_DOWNLOAD_TIMEOUT)
+                );
+                
+                image = await Promise.race([downloadPromise, timeoutPromise]);
 
                 if (image) {
                   downloadedImages[pageNum] = image;
@@ -847,7 +967,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
                   console.log(
                     `🔄 Thử lại trang ${pageNum} (còn ${retries} lần)...`
                   );
-                  await new Promise((r) => setTimeout(r, 2000));
+                  await new Promise((r) => setTimeout(r, 1000)); // Giảm delay
                 }
               } catch (dlError) {
                 retries--;
@@ -855,7 +975,7 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
                   `⚠️ Lỗi tải trang ${pageNum} (còn ${retries} lần): ${dlError.message}`
                 );
                 if (retries > 0) {
-                  await new Promise((r) => setTimeout(r, 2000));
+                  await new Promise((r) => setTimeout(r, 1000));
                 }
               }
             }
@@ -873,9 +993,9 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         // Chờ tất cả trong batch hoàn thành
         await Promise.all(downloadPromises);
 
-        // Đợi giữa các batch để tránh quá tải
+        // Giảm delay giữa các batch
         if (i + BATCH_SIZE < requests.length) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 500));
         }
       }
 
@@ -930,24 +1050,30 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
   }
 
   async fastScroll(page, pageRequests) {
-    console.log(`\n🔍 Bắt đầu quét trang...`);
+    console.log(`\n🔍 Bắt đầu quét trang tối ưu...`);
 
     try {
       let lastPageCount = 0;
       let noNewPagesCount = 0;
-      const MAX_NO_NEW_PAGES = 10;
-      const SCROLL_INTERVAL = 200;
-      const SPACE_PRESSES_PER_BATCH = 2;
-      const BATCH_INTERVAL = 500;
-      const MAX_SCROLL_ATTEMPTS = 100;
+      const MAX_NO_NEW_PAGES = 5; // Giảm để kết thúc sớm hơn
+      const SCROLL_INTERVAL = this.SCROLL_INTERVAL;
+      const SPACE_PRESSES_PER_BATCH = 3; // Tăng số lần nhấn
+      const BATCH_INTERVAL = 300; // Giảm interval
+      const MAX_SCROLL_ATTEMPTS = this.MAX_SCROLL_ATTEMPTS;
       let scrollAttempts = 0;
+
+      // Thử scroll nhanh trước
+      await this.quickScroll(page, pageRequests);
+      // Auto-scroll mượt để ép viewer nạp hết request ảnh (trên container cuộn chính)
+      await this.autoScroll(page, { step: 1400, delayMs: 40, maxSteps: 400 });
 
       while (
         noNewPagesCount < MAX_NO_NEW_PAGES &&
         scrollAttempts < MAX_SCROLL_ATTEMPTS
       ) {
+        // Sử dụng PageDown thay vì Space để nhanh hơn
         for (let i = 0; i < SPACE_PRESSES_PER_BATCH; i++) {
-          await page.keyboard.press("Space");
+          await page.keyboard.press("PageDown");
           await new Promise((resolve) => setTimeout(resolve, SCROLL_INTERVAL));
         }
 
@@ -978,10 +1104,30 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
         console.log(`⚠️ Đã đạt giới hạn scroll`);
       }
 
+      // Kiểm tra cuối cùng
       const finalPageCount = pageRequests.size;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      await page.keyboard.press("Space");
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      await page.evaluate(() => {
+        const getScrollContainer = () => {
+          const candidates = Array.from(document.querySelectorAll('*'));
+          let best = document.scrollingElement || document.body;
+          let bestScore = 0;
+          for (const el of candidates) {
+            const sh = el.scrollHeight || 0;
+            const ch = el.clientHeight || 0;
+            if (sh > ch + 200) {
+              const score = sh - ch;
+              if (score > bestScore) {
+                best = el; bestScore = score;
+              }
+            }
+          }
+          return best;
+        };
+        const c = getScrollContainer();
+        try { c.scrollTo(0, Number.MAX_SAFE_INTEGER); } catch {}
+      });
+      await new Promise((resolve) => setTimeout(resolve, 800));
 
       const newPageCount = pageRequests.size;
       if (newPageCount > finalPageCount) {
@@ -995,6 +1141,126 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
       console.error(`❌ Lỗi khi scroll:`, error);
       throw error;
     }
+  }
+
+  // Thêm phương thức scroll nhanh
+  async quickScroll(page, pageRequests) {
+    try {
+      console.log(`🚀 Thực hiện scroll nhanh...`);
+      
+      // Scroll nhanh đến cuối
+      for (let i = 0; i < 10; i++) {
+        await page.keyboard.press("End");
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      
+      // Scroll về đầu
+      await page.keyboard.press("Home");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      
+      console.log(`📊 Sau scroll nhanh: ${pageRequests.size} trang`);
+    } catch (error) {
+      console.warn(`⚠️ Lỗi quick scroll: ${error.message}`);
+    }
+  }
+
+  // Auto-scroll dựa trên chiều cao trang để bắt toàn bộ request ảnh
+  async autoScroll(page, options = {}) {
+    const { step = 1000, delayMs = 50, maxSteps = 150 } = options;
+    try {
+      await page.evaluate(async (step, delayMs, maxSteps) => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const getScrollContainer = () => {
+          const candidates = Array.from(document.querySelectorAll('*'));
+          let best = document.scrollingElement || document.body;
+          let bestScore = 0;
+          for (const el of candidates) {
+            const sh = el.scrollHeight || 0;
+            const ch = el.clientHeight || 0;
+            if (sh > ch + 200) {
+              const style = getComputedStyle(el);
+              const overflowY = style.overflowY || style.overflow || '';
+              const isScrollable = /auto|scroll/i.test(overflowY);
+              const score = (sh - ch) + (isScrollable ? 1000 : 0);
+              if (score > bestScore) { best = el; bestScore = score; }
+            }
+          }
+          return best;
+        };
+        const container = getScrollContainer();
+        let lastHeight = 0;
+        let sameCount = 0;
+        for (let i = 0; i < maxSteps; i++) {
+          try { container.scrollBy(0, step); } catch { window.scrollBy(0, step); }
+          await sleep(delayMs);
+          const newHeight = (container.scrollTop || document.scrollingElement.scrollTop) + (container.clientHeight || window.innerHeight);
+          if (Math.abs(newHeight - lastHeight) < 5) {
+            sameCount++;
+            if (sameCount >= 5) break;
+          } else {
+            sameCount = 0;
+          }
+          lastHeight = newHeight;
+        }
+      }, step, delayMs, maxSteps);
+    } catch (_) {}
+  }
+
+  // Cuộn siêu nhanh: lặp Home/End + burst PageDown/PageUp
+  async superScroll(page, options = {}) {
+    const { cycles = 2, endBurst = 15, homeBurst = 6, delayMs = 25 } = options;
+    try {
+      for (let c = 0; c < cycles; c++) {
+        // Burst xuống dưới
+        for (let i = 0; i < endBurst; i++) {
+          await page.keyboard.press('End');
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+        // Burst lên trên
+        for (let i = 0; i < homeBurst; i++) {
+          await page.keyboard.press('Home');
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+        // Pha trộn PageDown cho viewer lazy-load
+        for (let i = 0; i < Math.max(10, Math.floor(endBurst/2)); i++) {
+          await page.keyboard.press('PageDown');
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+      }
+    } catch (_) {}
+  }
+
+  // Nhảy đến các mốc phần trăm chiều cao container để kích hoạt load ở mọi vùng
+  async jumpScroll(page, percents = []) {
+    try {
+      await page.evaluate(async (percents) => {
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        const getScrollContainer = () => {
+          const candidates = Array.from(document.querySelectorAll('*'));
+          let best = document.scrollingElement || document.body;
+          let bestScore = 0;
+          for (const el of candidates) {
+            const sh = el.scrollHeight || 0;
+            const ch = el.clientHeight || 0;
+            if (sh > ch + 200) {
+              const style = getComputedStyle(el);
+              const overflowY = style.overflowY || style.overflow || '';
+              const isScrollable = /auto|scroll/i.test(overflowY);
+              const score = (sh - ch) + (isScrollable ? 1000 : 0);
+              if (score > bestScore) { best = el; bestScore = score; }
+            }
+          }
+          return best;
+        };
+        const c = getScrollContainer();
+        const H = c.scrollHeight - c.clientHeight;
+        for (const p of percents) {
+          const y = Math.max(0, Math.min(H, Math.floor((p / 100) * H)));
+          c.scrollTo(0, y);
+          await sleep(80);
+        }
+      }, percents);
+    } catch (_) {}
   }
 
   async downloadToLocal(fileId, fileName, targetDir) {
@@ -1804,6 +2070,162 @@ class DriveAPIPDFDownloader extends BasePDFDownloader {
     } catch (error) {
       console.error(`${indent}❌ Lỗi xử lý ${fileName}:`, error.message);
       throw error;
+    }
+  }
+
+  // Thêm phương thức tối ưu cho việc xử lý batch files
+  async processBatchPDFs(files) {
+    const results = {
+      success: [],
+      failed: [],
+      skipped: []
+    };
+
+    try {
+      // Chia files thành các batch nhỏ hơn để xử lý song song
+      const BATCH_SIZE = this.BATCH_SIZE;
+      const batches = [];
+      
+      for (let i = 0; i < files.length; i += BATCH_SIZE) {
+        batches.push(files.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(`📦 Xử lý ${files.length} files trong ${batches.length} batches`);
+
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        console.log(`\n🔄 Xử lý batch ${batchIndex + 1}/${batches.length} (${batch.length} files)`);
+
+        // Xử lý song song trong batch
+        const batchPromises = batch.map(async (file) => {
+          try {
+            const result = await this.downloadPDF(
+              file.fileId,
+              file.name,
+              file.targetFolderId
+            );
+            
+            if (result.success) {
+              results.success.push({
+                fileName: file.name,
+                result
+              });
+            } else if (result.skipped) {
+              results.skipped.push({
+                fileName: file.name,
+                result
+              });
+            } else {
+              results.failed.push({
+                fileName: file.name,
+                error: result.error
+              });
+            }
+          } catch (error) {
+            console.error(`❌ Lỗi xử lý ${file.name}:`, error.message);
+            results.failed.push({
+              fileName: file.name,
+              error: error.message
+            });
+          }
+        });
+
+        // Chờ batch hoàn thành
+        await Promise.all(batchPromises);
+
+        // Delay ngắn giữa các batch để tránh quá tải
+        if (batchIndex < batches.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+      }
+
+      // Thống kê kết quả
+      console.log(`\n📊 Kết quả tổng hợp:
+      ✅ Thành công: ${results.success.length}
+      ⏭️ Bỏ qua: ${results.skipped.length}
+      ❌ Thất bại: ${results.failed.length}`);
+
+      return results;
+    } catch (error) {
+      console.error(`❌ Lỗi xử lý batch:`, error.message);
+      throw error;
+    }
+  }
+
+  // Thêm phương thức tối ưu cho Chrome args
+  getOptimizedChromeArgs(profilePath) {
+    return [
+      "--start-maximized",
+      `--user-data-dir=${profilePath}`,
+      "--enable-extensions",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-web-security",
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-site-isolation-trials",
+      "--disable-features=BlockInsecurePrivateNetworkRequests",
+      "--disable-features=SameSiteByDefaultCookies,CookiesWithoutSameSiteMustBeSecure",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-popup-blocking",
+      "--disable-notifications",
+      "--disable-infobars",
+      "--disable-translate",
+      "--allow-running-insecure-content",
+      "--password-store=basic",
+      // Thêm các args tối ưu cho PDF
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
+      "--disable-features=TranslateUI",
+      "--disable-ipc-flooding-protection",
+      "--disable-hang-monitor",
+      "--disable-prompt-on-repost",
+      "--disable-sync",
+      "--disable-background-networking",
+      "--disable-default-apps",
+      "--disable-extensions-file-access-check",
+      "--disable-extensions-http-throttling",
+      "--disable-extensions-except",
+      "--disable-plugins-discovery",
+      "--disable-preconnect",
+      "--disable-print-preview",
+      "--disable-speech-api",
+      "--disable-speech-synthesis-api",
+      "--disable-webgl",
+      "--disable-webgl2",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--disable-gpu-sandbox",
+      "--disable-gpu-process-crash-limit",
+      "--disable-gpu-watchdog",
+      "--disable-gpu-rasterization",
+      "--disable-gpu-memory-buffer-video-frames",
+      "--disable-gpu-memory-buffer-compositor-resources",
+      "--memory-pressure-off",
+      "--max_old_space_size=4096",
+      "--js-flags=--max-old-space-size=4096"
+    ];
+  }
+
+  // Thêm phương thức tối ưu cho việc preload trang
+  async preloadPages(page, expectedTotalPages) {
+    try {
+      console.log(`🚀 Preload ${expectedTotalPages} trang...`);
+      
+      // Scroll nhanh để trigger load tất cả trang
+      for (let i = 0; i < Math.min(expectedTotalPages, 20); i++) {
+        await page.keyboard.press('PageDown');
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      
+      // Scroll về đầu
+      await page.keyboard.press('Home');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      console.log(`✅ Preload hoàn tất`);
+    } catch (error) {
+      console.warn(`⚠️ Lỗi preload: ${error.message}`);
     }
   }
 }

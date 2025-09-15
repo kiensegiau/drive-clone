@@ -849,7 +849,6 @@ class VideoQualityChecker {
       };
 
       for (const video of videos) {
-        stats.total++;
         try {
           const videoDetails = await this.withRetry(async () => {
             return this.drive.files.get({
@@ -860,6 +859,13 @@ class VideoQualityChecker {
           });
 
           const metadata = videoDetails.data.videoMediaMetadata;
+
+          // Debug: In ra thông tin cơ bản của metadata
+          if (metadata) {
+            console.log(`${indent}🔍 Video "${video.name}": ${metadata.width || 'N/A'}x${metadata.height || 'N/A'}, Duration: ${metadata.durationMillis || 'N/A'}ms`);
+          } else {
+            console.log(`${indent}🔍 Video "${video.name}": Không có metadata`);
+          }
 
           if (!metadata || !metadata.durationMillis) {
             console.log(`${indent}⚠️ Video "${video.name}" bị lỗi metadata`);
@@ -924,25 +930,27 @@ class VideoQualityChecker {
           let qualityEmoji = "❓";
 
           if (metadata.width && metadata.height) {
-            const resolution = metadata.height;
-            const width = metadata.width;
+            const height = parseInt(metadata.height);
+            const width = parseInt(metadata.width);
 
-            if (resolution >= 1080 || width >= 1920) {
+            // Đã hiển thị thông tin ở trên, không cần hiển thị lại
+
+            if (height >= 1080 || width >= 1920) {
               stats.resolution["1080p+"]++;
               quality = "Cao";
               qualityEmoji = "✨";
               stats.quality.high++;
-            } else if (resolution >= 720 || width >= 1280) {
+            } else if (height >= 720 || width >= 1280) {
               stats.resolution["720p"]++;
               quality = "Khá";
               qualityEmoji = "✅";
               stats.quality.medium++;
-            } else if (resolution >= 480) {
+            } else if (height >= 480) {
               stats.resolution["480p"]++;
               quality = "Trung bình";
               qualityEmoji = "📱";
               stats.quality.medium++;
-            } else if (resolution >= 360) {
+            } else if (height >= 360) {
               stats.resolution["360p"]++;
               quality = "Thấp";
               qualityEmoji = "⚠️";
@@ -965,7 +973,7 @@ class VideoQualityChecker {
 
             console.log(`${indent}${qualityEmoji} ${video.name}`);
             console.log(
-              `${indent}   - Độ phân giải: ${width}x${resolution} (${quality})`
+              `${indent}   - Độ phân giải: ${width}x${height} (${quality})`
             );
             console.log(
               `${indent}   - Thời lượng: ${(durationSeconds / 60).toFixed(
@@ -1963,6 +1971,108 @@ class VideoQualityChecker {
     }
   }
 
+  // Thêm phương thức để xóa "Copy of " khỏi tên file
+  async removeCopyOfPrefix(folderId, depth = 0) {
+    const indent = "  ".repeat(depth);
+    try {
+      console.log(`${indent}🔍 Đang quét folder để xóa "Copy of " khỏi tên file...`);
+
+      const response = await this.withRetry(async () => {
+        return this.drive.files.list({
+          q: `'${folderId}' in parents and trashed = false`,
+          fields: "files(id, name, mimeType)",
+          pageSize: 1000,
+          supportsAllDrives: true,
+          includeItemsFromAllDrives: true,
+        });
+      });
+
+      const items = response.data.files;
+      const files = items.filter(
+        (item) => item.mimeType !== "application/vnd.google-apps.folder"
+      );
+      const folders = items.filter(
+        (item) => item.mimeType === "application/vnd.google-apps.folder"
+      );
+
+      // Đếm số file đã xử lý, đổi tên và lỗi
+      let processedCount = 0;
+      let renamedCount = 0;
+      let errorCount = 0;
+
+      // Xử lý từng file
+      for (const file of files) {
+        const oldName = file.name;
+        let newName = oldName;
+
+        // Xóa "Copy of " (có dấu cách cuối) khỏi đầu tên file
+        if (newName.startsWith("Copy of ")) {
+          newName = newName.substring(8); // Xóa 8 ký tự "Copy of "
+          newName = newName.trim(); // Xóa khoảng trắng thừa
+        }
+
+        // Đếm số file đã xử lý
+        processedCount++;
+
+        // Nếu tên mới khác tên cũ
+        if (newName !== oldName && newName.length > 0) {
+          try {
+            await this.withRetry(async () => {
+              return this.drive.files.update({
+                fileId: file.id,
+                requestBody: {
+                  name: newName,
+                },
+                supportsAllDrives: true,
+              });
+            });
+
+            renamedCount++;
+            console.log(`${indent}✅ Đã đổi tên: "${oldName}" -> "${newName}"`);
+
+            // Thêm delay nhỏ giữa các request
+            await this.delay(this.REQUEST_DELAY);
+          } catch (error) {
+            errorCount++;
+            console.log(
+              `${indent}❌ Không thể đổi tên "${oldName}": ${error.message}`
+            );
+          }
+        }
+      }
+
+      // Hiển thị thông tin tổng kết
+      console.log(
+        `${indent}📊 Tổng kết: Đã xử lý ${processedCount} files, đổi tên ${renamedCount} files, lỗi ${errorCount} files`
+      );
+
+      // Xử lý thư mục con song song
+      if (folders.length > 0) {
+        console.log(`${indent}📁 Đang xử lý ${folders.length} thư mục con...`);
+        
+        // Xử lý tối đa 10 thư mục con cùng lúc
+        const FOLDER_BATCH_SIZE = 10;
+        for (let i = 0; i < folders.length; i += FOLDER_BATCH_SIZE) {
+          const folderBatch = folders.slice(i, i + FOLDER_BATCH_SIZE);
+          
+          await Promise.all(
+            folderBatch.map(folder => {
+              console.log(`${indent}📁 Đang xử lý folder: ${folder.name}`);
+              return this.removeCopyOfPrefix(folder.id, depth + 1);
+            })
+          );
+          
+          // Delay nhỏ giữa các batch thư mục
+          if (i + FOLDER_BATCH_SIZE < folders.length) {
+            await this.delay(500);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`${indent}❌ Lỗi:`, error.message);
+    }
+  }
+
   // Thêm lại phương thức sharePdfFiles để tùy chọn 9 hoạt động đúng
   async sharePdfFiles(folderId, depth = 0) {
     const indent = "  ".repeat(depth);
@@ -2334,6 +2444,7 @@ if (require.main === module) {
       console.log("8. Xóa file có tên cụ thể");
       console.log("9. Chia sẻ công khai file PDF");
       console.log("10. Dọn dẹp + Chia sẻ PDF (8+9)");
+      console.log("11. Xóa 'Copy of ' khỏi tên file");
 
       const rl = readline.createInterface({
         input: process.stdin,
@@ -2341,7 +2452,7 @@ if (require.main === module) {
       });
 
       const mode = await new Promise((resolve) => {
-        rl.question("\nChọn chế độ (1-10): ", (answer) => {
+        rl.question("\nChọn chế độ (1-11): ", (answer) => {
           rl.close();
           resolve(answer.trim());
         });
@@ -2454,8 +2565,12 @@ if (require.main === module) {
         console.log(`🔍 Danh sách file cần xóa: ${specificNames.join(', ')}`);
         await checker.cleanAndSharePdfs(sourceFolderId, specificNames);
         console.log("✅ Hoàn thành dọn dẹp và chia sẻ file PDF!");
+      } else if (mode === "11") {
+        console.log("✂️ Bắt đầu xóa 'Copy of ' khỏi tên file...");
+        await checker.removeCopyOfPrefix(sourceFolderId);
+        console.log("✅ Hoàn thành xóa 'Copy of ' khỏi tên file!");
       } else {
-        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-10.");
+        throw new Error("Chế độ không hợp lệ. Vui lòng chọn từ 1-11.");
       }
     } catch (error) {
       console.error("❌ Lỗi:", error.message);
