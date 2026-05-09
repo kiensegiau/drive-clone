@@ -638,7 +638,11 @@ class DriveAPI {
           pageSize: 1,
         });
 
-        await this.processFolder(sourceFolderId);
+        // Phase 1: Khám phá toàn bộ cấu trúc folder nguồn trước (batch API calls)
+        const sourceTree = await this.buildSourceTree(sourceFolderId);
+
+        // Phase 2: Xử lý tuần tự, đọc dữ liệu từ tree (không gọi API nữa)
+        await this.processFolder(sourceFolderId, sourceTree);
         
         // Sử dụng giá trị đã hỏi từ đầu chương trình
         if (this.enableSync) {
@@ -813,115 +817,169 @@ class DriveAPI {
     }
   }
 
-  async processFolder(folderId) {
+  /**
+   * Phase 1 — BFS Discovery: gộp nhiều folder vào 1 query mỗi tầng
+   * Trả về Map<folderId, allFiles[]> cho toàn bộ cây nguồn
+   */
+  async buildSourceTree(rootFolderId) {
+    const BATCH_SIZE = 30; // folder IDs gộp vào 1 query
+    const tree = new Map();
+    let queue = [rootFolderId];
+    let totalFolders = 0;
+    let totalFiles = 0;
+    let apiCallCount = 0;
+
+    console.log(`\n🌳 [Phase 1] Khám phá cấu trúc folder nguồn...`);
+
+    while (queue.length > 0) {
+      // Khởi tạo entry rỗng cho mỗi folder trong queue
+      for (const folderId of queue) {
+        if (!tree.has(folderId)) {
+          tree.set(folderId, { allFiles: [] });
+        }
+      }
+
+      // Chia queue thành các batch
+      const nextQueue = [];
+      for (let i = 0; i < queue.length; i += BATCH_SIZE) {
+        const batch = queue.slice(i, i + BATCH_SIZE);
+        const parentConditions = batch.map(id => `'${id}' in parents`).join(' or ');
+        const query = `(${parentConditions}) and trashed=false`;
+
+        let pageToken;
+        do {
+          try {
+            const response = await this.sourceDrive.files.list({
+              q: query,
+              fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails, parents)',
+              pageToken,
+              pageSize: 1000,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+            });
+            apiCallCount++;
+
+            for (const file of (response.data.files || [])) {
+              const parentId = file.parents?.[0];
+              if (!parentId || !tree.has(parentId)) continue;
+
+              tree.get(parentId).allFiles.push(file);
+
+              // Nếu là folder hoặc shortcut folder, thêm vào queue kế tiếp
+              if (file.mimeType === 'application/vnd.google-apps.folder') {
+                totalFolders++;
+                if (!tree.has(file.id)) nextQueue.push(file.id);
+              } else if (
+                file.mimeType === 'application/vnd.google-apps.shortcut' &&
+                file.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder'
+              ) {
+                const targetId = file.shortcutDetails.targetId;
+                if (!tree.has(targetId)) nextQueue.push(targetId);
+              } else {
+                totalFiles++;
+              }
+            }
+
+            pageToken = response.data.nextPageToken;
+          } catch (err) {
+            console.warn(`⚠️ [Phase 1] Lỗi batch query: ${err.message}`);
+            pageToken = null;
+          }
+        } while (pageToken);
+      }
+
+      queue = nextQueue;
+    }
+
+    console.log(`✅ [Phase 1] Xong: ${totalFolders} folders, ${totalFiles} files, ${apiCallCount} API calls (thay vì ~${totalFolders + 1})`);
+    return tree;
+  }
+
+  async processFolder(folderId, sourceTree = null) {
     try {
-      let pageToken;
       let hasErrors = false;
       const errors = [];
       let currentTargetFolder = this.currentTargetFolderId;
 
-      do {
-        try {
-          const response = await this.sourceDrive.files.list({
-            q: `'${folderId}' in parents and trashed=false`,
-            fields:
-              "nextPageToken, files(id, name, mimeType, size, shortcutDetails)",
-            pageToken: pageToken,
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true,
-          });
-
-          // Phân loại files
-          const pdfFiles = [];
-          const videoFiles = [];
-          const folders = [];
-          const shortcutFolders = [];
-          const otherFiles = [];
-          const docsFiles = [];
-          const docxFiles = [];
-
-          for (const file of response.data.files) {
-            if (
-              file.mimeType === "application/vnd.google-apps.shortcut" &&
-              file.shortcutDetails &&
-              file.shortcutDetails.targetMimeType ===
-                "application/vnd.google-apps.folder"
-            ) {
-              shortcutFolders.push({
-                id: file.shortcutDetails.targetId,
-                name: file.name,
-                isShortcut: true,
-                originalId: file.id,
-              });
-            } else if (file.mimeType === "application/vnd.google-apps.folder") {
-              folders.push(file);
-            } else if (file.name.toLowerCase().endsWith(".pdf")) {
-              pdfFiles.push({
-                id: file.id,
-                fileId: file.id,
-                name: file.name,
-                size: file.size,
-                mimeType: file.mimeType,
-                targetFolderId: this.currentTargetFolderId,
-              });
-            } else if (
-              // Chỉ kiểm tra MIME type để xác định video chính xác hơn
-              file.mimeType.includes("video/")
-            ) {
-              videoFiles.push({
-                id: file.id,
-                fileId: file.id,
-                name: file.name,
-                fileName: file.name,
-                size: file.size,
-                mimeType: file.mimeType,
-                targetFolderId: this.currentTargetFolderId,
-                depth: 0,
-              });
-            }
-            // } else if (
-            //   file.mimeType === "application/vnd.google-apps.document"
-            // ) {
-            //   docsFiles.push({
-            //     id: file.id,
-            //     fileId: file.id,
-            //     name: file.name,
-            //     size: file.size,
-            //     mimeType: file.mimeType,
-            //     targetFolderId: this.currentTargetFolderId,
-            //   });
-            // } else if (
-            //   file.mimeType ===
-            //   "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            // ) {
-            //   docxFiles.push({
-            //     id: file.id,
-            //     fileId: file.id,
-            //     name: file.name,
-            //     size: file.size,
-            //     mimeType: file.mimeType,
-            //     targetFolderId: this.currentTargetFolderId,
-            //   });
-            // } else {
-            //   otherFiles.push({
-            //     id: file.id,
-            //     fileId: file.id,
-            //     name: file.name,
-            //     size: file.size,
-            //     mimeType: file.mimeType,
-            //     targetFolderId: this.currentTargetFolderId,
-            //   });
-            // }
+      // ── COLLECT: lấy danh sách files (từ sourceTree hoặc gọi API) ────────
+      let allSourceFiles = [];
+      if (sourceTree && sourceTree.has(folderId)) {
+        // Phase 2: đọc từ tree — không cần gọi API nữa
+        allSourceFiles = sourceTree.get(folderId).allFiles;
+      } else {
+        // Fallback: gọi API từng page (hành vi cũ)
+        let pageToken;
+        do {
+          try {
+            const response = await this.sourceDrive.files.list({
+              q: `'${folderId}' in parents and trashed=false`,
+              fields: "nextPageToken, files(id, name, mimeType, size, shortcutDetails)",
+              pageToken: pageToken,
+              supportsAllDrives: true,
+              includeItemsFromAllDrives: true,
+            });
+            allSourceFiles.push(...(response.data.files || []));
+            pageToken = response.data.nextPageToken;
+          } catch (pageError) {
+            console.error(`❌ Lỗi lấy danh sách files:`, pageError.message);
+            errors.push({ type: "page", error: pageError.message });
+            hasErrors = true;
+            break;
           }
+        } while (pageToken);
+      }
 
-          // Xử lý folders trước
+      // ── CLASSIFY ──────────────────────────────────────────────────────────
+      const pdfFiles = [];
+      const videoFiles = [];
+      const folders = [];
+      const shortcutFolders = [];
+      const otherFiles = [];
+      const docsFiles = [];
+      const docxFiles = [];
+
+      for (const file of allSourceFiles) {
+        if (
+          file.mimeType === "application/vnd.google-apps.shortcut" &&
+          file.shortcutDetails &&
+          file.shortcutDetails.targetMimeType === "application/vnd.google-apps.folder"
+        ) {
+          shortcutFolders.push({
+            id: file.shortcutDetails.targetId,
+            name: file.name,
+            isShortcut: true,
+            originalId: file.id,
+          });
+        } else if (file.mimeType === "application/vnd.google-apps.folder") {
+          folders.push(file);
+        } else if (file.name.toLowerCase().endsWith(".pdf")) {
+          pdfFiles.push({
+            id: file.id,
+            fileId: file.id,
+            name: file.name,
+            size: file.size,
+            mimeType: file.mimeType,
+            targetFolderId: this.currentTargetFolderId,
+          });
+        } else if (file.mimeType.includes("video/")) {
+          videoFiles.push({
+            id: file.id,
+            fileId: file.id,
+            name: file.name,
+            fileName: file.name,
+            size: file.size,
+            mimeType: file.mimeType,
+            targetFolderId: this.currentTargetFolderId,
+            depth: 0,
+          });
+        }
+      }
+
+      // Xử lý folders trước
           for (const folder of folders) {
             try {
               if (!this.downloadOnly) {
                 console.log(`\n📁 Tạo/tìm folder: "${folder.name}"`);
-                
-                // Invalidate cache trước khi tạo folder để tránh stale data
-                this.invalidateFolderCache(this.currentTargetFolderId, folder.name);
                 
                 const targetFolder = await this.findOrCreateFolder(
                   folder.name,
@@ -932,10 +990,7 @@ class DriveAPI {
                 const previousFolderId = this.currentTargetFolderId;
                 this.currentTargetFolderId = targetFolder.id;
                 
-                // Invalidate cache của folder con trước khi xử lý
-                this.invalidateFolderFilesIndex(targetFolder.id);
-                
-                await this.processFolder(folder.id);
+                await this.processFolder(folder.id, sourceTree);
                 this.currentTargetFolderId = previousFolderId;
               }
             } catch (folderError) {
@@ -965,24 +1020,23 @@ class DriveAPI {
                 );
 
                 // Lấy thông tin folder đích của shortcut
+                // Ở tree-mode: tên đã biết từ shortcut file, không cần gọi API
                 try {
-                  const shortcutTargetInfo = await this.sourceDrive.files.get({
-                    fileId: shortcutFolder.id,
-                    fields: "name",
-                    supportsAllDrives: true,
-                    includeItemsFromAllDrives: true,
-                  });
+                  let shortcutTargetName = shortcutFolder.name;
+                  if (!sourceTree || !sourceTree.has(shortcutFolder.id)) {
+                    // Fallback: gọi API khi không có trong tree
+                    const shortcutTargetInfo = await this.sourceDrive.files.get({
+                      fileId: shortcutFolder.id,
+                      fields: "name",
+                      supportsAllDrives: true,
+                      includeItemsFromAllDrives: true,
+                    });
+                    console.log(`   📁 Tên folder đích: "${shortcutTargetInfo.data.name}"`);
+                  }
 
-                  // Nếu folder đích có tên khác, sử dụng tên shortcut
                   const folderNameToUse = shortcutFolder.name;
-                  console.log(
-                    `   📁 Tên folder đích: "${shortcutTargetInfo.data.name}"`
-                  );
                   console.log(`   📝 Sử dụng tên: "${folderNameToUse}"`);
 
-                  // Invalidate cache trước khi tạo folder shortcut
-                  this.invalidateFolderCache(this.currentTargetFolderId, folderNameToUse);
-                  
                   // Tạo folder mới với tên của lối tắt
                   const targetFolder = await this.findOrCreateFolder(
                     folderNameToUse,
@@ -996,10 +1050,7 @@ class DriveAPI {
                   const previousFolderId = this.currentTargetFolderId;
                   this.currentTargetFolderId = targetFolder.id;
                   
-                  // Invalidate cache của folder shortcut trước khi xử lý
-                  this.invalidateFolderFilesIndex(targetFolder.id);
-                  
-                  await this.processFolder(shortcutFolder.id);
+                  await this.processFolder(shortcutFolder.id, sourceTree);
                   this.currentTargetFolderId = previousFolderId;
                 } catch (shortcutTargetError) {
                   console.error(
@@ -1285,15 +1336,6 @@ class DriveAPI {
             }
           }
 
-          pageToken = response.data.nextPageToken;
-        } catch (pageError) {
-          console.error(`❌ Lỗi lấy danh sách files:`, pageError.message);
-          errors.push({ type: "page", error: pageError.message });
-          hasErrors = true;
-          pageToken = null;
-        }
-      } while (pageToken);
-
       // Đồng bộ xóa các mục không còn tồn tại sau khi xử lý xong folder hiện tại
       if (!this.downloadOnly && this.enableSync === true) {
         console.log(`\n🔄 Đồng bộ xóa các mục dư thừa trong folder hiện tại...`);
@@ -1484,6 +1526,7 @@ class DriveAPI {
   // Thêm hàm helper để xử lý video song song
   async processVideosBatch(videos) {
     // Kiểm tra tồn tại trước cho tất cả video (dựa trên index cache)
+    // Chỉ gọi API 1 lần duy nhất cho cả batch, truyền xuống processVideoDirectly
     const folderIndex = await this.getFolderFilesIndex(this.currentTargetFolderId);
     const existingChecks = videos.map((file) => {
       const indexed = folderIndex.get(file.name);
@@ -1514,9 +1557,9 @@ class DriveAPI {
       }));
     }
 
-    // Xử lý các video chưa tồn tại
+    // Xử lý các video chưa tồn tại — truyền folderIndex đã fetch vào để tránh gọi API lại
     const results = await Promise.all(
-      videosToProcess.map((file) => this.processVideoDirectly(file))
+      videosToProcess.map((file) => this.processVideoDirectly(file, folderIndex))
     );
 
     // Xử lý các video thất bại bằng VideoHandler
@@ -1566,7 +1609,8 @@ class DriveAPI {
     ];
   }
 
-  async processVideoDirectly(file) {
+  // folderIndex: Map được truyền từ processVideosBatch để tránh gọi API lại
+  async processVideoDirectly(file, folderIndex = null) {
     try {
       // Tăng timeout và thêm retry
       const axiosInstance = axios.create({
@@ -1596,9 +1640,10 @@ class DriveAPI {
 
           console.log(`\n📽️ Đang xử lý video: ${file.name} (${file.mimeType})`);
 
-          // Kiểm tra file đã tồn tại chưa (dựa trên index cache)
-          const folderIndex = await this.getFolderFilesIndex(this.currentTargetFolderId);
-          const indexed = folderIndex.get(file.name);
+          // Dùng folderIndex đã được fetch từ processVideosBatch (tránh gọi API lần 2)
+          // Nếu không có (gọi trực tiếp), mới fetch mới
+          const idx = folderIndex || await this.getFolderFilesIndex(this.currentTargetFolderId);
+          const indexed = idx.get(file.name);
           if (indexed) {
             console.log(`⏩ Đã tồn tại video: ${file.name}`);
             return { success: true, file, skipped: true };
