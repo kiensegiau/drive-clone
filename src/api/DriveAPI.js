@@ -697,7 +697,7 @@ class DriveAPI {
     return null;
   }
 
-  async findOrCreateFolder(folderName, parentId = null) {
+  async findOrCreateFolder(folderName, parentId = null, targetIndex = null) {
     try {
       // Sanitize tên folder cho an toàn
       const sanitizedName = folderName
@@ -710,7 +710,7 @@ class DriveAPI {
         .replace(/'/g, "\\'")
         .replace(/\\/g, "\\\\");
 
-      // Kiểm tra cache trước
+      // Kiểm tra cache toàn cục trước
       const cacheKey = `${parentId || 'root'}|${sanitizedName}`;
       if (this.folderCache.has(cacheKey)) {
         const cached = this.folderCache.get(cacheKey);
@@ -718,7 +718,19 @@ class DriveAPI {
         return cached;
       }
 
-      // Tìm folder hiện có với retry để tránh race condition
+      // Kiểm tra index từ folder cha (fast path - không cần gọi API)
+      if (targetIndex) {
+        // targetIndex là Map lấy từ getFolderFilesIndex() chứa danh sách các mục trong folder đích
+        // Vì getFolderFilesIndex không phân biệt folder hay file, ta chỉ cần tìm tên
+        const existingItem = targetIndex.get(sanitizedName);
+        if (existingItem && existingItem.mimeType === 'application/vnd.google-apps.folder') {
+          console.log(`📂 (index) Đã tồn tại folder: "${existingItem.name}" (${existingItem.id})`);
+          this.folderCache.set(cacheKey, existingItem);
+          return existingItem;
+        }
+      }
+
+      // Tìm folder hiện có qua API với retry (slow path)
       const query = `mimeType='application/vnd.google-apps.folder' and name='${escapedName}'${
         parentId ? ` and '${parentId}' in parents` : ""
       } and trashed=false`;
@@ -975,15 +987,23 @@ class DriveAPI {
         }
       }
 
+      // Lấy index của target folder HIỆN TẠI một lần duy nhất
+      // để các lời gọi findOrCreateFolder có thể dùng nó mà không cần tốn API query
+      let targetIndexMap = null;
+      if (!this.downloadOnly) {
+         targetIndexMap = await this.getFolderFilesIndex(this.currentTargetFolderId);
+      }
+
       // Xử lý folders trước
-          for (const folder of folders) {
+      for (const folder of folders) {
             try {
               if (!this.downloadOnly) {
                 console.log(`\n📁 Tạo/tìm folder: "${folder.name}"`);
                 
                 const targetFolder = await this.findOrCreateFolder(
                   folder.name,
-                  this.currentTargetFolderId
+                  this.currentTargetFolderId,
+                  targetIndexMap
                 );
                 console.log(` Folder: "${folder.name}" (${targetFolder.id})`);
 
@@ -1040,7 +1060,8 @@ class DriveAPI {
                   // Tạo folder mới với tên của lối tắt
                   const targetFolder = await this.findOrCreateFolder(
                     folderNameToUse,
-                    this.currentTargetFolderId
+                    this.currentTargetFolderId,
+                    targetIndexMap
                   );
                   console.log(
                     `   ✅ Đã tạo folder: "${targetFolder.name}" (${targetFolder.id})`
