@@ -830,13 +830,12 @@ class DriveAPI {
   }
 
   /**
-   * Phase 1 — BFS Discovery: gộp nhiều folder vào 1 query mỗi tầng
+   * Phase 1 — BFS Discovery: Khám phá toàn bộ cây nguồn bằng cách duyệt từng thư mục
    * Trả về Map<folderId, allFiles[]> cho toàn bộ cây nguồn
    */
   async buildSourceTree(rootFolderId) {
-    const BATCH_SIZE = 30; // folder IDs gộp vào 1 query
     const tree = new Map();
-    let queue = [rootFolderId];
+    let queue = [{ id: rootFolderId, name: "Thư mục gốc" }];
     let totalFolders = 0;
     let totalFiles = 0;
     let apiCallCount = 0;
@@ -844,66 +843,59 @@ class DriveAPI {
     console.log(`\n🌳 [Phase 1] Khám phá cấu trúc folder nguồn...`);
 
     while (queue.length > 0) {
-      // Khởi tạo entry rỗng cho mỗi folder trong queue
-      for (const folderId of queue) {
-        if (!tree.has(folderId)) {
-          tree.set(folderId, { allFiles: [] });
-        }
+      const { id: folderId, name: folderName } = queue.shift();
+      if (!tree.has(folderId)) {
+        tree.set(folderId, { allFiles: [] });
       }
 
-      // Chia queue thành các batch
-      const nextQueue = [];
-      for (let i = 0; i < queue.length; i += BATCH_SIZE) {
-        const batch = queue.slice(i, i + BATCH_SIZE);
-        const parentConditions = batch.map(id => `'${id}' in parents`).join(' or ');
-        const query = `(${parentConditions}) and trashed=false`;
+      console.log(`  [Phase 1] 📂 Đang quét: "${folderName}" (Tổng: ${totalFolders} thư mục, ${totalFiles} files, ${apiCallCount} requests)...`);
 
-        let pageToken;
-        do {
-          try {
-            const response = await this.sourceDrive.files.list({
-              q: query,
-              fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails, parents)',
-              pageToken,
-              pageSize: 1000,
-              supportsAllDrives: true,
-              includeItemsFromAllDrives: true,
-            });
-            apiCallCount++;
+      let pageToken;
+      do {
+        try {
+          const response = await this.sourceDrive.files.list({
+            q: `'${folderId}' in parents and trashed=false`,
+            fields: 'nextPageToken, files(id, name, mimeType, size, shortcutDetails, parents)',
+            pageToken,
+            pageSize: 1000,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+          });
+          apiCallCount++;
 
-            for (const file of (response.data.files || [])) {
-              const parentId = file.parents?.[0];
-              if (!parentId || !tree.has(parentId)) continue;
+          for (const file of (response.data.files || [])) {
+            // Đưa file vào đúng folder cha
+            tree.get(folderId).allFiles.push(file);
 
-              tree.get(parentId).allFiles.push(file);
-
-              // Nếu là folder hoặc shortcut folder, thêm vào queue kế tiếp
-              if (file.mimeType === 'application/vnd.google-apps.folder') {
-                totalFolders++;
-                if (!tree.has(file.id)) nextQueue.push(file.id);
-              } else if (
-                file.mimeType === 'application/vnd.google-apps.shortcut' &&
-                file.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder'
-              ) {
-                const targetId = file.shortcutDetails.targetId;
-                if (!tree.has(targetId)) nextQueue.push(targetId);
-              } else {
-                totalFiles++;
+            // Nếu là folder hoặc shortcut folder, thêm vào queue kế tiếp
+            if (file.mimeType === 'application/vnd.google-apps.folder') {
+              totalFolders++;
+              if (!tree.has(file.id) && !queue.some(q => q.id === file.id)) {
+                queue.push({ id: file.id, name: file.name });
               }
+            } else if (
+              file.mimeType === 'application/vnd.google-apps.shortcut' &&
+              file.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder'
+            ) {
+              const targetId = file.shortcutDetails.targetId;
+              totalFolders++;
+              if (!tree.has(targetId) && !queue.some(q => q.id === targetId)) {
+                queue.push({ id: targetId, name: file.name });
+              }
+            } else {
+              totalFiles++;
             }
-
-            pageToken = response.data.nextPageToken;
-          } catch (err) {
-            console.warn(`⚠️ [Phase 1] Lỗi batch query: ${err.message}`);
-            pageToken = null;
           }
-        } while (pageToken);
-      }
 
-      queue = nextQueue;
+          pageToken = response.data.nextPageToken;
+        } catch (err) {
+          console.warn(`⚠️ [Phase 1] Lỗi query folder ${folderName} (${folderId}): ${err.message}`);
+          pageToken = null;
+        }
+      } while (pageToken);
     }
 
-    console.log(`✅ [Phase 1] Xong: ${totalFolders} folders, ${totalFiles} files, ${apiCallCount} API calls (thay vì ~${totalFolders + 1})`);
+    console.log(`✅ [Phase 1] Xong: ${totalFolders} folders, ${totalFiles} files, ${apiCallCount} API calls`);
     return tree;
   }
 
@@ -964,7 +956,7 @@ class DriveAPI {
           });
         } else if (file.mimeType === "application/vnd.google-apps.folder") {
           folders.push(file);
-        } else if (file.name.toLowerCase().endsWith(".pdf")) {
+        } else if (file.name.toLowerCase().endsWith(".pdf") || file.mimeType === "application/pdf") {
           pdfFiles.push({
             id: file.id,
             fileId: file.id,
@@ -973,7 +965,7 @@ class DriveAPI {
             mimeType: file.mimeType,
             targetFolderId: this.currentTargetFolderId,
           });
-        } else if (file.mimeType.includes("video/")) {
+        } else if (file.mimeType && file.mimeType.includes("video/")) {
           videoFiles.push({
             id: file.id,
             fileId: file.id,
@@ -983,6 +975,36 @@ class DriveAPI {
             mimeType: file.mimeType,
             targetFolderId: this.currentTargetFolderId,
             depth: 0,
+          });
+        } else if (file.mimeType === "application/vnd.google-apps.document") {
+          docsFiles.push({
+            id: file.id,
+            fileId: file.id,
+            name: file.name,
+            size: file.size,
+            mimeType: file.mimeType,
+            targetFolderId: this.currentTargetFolderId,
+          });
+        } else if (
+          file.name.toLowerCase().endsWith(".docx") ||
+          file.mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ) {
+          docxFiles.push({
+            id: file.id,
+            fileId: file.id,
+            name: file.name,
+            size: file.size,
+            mimeType: file.mimeType,
+            targetFolderId: this.currentTargetFolderId,
+          });
+        } else {
+          otherFiles.push({
+            id: file.id,
+            fileId: file.id,
+            name: file.name,
+            size: file.size,
+            mimeType: file.mimeType,
+            targetFolderId: this.currentTargetFolderId,
           });
         }
       }
@@ -1246,11 +1268,7 @@ class DriveAPI {
                     `\n✅ Upload thành công: ${uploadResponse.data.name}`
                   );
                   this.stats.filesProcessed++;
-
-                  return {
-                    success: true,
-                    uploadedFile: uploadResponse.data,
-                  };
+                  this.updateFolderFilesIndexAdd(this.currentTargetFolderId, uploadResponse.data);
                 } catch (fileError) {
                   console.error(
                     `❌ Lỗi tải file "${file.name}":`,
@@ -1295,7 +1313,7 @@ class DriveAPI {
 
               for (const docsFile of docsFiles) {
                 // Kiểm tra file đã tồn tại chưa
-                const exists = await this.checkFileExists(
+                const exists = await this.checkExistingFile(
                   docsFile.name,
                   this.currentTargetFolderId
                 );
@@ -1336,7 +1354,7 @@ class DriveAPI {
 
               for (const docxFile of docxFiles) {
                 // Kiểm tra file đã tồn tại chưa
-                const exists = await this.checkFileExists(
+                const exists = await this.checkExistingFile(
                   docxFile.name,
                   this.currentTargetFolderId
                 );
