@@ -1,3 +1,10 @@
+// Polyfill for Node.js 24+ where SlowBuffer is removed, which crashes buffer-equal-constant-time dependency
+const bufferModule = require("buffer");
+if (!bufferModule.SlowBuffer) {
+  bufferModule.SlowBuffer = class {};
+  bufferModule.SlowBuffer.prototype = {};
+}
+
 const DriveAPI = require("./api/DriveAPI");
 const { initializeApp } = require("firebase/app");
 const { getDatabase, ref, get, update } = require("firebase/database");
